@@ -1,0 +1,6 @@
+# NUNCA suba estes arquivos — contêm segredos reais ou são gerados localmente.
+.env
+server.env
+node_modules/
+dist/
+*.log

@@ -1,0 +1,25 @@
+services:
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: streamshare-livekit
+    restart: unless-stopped
+    command: --config /etc/livekit.yaml
+    ports:
+      # Sinalização/WebRTC principal (precisa estar aberta no roteador)
+      - "7880:7880"
+      - "7881:7881"
+      # Range de mídia WebRTC (precisa estar aberta no roteador, em UDP)
+      - "50000-50100:50000-50100/udp"
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+
+  token-server:
+    build: ./token-server
+    container_name: streamshare-token-server
+    restart: unless-stopped
+    ports:
+      # Porta externa trocada de 8080 para 28080 porque o provedor bloqueia
+      # a 8080. O container continua ouvindo em 8080 internamente.
+      - "28080:8080"
+    env_file:
+      - ./server.env

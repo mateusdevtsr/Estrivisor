@@ -1,0 +1,980 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Concord</title>
+    <style>
+        :root {
+            --bg: #0b0d10;
+            --painel: #14171b;
+            --borda: #23272c;
+            --texto: #e8eaed;
+            --texto-fraco: #8a919a;
+            --sinal: #ff4d4d;
+            --acento: #ffb020;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, "Segoe UI", Inter, sans-serif;
+            background: var(--bg);
+            color: var(--texto);
+            margin: 0;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+        .mono { font-family: "SFMono-Regular", Consolas, monospace; }
+
+        /* ---------- Barra lateral ---------- */
+        .barra-lateral {
+            width: 280px;
+            flex-shrink: 0;
+            background: var(--painel);
+            border-right: 1px solid var(--borda);
+            padding: 24px 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            overflow-y: auto;
+        }
+        .marca { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+        .marca .ponto { width: 10px; height: 10px; border-radius: 50%; background: var(--sinal); }
+        .marca h1 { font-size: 17px; margin: 0; font-weight: 600; letter-spacing: 0.2px; }
+
+        label { font-size: 12px; color: var(--texto-fraco); margin-bottom: -10px; }
+        input, select {
+            padding: 10px 12px; border-radius: 6px; border: 1px solid var(--borda);
+            background: #0e1013; color: var(--texto); font-size: 14px; outline: none;
+            width: 100%;
+        }
+        input:focus, select:focus { border-color: var(--sinal); }
+        input::placeholder { color: #565c63; }
+
+        button {
+            padding: 11px 14px; border-radius: 6px; border: none; font-size: 14px;
+            font-weight: 600; cursor: pointer; transition: 0.15s ease; color: var(--texto);
+            background: #262b31;
+        }
+        button:hover:not(:disabled) { background: #31373e; }
+        button:disabled { opacity: 0.4; cursor: not-allowed; }
+        #btn-conectar { background: var(--texto); color: #0b0d10; }
+        #btn-conectar:hover:not(:disabled) { background: #c7cbd1; }
+        #btn-transmitir { background: var(--sinal); color: #1a0505; }
+        #btn-transmitir:hover:not(:disabled) { background: #ff6b6b; }
+        #btn-parar { background: transparent; border: 1px solid var(--sinal); color: var(--sinal); display: none; }
+        #btn-parar:hover { background: rgba(255,77,77,0.1); }
+
+        .btn-mic-toggle.ativo { background: #3bd671; color: #06230f; }
+        .btn-mic-toggle.ativo:hover { background: #58e08a; }
+        .btn-mic-teste.ativo { background: var(--acento); color: #2b1a00; }
+        .btn-mic-teste.ativo:hover { background: #ffc14d; }
+
+        /* Painel flutuante de áudio por pessoa, aberto ao clicar no nome */
+        .painel-audio-pessoa {
+            position: fixed; z-index: 1000;
+            background: var(--painel); border: 1px solid var(--borda);
+            border-radius: 8px; padding: 14px; width: 220px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+            display: flex; flex-direction: column; gap: 10px;
+        }
+        .painel-audio-pessoa .titulo-painel {
+            font-size: 13px; font-weight: 600; color: var(--texto);
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .painel-audio-pessoa .titulo-painel button {
+            background: none; padding: 2px 6px; font-size: 14px; color: var(--texto-fraco);
+        }
+        .nome-participante { cursor: pointer; }
+        .nome-participante:hover { text-decoration: underline; }
+
+        .status-linha { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--texto-fraco); }
+        .status-bolha { width: 8px; height: 8px; border-radius: 50%; background: #565c63; }
+        .status-bolha.on { background: #3bd671; box-shadow: 0 0 6px #3bd67199; }
+
+        .divisor { border: 0; border-top: 1px solid var(--borda); margin: 4px 0; }
+
+        .check-linha {
+            display: flex; align-items: flex-start; gap: 8px;
+            font-size: 12px; color: var(--texto-fraco); cursor: pointer;
+            margin-bottom: -6px;
+        }
+        .check-linha input { width: auto; margin-top: 2px; accent-color: var(--sinal); }
+
+        .painel-pendentes {
+            background: rgba(255,176,32,0.08); border: 1px solid rgba(255,176,32,0.3);
+            border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;
+        }
+        .pedido-item {
+            display: flex; align-items: center; justify-content: space-between; gap: 8px;
+            font-size: 13px;
+        }
+        .pedido-botoes { display: flex; gap: 6px; }
+        .pedido-botoes button {
+            padding: 5px 9px; font-size: 12px; font-weight: 600;
+        }
+        .btn-aceitar { background: #3bd671; color: #06230f; }
+        .btn-aceitar:hover { background: #58e08a; }
+        .btn-recusar { background: transparent; border: 1px solid var(--sinal); color: var(--sinal); }
+        .btn-recusar:hover { background: rgba(255,77,77,0.1); }
+
+        .secao-titulo {
+            font-size: 11px; color: var(--texto-fraco);
+            display: flex; justify-content: space-between; align-items: center;
+        }
+
+        /* ---------- Lista de participantes ---------- */
+        #lista-participantes { display: flex; flex-direction: column; gap: 6px; }
+        .participante-item {
+            display: flex; align-items: center; gap: 10px; padding: 6px 8px;
+            border-radius: 6px; font-size: 13px;
+        }
+        .avatar-participante {
+            width: 26px; height: 26px; border-radius: 50%; background: #2f353c;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 12px; font-weight: 700; color: var(--texto-fraco); flex-shrink: 0;
+        }
+        .participante-item.transmitindo .avatar-participante {
+            background: rgba(255,77,77,0.15); color: var(--sinal); box-shadow: 0 0 0 2px var(--sinal);
+        }
+        .participante-item.falando .avatar-participante {
+            box-shadow: 0 0 0 2px #3bd671, 0 0 8px #3bd67199;
+        }
+        .rotulo-vazio { font-size: 12px; color: var(--texto-fraco); font-style: normal; }
+
+        .participante-item { flex-wrap: wrap; }
+        .envoltorio-slider { width: 100%; display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+        .rotulo-slider { font-size: 10px; color: var(--texto-fraco); white-space: nowrap; width: 82px; flex-shrink: 0; }
+        .slider-volume {
+            flex: 1; accent-color: var(--texto-fraco);
+            height: 4px; cursor: pointer;
+        }
+        .participante-item.falando .rotulo-slider:first-of-type { color: #3bd671; }
+
+        /* ---------- Área principal (grade de monitores) ---------- */
+        .area-principal { flex: 1; padding: 20px; overflow: auto; display: flex; flex-direction: column; gap: 12px; }
+
+        .barra-video { display: none; }
+        .barra-video.visivel { display: flex; justify-content: flex-end; }
+        .btn-toolbar {
+            background: var(--painel); border: 1px solid var(--borda); font-size: 12px;
+            padding: 7px 12px; font-weight: 500; color: var(--texto-fraco);
+        }
+        .btn-toolbar:hover { color: var(--texto); }
+
+        .grade-video {
+            flex: 1;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 16px;
+            align-content: start;
+        }
+        .grade-video:has(.placeholder-vazio) { display: flex; align-items: center; justify-content: center; }
+        .grade-video:has(.tile-video:only-child) { grid-template-columns: 1fr; align-content: stretch; }
+        .grade-video:has(.tile-video:only-child) .tile-video { aspect-ratio: unset; }
+
+        /* Modo foco: uma transmissão grande + miniaturas das outras embaixo */
+        .grade-video.modo-foco {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+        .grade-video.modo-foco > .tile-video--foco {
+            flex: 1;
+            min-height: 0;
+            aspect-ratio: unset;
+        }
+        .linha-miniaturas {
+            display: flex;
+            gap: 10px;
+            height: 110px;
+            flex-shrink: 0;
+            overflow-x: auto;
+        }
+        .linha-miniaturas .tile-video {
+            width: 190px;
+            height: 100%;
+            flex-shrink: 0;
+            aspect-ratio: unset;
+        }
+        .linha-miniaturas .tile-video { outline: 2px solid transparent; }
+        .linha-miniaturas .tile-video:hover { outline-color: var(--sinal); }
+
+        .tile-video {
+            position: relative;
+            background: #000;
+            border: 1px solid var(--borda);
+            border-radius: 8px;
+            overflow: hidden;
+            aspect-ratio: 16 / 9;
+        }
+        .tile-video.clicavel { cursor: pointer; }
+        .tile-video video { width: 100%; height: 100%; object-fit: contain; display: block; }
+        .tile-rotulo {
+            position: absolute; left: 0; right: 0; bottom: 0;
+            padding: 8px 10px; font-size: 12px;
+            background: linear-gradient(to top, rgba(0,0,0,0.75), transparent);
+            display: flex; align-items: center; gap: 6px;
+        }
+        .ponto-ao-vivo {
+            width: 7px; height: 7px; border-radius: 50%; background: var(--sinal);
+            box-shadow: 0 0 6px var(--sinal); animation: pulsar 1.6s ease-in-out infinite;
+            flex-shrink: 0;
+        }
+        @keyframes pulsar { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+        .btn-tela-cheia {
+            position: absolute; top: 8px; right: 8px;
+            width: 30px; height: 30px; border-radius: 6px;
+            background: rgba(0,0,0,0.55); border: 1px solid rgba(255,255,255,0.15);
+            color: var(--texto); font-size: 15px; display: flex; align-items: center; justify-content: center;
+            cursor: pointer; opacity: 0; transition: opacity 0.15s ease;
+        }
+        .tile-video:hover .btn-tela-cheia { opacity: 1; }
+        .btn-tela-cheia:hover { background: rgba(0,0,0,0.8); }
+        .btn-tela-cheia.pip { right: 46px; font-size: 13px; }
+
+        .placeholder-vazio { text-align: center; color: var(--texto-fraco); font-size: 14px; max-width: 280px; }
+        .placeholder-vazio .icone { font-size: 32px; margin-bottom: 10px; opacity: 0.5; }
+
+        /* ---------- Copiar ID da sala ---------- */
+        .linha-input-copiar { display: flex; gap: 6px; }
+        .linha-input-copiar input { flex: 1; }
+        #btn-copiar-sala { flex-shrink: 0; padding: 10px 12px; font-size: 14px; }
+        #btn-copiar-sala.copiado { background: #3bd671; }
+
+        /* ---------- Avatares coloridos (gerados a partir do nome) ---------- */
+        .avatar-participante { color: #fff !important; }
+
+        /* ---------- Indicador de qualidade de conexão ---------- */
+        .ponto-qualidade {
+            width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+            margin-left: auto;
+        }
+        .ponto-qualidade.excelente { background: #3bd671; }
+        .ponto-qualidade.boa { background: #ffb020; }
+        .ponto-qualidade.ruim { background: var(--sinal); }
+        .ponto-qualidade.desconhecida { background: #565c63; }
+
+        /* ---------- Notificações flutuantes (em vez de alert()) ---------- */
+        #container-notificacoes {
+            position: fixed; bottom: 20px; right: 20px; z-index: 2000;
+            display: flex; flex-direction: column-reverse; gap: 8px;
+            pointer-events: none;
+        }
+        .notificacao {
+            background: var(--painel); border: 1px solid var(--borda);
+            border-left: 3px solid var(--sinal); border-radius: 6px;
+            padding: 12px 16px; font-size: 13px; max-width: 320px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+            animation: entrar-notificacao 0.2s ease;
+        }
+        .notificacao.info { border-left-color: #3bd671; }
+        @keyframes entrar-notificacao {
+            from { opacity: 0; transform: translateX(20px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="barra-lateral">
+        <div class="marca">
+            <span class="ponto"></span>
+            <h1>Concord</h1>
+        </div>
+
+        <label>Seu nome</label>
+        <input type="text" id="input-usuario" placeholder="Ex: Mateus">
+
+        <label>ID da sala (canal)</label>
+        <div class="linha-input-copiar">
+            <input type="text" id="input-sala" placeholder="Ex: sala-dos-guri">
+            <button id="btn-copiar-sala" title="Copiar nome da sala">📋</button>
+        </div>
+
+        <label class="check-linha">
+            <input type="checkbox" id="check-exigir-aprovacao">
+            Exigir aprovação para entrar (você vira o anfitrião)
+        </label>
+
+        <button id="btn-conectar">Entrar na sala</button>
+        <div class="status-linha">
+            <span class="status-bolha" id="status-bolha"></span>
+            <span id="status-texto">Desconectado</span>
+        </div>
+
+        <div id="painel-pendentes" class="painel-pendentes" style="display: none;">
+            <div class="secao-titulo"><span>Pedidos de entrada</span></div>
+            <div id="lista-pendentes"></div>
+        </div>
+
+        <hr class="divisor">
+
+        <label>O que deseja transmitir?</label>
+        <select id="select-fontes" disabled>
+            <option>Aguardando conexão...</option>
+        </select>
+
+        <label>Qualidade da transmissão</label>
+        <select id="select-qualidade">
+            <option value="automatico">Automático (recomendado)</option>
+            <option value="alta">Alta qualidade — 1080p60</option>
+            <option value="balanceado">Balanceado — 720p30</option>
+            <option value="economia">Economia de dados — 480p15</option>
+        </select>
+
+        <button id="btn-transmitir" disabled>Iniciar transmissão</button>
+        <button id="btn-parar">Parar transmissão</button>
+
+        <hr class="divisor">
+
+        <div class="secao-titulo">
+            <span>Na sala</span>
+            <span class="mono" id="contagem-participantes">0</span>
+        </div>
+        <div id="lista-participantes">
+            <div class="rotulo-vazio">Ninguém conectado ainda.</div>
+        </div>
+    </div>
+
+    <div class="area-principal">
+        <div class="barra-video" id="barra-video">
+            <button class="btn-toolbar" id="btn-ver-grade">◱ Ver todas em grade</button>
+        </div>
+        <div class="grade-video" id="grade-video">
+            <div class="placeholder-vazio">
+                <div class="icone">▢</div>
+                Nenhuma transmissão ativa na sala
+            </div>
+        </div>
+    </div>
+
+    <!-- Carregado localmente via UMD: sem nodeIntegration, o renderer não pode
+         mais fazer require('livekit-client') diretamente.
+         O arquivo abaixo vem de node_modules/livekit-client/dist/. -->
+    <div id="container-notificacoes"></div>
+
+    <script src="./node_modules/livekit-client/dist/livekit-client.umd.js"></script>
+
+    <script>
+        // Nada de 'require' aqui: contextIsolation está ativo.
+        // Toda ponte com o processo principal passa por window.electronAPI (preload.js).
+        // ---------- Notificações flutuantes (substituem o alert()) ----------
+        function mostrarNotificacao(mensagem, tipo) {
+            const container = document.getElementById('container-notificacoes');
+            const nota = document.createElement('div');
+            nota.className = 'notificacao' + (tipo === 'info' ? ' info' : '');
+            nota.textContent = mensagem;
+            container.appendChild(nota);
+            setTimeout(() => nota.remove(), 4500);
+        }
+
+        // ---------- Cor de avatar consistente, gerada a partir do nome ----------
+        function corDoAvatar(texto) {
+            let hash = 0;
+            for (let i = 0; i < texto.length; i++) {
+                hash = texto.charCodeAt(i) + ((hash << 5) - hash);
+            }
+            const matiz = Math.abs(hash) % 360;
+            return `hsl(${matiz}, 48%, 38%)`;
+        }
+
+        let currentRoom = null;
+        let idTileLocal = null; // trackSid da própria transmissão, se houver
+
+        // trackSid -> { videoEl, nome, ehVoce }
+        const tiles = new Map();
+        let trackEmFoco = null; // trackSid em destaque, quando há várias transmissões
+
+        const grade = document.getElementById('grade-video');
+        const barraVideo = document.getElementById('barra-video');
+
+        // Cada perfil define resolução/fps/bitrate máximos. "Automático"
+        // liga o simulcast: a transmissão sai em múltiplas qualidades ao
+        // mesmo tempo, e o LiveKit entrega a cada espectador a versão que
+        // a internet dele aguenta — é o mais próximo de um ajuste
+        // automático conforme a conexão de cada pessoa.
+        const PERFIS_QUALIDADE = {
+            automatico:  { resolution: { width: 1920, height: 1080 }, maxFramerate: 30, maxBitrate: 3_000_000, simulcast: true },
+            alta:        { resolution: { width: 1920, height: 1080 }, maxFramerate: 60, maxBitrate: 6_000_000, simulcast: false },
+            balanceado:  { resolution: { width: 1280, height: 720 },  maxFramerate: 30, maxBitrate: 2_000_000, simulcast: false },
+            economia:    { resolution: { width: 854,  height: 480 },  maxFramerate: 15, maxBitrate: 700_000,   simulcast: false },
+        };
+
+        function criarElementoTile(trackSid, info, grande) {
+            const tile = document.createElement('div');
+            tile.className = 'tile-video' + (grande ? ' tile-video--foco' : '');
+            tile.id = 'tile-' + trackSid;
+
+            info.videoEl.autoplay = true;
+            tile.appendChild(info.videoEl);
+
+            const btnTelaCheia = document.createElement('button');
+            btnTelaCheia.className = 'btn-tela-cheia';
+            btnTelaCheia.title = 'Tela cheia';
+            btnTelaCheia.innerHTML = '⤢';
+            btnTelaCheia.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (info.videoEl.requestFullscreen) info.videoEl.requestFullscreen();
+            });
+            tile.appendChild(btnTelaCheia);
+
+            // Janela flutuante: fica fora da janela do app, pode ser
+            // arrastada pra outro monitor e redimensionada livremente,
+            // mantendo a proporção — sem precisar de uma janela Electron nova.
+            if (document.pictureInPictureEnabled) {
+                const btnPip = document.createElement('button');
+                btnPip.className = 'btn-tela-cheia pip';
+                btnPip.title = 'Janela flutuante (arrastável, redimensionável)';
+                btnPip.innerHTML = '⧉';
+                btnPip.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    info.videoEl.requestPictureInPicture().catch(err => {
+                        console.error('Erro ao abrir janela flutuante:', err);
+                    });
+                });
+                tile.appendChild(btnPip);
+            }
+
+            const rotulo = document.createElement('div');
+            rotulo.className = 'tile-rotulo';
+            rotulo.innerHTML = `<span class="ponto-ao-vivo"></span> ${info.nome}${info.ehVoce ? ' (você)' : ''}`;
+            tile.appendChild(rotulo);
+
+            // Com mais de uma transmissão ativa, clicar em qualquer uma
+            // (grande ou miniatura) a coloca em destaque — como no Discord.
+            if (tiles.size > 1) {
+                tile.classList.add('clicavel');
+                tile.addEventListener('click', () => {
+                    trackEmFoco = trackSid;
+                    renderizarVideo();
+                });
+            }
+
+            return tile;
+        }
+
+        function renderizarVideo() {
+            grade.innerHTML = '';
+
+            if (tiles.size === 0) {
+                grade.className = 'grade-video';
+                barraVideo.classList.remove('visivel');
+                grade.innerHTML = `
+                    <div class="placeholder-vazio">
+                        <div class="icone">▢</div>
+                        Nenhuma transmissão ativa na sala
+                    </div>`;
+                return;
+            }
+
+            if (tiles.size === 1) {
+                grade.className = 'grade-video';
+                barraVideo.classList.remove('visivel');
+                const [trackSid, info] = [...tiles.entries()][0];
+                grade.appendChild(criarElementoTile(trackSid, info, true));
+                return;
+            }
+
+            // Duas ou mais transmissões: se alguma estiver em foco, mostra
+            // ela grande + as demais como miniaturas clicáveis embaixo.
+            if (trackEmFoco && tiles.has(trackEmFoco)) {
+                grade.className = 'grade-video modo-foco';
+                barraVideo.classList.add('visivel');
+
+                const infoFoco = tiles.get(trackEmFoco);
+                grade.appendChild(criarElementoTile(trackEmFoco, infoFoco, true));
+
+                const linha = document.createElement('div');
+                linha.className = 'linha-miniaturas';
+                tiles.forEach((info, trackSid) => {
+                    if (trackSid === trackEmFoco) return;
+                    linha.appendChild(criarElementoTile(trackSid, info, false));
+                });
+                grade.appendChild(linha);
+            } else {
+                // Ninguém focado ainda: mostra todas do mesmo tamanho na grade.
+                grade.className = 'grade-video';
+                barraVideo.classList.remove('visivel');
+                tiles.forEach((info, trackSid) => {
+                    grade.appendChild(criarElementoTile(trackSid, info, true));
+                });
+            }
+        }
+
+        // O botão de microfone agora mora dentro do painel flutuante (abre
+        // ao clicar no seu próprio nome), não mais fixo na barra lateral.
+        let microfoneAtivo = false;
+
+        async function alternarMicrofone(btn) {
+            try {
+                microfoneAtivo = !microfoneAtivo;
+                await currentRoom.localParticipant.setMicrophoneEnabled(microfoneAtivo);
+                btn.textContent = microfoneAtivo ? '🎤 Desativar microfone' : '🎤 Ativar microfone';
+                btn.classList.toggle('ativo', microfoneAtivo);
+            } catch (err) {
+                microfoneAtivo = !microfoneAtivo; // desfaz a troca, já que falhou
+                console.error('Erro ao ativar microfone:', err);
+                mostrarNotificacao('Erro ao ativar microfone: ' + err.message);
+            }
+        }
+
+        document.getElementById('btn-ver-grade').addEventListener('click', () => {
+            trackEmFoco = null;
+            renderizarVideo();
+        });
+
+        function adicionarTile(trackSid, elementoMidia, nomeParticipante, ehVoce) {
+            tiles.set(trackSid, { videoEl: elementoMidia, nome: nomeParticipante, ehVoce });
+            renderizarVideo();
+        }
+
+        function removerTile(trackSid) {
+            tiles.delete(trackSid);
+            if (trackEmFoco === trackSid) trackEmFoco = null;
+            renderizarVideo();
+        }
+
+        // Identidades (identity) dos participantes falando no momento,
+        // atualizado pelo evento ActiveSpeakersChanged do LiveKit.
+        let identidadesFalando = new Set();
+
+        // identity -> 'excelente' | 'boa' | 'ruim' | 'desconhecida', pro
+        // pontinho de qualidade de conexão ao lado do nome.
+        const qualidadePorIdentidade = new Map();
+
+        function mapearQualidade(qualidadeLiveKit) {
+            switch (qualidadeLiveKit) {
+                case LivekitClient.ConnectionQuality.Excellent: return 'excelente';
+                case LivekitClient.ConnectionQuality.Good: return 'boa';
+                case LivekitClient.ConnectionQuality.Poor: return 'ruim';
+                default: return 'desconhecida';
+            }
+        }
+
+        // identity -> { microfone: volume, compartilhamento: volume }, pra
+        // lembrar o ajuste de cada pessoa mesmo quando a lista é redesenhada.
+        const volumesPorIdentidade = new Map();
+        // identity -> { microfone: Set de elementos, compartilhamento: Set de elementos }
+        const elementosAudioPorIdentidade = new Map();
+
+        function garantirEntradaAudio(identity) {
+            if (!volumesPorIdentidade.has(identity)) {
+                volumesPorIdentidade.set(identity, { microfone: 100, compartilhamento: 100 });
+            }
+            if (!elementosAudioPorIdentidade.has(identity)) {
+                elementosAudioPorIdentidade.set(identity, { microfone: new Set(), compartilhamento: new Set() });
+            }
+        }
+
+        function criarSliderVolume(identity, nome, tipo, rotulo) {
+            const envoltorio = document.createElement('div');
+            envoltorio.className = 'envoltorio-slider';
+
+            const label = document.createElement('span');
+            label.className = 'rotulo-slider';
+            label.textContent = rotulo;
+
+            const volumeAtual = volumesPorIdentidade.get(identity)[tipo];
+            const slider = document.createElement('input');
+            slider.type = 'range';
+            slider.className = 'slider-volume';
+            slider.min = '0';
+            slider.max = '100';
+            slider.value = String(volumeAtual);
+            slider.title = `${rotulo} de ${nome}: ${volumeAtual}%`;
+            slider.addEventListener('input', () => {
+                const novoVolume = Number(slider.value);
+                volumesPorIdentidade.get(identity)[tipo] = novoVolume;
+                slider.title = `${rotulo} de ${nome}: ${novoVolume}%`;
+                elementosAudioPorIdentidade.get(identity)[tipo].forEach(el => { el.volume = novoVolume / 100; });
+            });
+
+            envoltorio.appendChild(label);
+            envoltorio.appendChild(slider);
+            return envoltorio;
+        }
+
+        // ---------- Testar microfone (ouvir a própria voz) ----------
+        // Independente da sala: pega o microfone cru e toca de volta pra
+        // você mesmo, só pra confirmar que está funcionando e com volume ok.
+        let microfoneTesteAtivo = false;
+        let streamTesteMic = null;
+        let audioTesteMic = null;
+
+        async function alternarTesteMicrofone() {
+            if (microfoneTesteAtivo) {
+                pararTesteMicrofone();
+                return;
+            }
+            try {
+                streamTesteMic = await navigator.mediaDevices.getUserMedia({ audio: true });
+                audioTesteMic = document.createElement('audio');
+                audioTesteMic.srcObject = streamTesteMic;
+                audioTesteMic.autoplay = true;
+                document.body.appendChild(audioTesteMic);
+                microfoneTesteAtivo = true;
+            } catch (err) {
+                console.error('Erro ao testar microfone:', err);
+                mostrarNotificacao('Erro ao testar microfone: ' + err.message);
+            }
+        }
+
+        function pararTesteMicrofone() {
+            if (streamTesteMic) streamTesteMic.getTracks().forEach(t => t.stop());
+            if (audioTesteMic) audioTesteMic.remove();
+            streamTesteMic = null;
+            audioTesteMic = null;
+            microfoneTesteAtivo = false;
+        }
+
+        // ---------- Painel flutuante de áudio por pessoa ----------
+        // Clicar (ou botão direito) no nome de alguém na lista abre isto,
+        // parecido com o menu de usuário do Discord.
+        let painelAudioAberto = null;
+
+        function fecharPainelAudio() {
+            if (painelAudioAberto) {
+                painelAudioAberto.remove();
+                painelAudioAberto = null;
+                document.removeEventListener('click', fecharPainelAoClicarFora, true);
+            }
+        }
+
+        function fecharPainelAoClicarFora(e) {
+            if (painelAudioAberto && !painelAudioAberto.contains(e.target)) {
+                fecharPainelAudio();
+            }
+        }
+
+        function abrirPainelAudio(identity, nome, ehVoce, x, y) {
+            fecharPainelAudio();
+
+            const painel = document.createElement('div');
+            painel.className = 'painel-audio-pessoa';
+
+            const titulo = document.createElement('div');
+            titulo.className = 'titulo-painel';
+            titulo.innerHTML = `<span>${nome}${ehVoce ? ' (você)' : ''}</span>`;
+            const btnFechar = document.createElement('button');
+            btnFechar.textContent = '✕';
+            btnFechar.addEventListener('click', fecharPainelAudio);
+            titulo.appendChild(btnFechar);
+            painel.appendChild(titulo);
+
+            if (ehVoce) {
+                const btnMic = document.createElement('button');
+                btnMic.className = 'btn-mic-toggle' + (microfoneAtivo ? ' ativo' : '');
+                btnMic.textContent = microfoneAtivo ? '🎤 Desativar microfone' : '🎤 Ativar microfone';
+                btnMic.addEventListener('click', () => alternarMicrofone(btnMic));
+                painel.appendChild(btnMic);
+
+                const btnTestar = document.createElement('button');
+                btnTestar.className = 'btn-mic-teste' + (microfoneTesteAtivo ? ' ativo' : '');
+                btnTestar.textContent = microfoneTesteAtivo ? '🎧 Parar teste' : '🎧 Testar microfone';
+                btnTestar.addEventListener('click', async () => {
+                    await alternarTesteMicrofone();
+                    btnTestar.textContent = microfoneTesteAtivo ? '🎧 Parar teste' : '🎧 Testar microfone';
+                    btnTestar.classList.toggle('ativo', microfoneTesteAtivo);
+                });
+                painel.appendChild(btnTestar);
+            } else {
+                painel.appendChild(criarSliderVolume(identity, nome, 'microfone', '🎤 Voz'));
+                painel.appendChild(criarSliderVolume(identity, nome, 'compartilhamento', '🖥️ Som da tela'));
+            }
+
+            document.body.appendChild(painel);
+
+            // Posiciona perto do clique, sem deixar sair da tela.
+            painel.style.left = '0px';
+            painel.style.top = '0px';
+            const retanguloPainel = painel.getBoundingClientRect();
+            let left = Math.min(x, window.innerWidth - retanguloPainel.width - 10);
+            let top = Math.min(y, window.innerHeight - retanguloPainel.height - 10);
+            painel.style.left = Math.max(left, 10) + 'px';
+            painel.style.top = Math.max(top, 10) + 'px';
+
+            painelAudioAberto = painel;
+            setTimeout(() => document.addEventListener('click', fecharPainelAoClicarFora, true), 0);
+        }
+
+        function atualizarListaParticipantes() {
+            const lista = document.getElementById('lista-participantes');
+            const contagem = document.getElementById('contagem-participantes');
+            if (!currentRoom) return;
+
+            const participantes = [currentRoom.localParticipant, ...currentRoom.remoteParticipants.values()];
+            contagem.textContent = participantes.length;
+            lista.innerHTML = '';
+
+            participantes.forEach(p => {
+                const ehVoce = p === currentRoom.localParticipant;
+                const nome = p.name || p.identity || '?';
+                const transmitindo = [...p.videoTrackPublications.values()]
+                    .some(pub => pub.source === LivekitClient.Track.Source.ScreenShare);
+                const falando = identidadesFalando.has(p.identity);
+
+                if (!ehVoce) garantirEntradaAudio(p.identity);
+
+                const item = document.createElement('div');
+                item.className = 'participante-item'
+                    + (transmitindo ? ' transmitindo' : '')
+                    + (falando ? ' falando' : '');
+                item.innerHTML = `
+                    <span class="avatar-participante" style="background: ${corDoAvatar(p.identity || nome)}">${nome.charAt(0).toUpperCase()}</span>
+                    <span class="nome-participante" title="Clique para ajustar áudio">${nome}${ehVoce ? ' (você)' : ''}</span>
+                    <span class="ponto-qualidade ${qualidadePorIdentidade.get(p.identity) || 'desconhecida'}" title="Qualidade da conexão"></span>`;
+
+                // Clicar (ou botão direito) no nome abre o painel de áudio
+                // daquela pessoa — igual ao menu de usuário do Discord.
+                const abrir = (e) => {
+                    e.preventDefault();
+                    abrirPainelAudio(p.identity, nome, ehVoce, e.clientX, e.clientY);
+                };
+                item.querySelector('.nome-participante').addEventListener('click', abrir);
+                item.querySelector('.nome-participante').addEventListener('contextmenu', abrir);
+
+                lista.appendChild(item);
+            });
+        }
+
+        document.getElementById('btn-copiar-sala').addEventListener('click', async () => {
+            const sala = document.getElementById('input-sala').value.trim();
+            if (!sala) return mostrarNotificacao('Digite o nome de uma sala primeiro.');
+
+            await navigator.clipboard.writeText(sala);
+            const btn = document.getElementById('btn-copiar-sala');
+            btn.textContent = '✅';
+            btn.classList.add('copiado');
+            setTimeout(() => {
+                btn.textContent = '📋';
+                btn.classList.remove('copiado');
+            }, 1500);
+        });
+
+        // Lembra o nome e a sala usados da última vez, pra não ter que
+        // redigitar toda vez que abrir o app.
+        document.getElementById('input-usuario').value = localStorage.getItem('streamshare_nome') || '';
+        document.getElementById('input-sala').value = localStorage.getItem('streamshare_sala') || '';
+
+        document.getElementById('btn-conectar').addEventListener('click', async () => {
+            const usuario = document.getElementById('input-usuario').value.trim();
+            const sala = document.getElementById('input-sala').value.trim();
+            const exigirAprovacao = document.getElementById('check-exigir-aprovacao').checked;
+
+            if (!usuario || !sala) return mostrarNotificacao("Preencha todos os campos!");
+
+            localStorage.setItem('streamshare_nome', usuario);
+            localStorage.setItem('streamshare_sala', sala);
+
+            document.getElementById('btn-conectar').disabled = true;
+            document.getElementById('status-texto').textContent = 'Conectando...';
+
+            try {
+                const tokenValido = await window.electronAPI.gerarToken({ sala, usuario });
+                const urlServidor = await window.electronAPI.obterUrlServidor();
+
+                currentRoom = new LivekitClient.Room({
+                    adaptiveStream: true,
+                    dynacast: true,
+                });
+
+                // Só telas compartilhadas viram um "monitor" na grade;
+                // áudio é tocado, mas não ocupa espaço visual.
+                currentRoom.on(LivekitClient.RoomEvent.TrackSubscribed, (track, publication, participant) => {
+                    if (track.kind === 'video' && track.source === LivekitClient.Track.Source.ScreenShare) {
+                        const el = track.attach();
+                        adicionarTile(track.sid, el, participant.name || participant.identity, false);
+                    } else if (track.kind === 'audio') {
+                        const el = track.attach();
+                        const tipo = track.source === LivekitClient.Track.Source.Microphone ? 'microfone' : 'compartilhamento';
+
+                        garantirEntradaAudio(participant.identity);
+                        el.volume = volumesPorIdentidade.get(participant.identity)[tipo] / 100;
+                        elementosAudioPorIdentidade.get(participant.identity)[tipo].add(el);
+                    }
+                    atualizarListaParticipantes();
+                });
+
+                currentRoom.on(LivekitClient.RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
+                    const elementosRemovidos = track.detach();
+                    if (track.kind === 'video') removerTile(track.sid);
+                    if (track.kind === 'audio') {
+                        const tipo = track.source === LivekitClient.Track.Source.Microphone ? 'microfone' : 'compartilhamento';
+                        const entrada = elementosAudioPorIdentidade.get(participant.identity);
+                        if (entrada) elementosRemovidos.forEach(el => entrada[tipo].delete(el));
+                    }
+                    atualizarListaParticipantes();
+                });
+
+                currentRoom.on(LivekitClient.RoomEvent.ParticipantConnected, atualizarListaParticipantes);
+                currentRoom.on(LivekitClient.RoomEvent.ParticipantDisconnected, atualizarListaParticipantes);
+
+                // Dá o destaque verde de "falando" na lista de participantes.
+                currentRoom.on(LivekitClient.RoomEvent.ActiveSpeakersChanged, (falantes) => {
+                    identidadesFalando = new Set(falantes.map(p => p.identity));
+                    atualizarListaParticipantes();
+                });
+
+                // Pontinho de qualidade de conexão (verde/amarelo/vermelho)
+                // ao lado do nome de cada pessoa.
+                currentRoom.on(LivekitClient.RoomEvent.ConnectionQualityChanged, (qualidade, participante) => {
+                    qualidadePorIdentidade.set(participante.identity, mapearQualidade(qualidade));
+                    atualizarListaParticipantes();
+                });
+
+                await currentRoom.connect(urlServidor, tokenValido);
+
+                document.getElementById('status-bolha').classList.add('on');
+                document.getElementById('status-texto').textContent = 'Conectado';
+                document.getElementById('select-fontes').disabled = false;
+                document.getElementById('check-exigir-aprovacao').disabled = true;
+
+                atualizarListaParticipantes();
+                listarJanelasDoSistema();
+
+                if (exigirAprovacao) {
+                    await window.electronAPI.tornarDono({ sala, usuario });
+                    document.getElementById('painel-pendentes').style.display = 'flex';
+                    iniciarChecagemPendentes(sala);
+                }
+            } catch (err) {
+                console.error("Erro no console do cliente:", err);
+                mostrarNotificacao("Erro ao conectar: " + err.message);
+                document.getElementById('status-texto').textContent = 'Desconectado';
+                document.getElementById('btn-conectar').disabled = false;
+            }
+        });
+
+        // A cada poucos segundos, pergunta ao servidor se tem alguém
+        // esperando aprovação pra entrar nesta sala.
+        function iniciarChecagemPendentes(sala) {
+            setInterval(async () => {
+                const pedidos = await window.electronAPI.listarPendentes({ sala });
+                renderizarPendentes(sala, pedidos);
+            }, 2500);
+        }
+
+        function renderizarPendentes(sala, pedidos) {
+            const lista = document.getElementById('lista-pendentes');
+            lista.innerHTML = '';
+
+            if (pedidos.length === 0) {
+                lista.innerHTML = '<div class="rotulo-vazio">Ninguém esperando no momento.</div>';
+                return;
+            }
+
+            pedidos.forEach(pedido => {
+                const item = document.createElement('div');
+                item.className = 'pedido-item';
+                item.innerHTML = `
+                    <span>${pedido.usuario} quer entrar</span>
+                    <span class="pedido-botoes">
+                        <button class="btn-aceitar">Aceitar</button>
+                        <button class="btn-recusar">Recusar</button>
+                    </span>`;
+
+                item.querySelector('.btn-aceitar').addEventListener('click', () =>
+                    window.electronAPI.decidirPendente({ sala, solicitacaoId: pedido.solicitacaoId, decisao: 'aprovado' })
+                );
+                item.querySelector('.btn-recusar').addEventListener('click', () =>
+                    window.electronAPI.decidirPendente({ sala, solicitacaoId: pedido.solicitacaoId, decisao: 'negado' })
+                );
+
+                lista.appendChild(item);
+            });
+        }
+
+        // Escaneia janelas/telas disponíveis via API exposta pelo preload
+        async function listarJanelasDoSistema() {
+            const select = document.getElementById('select-fontes');
+            select.innerHTML = '';
+            const fontes = await window.electronAPI.listarFontes();
+
+            fontes.forEach(fonte => {
+                const option = document.createElement('option');
+                option.value = fonte.id;
+                option.text = fonte.name;
+                select.appendChild(option);
+            });
+            document.getElementById('btn-transmitir').disabled = false;
+        }
+
+        let transmitindo = false;
+
+        async function iniciarTransmissao() {
+            const fonteId = document.getElementById('select-fontes').value;
+
+            // Avisa o processo principal qual fonte usar quando o
+            // livekit-client chamar getDisplayMedia() internamente.
+            await window.electronAPI.definirFonte(fonteId);
+
+            const perfil = PERFIS_QUALIDADE[document.getElementById('select-qualidade').value] || PERFIS_QUALIDADE.automatico;
+
+            const publicacao = await currentRoom.localParticipant.setScreenShareEnabled(true, {
+                audio: true,
+                video: true,
+                screenShareEncoding: {
+                    resolution: perfil.resolution,
+                    maxFramerate: perfil.maxFramerate,
+                    maxBitrate: perfil.maxBitrate
+                }
+            }, {
+                simulcast: perfil.simulcast
+            });
+
+            // Mostra a própria transmissão como um monitor na grade —
+            // sem isso, só quem entrar depois na sala veria o vídeo.
+            if (publicacao && publicacao.videoTrack) {
+                idTileLocal = publicacao.trackSid;
+                const el = publicacao.videoTrack.attach();
+                adicionarTile(idTileLocal, el, currentRoom.localParticipant.name || currentRoom.localParticipant.identity, true);
+            }
+            atualizarListaParticipantes();
+        }
+
+        async function pararTransmissao() {
+            await currentRoom.localParticipant.setScreenShareEnabled(false);
+            if (idTileLocal) {
+                removerTile(idTileLocal);
+                idTileLocal = null;
+            }
+            atualizarListaParticipantes();
+        }
+
+        document.getElementById('btn-transmitir').addEventListener('click', async () => {
+            try {
+                await iniciarTransmissao();
+                document.getElementById('btn-transmitir').style.display = 'none';
+                document.getElementById('btn-parar').style.display = 'block';
+                document.getElementById('select-qualidade').disabled = true;
+                transmitindo = true;
+            } catch (err) {
+                console.error("Erro ao transmitir:", err);
+                mostrarNotificacao("Erro ao transmitir: " + err.message);
+            }
+        });
+
+        document.getElementById('btn-parar').addEventListener('click', async () => {
+            await pararTransmissao();
+            document.getElementById('btn-transmitir').style.display = 'block';
+            document.getElementById('btn-parar').style.display = 'none';
+            document.getElementById('select-qualidade').disabled = false;
+            transmitindo = false;
+        });
+
+        // Trocar a fonte no dropdown enquanto já está transmitindo troca
+        // ao vivo, sem precisar parar e clicar em "Iniciar" de novo.
+        document.getElementById('select-fontes').addEventListener('change', async () => {
+            if (!transmitindo) return;
+            try {
+                await pararTransmissao();
+                await iniciarTransmissao();
+            } catch (err) {
+                console.error("Erro ao trocar de fonte:", err);
+                mostrarNotificacao("Erro ao trocar de fonte: " + err.message);
+            }
+        });
+    </script>
+</body>
+</html>
