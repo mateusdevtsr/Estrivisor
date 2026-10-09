@@ -2,11 +2,12 @@
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
-    <title>Concord</title>
+    <title>Estrivisor</title>
     <style>
         :root {
             --bg: #0b0d10;
             --painel: #14171b;
+            --painel2: #181b1f;
             --borda: #23272c;
             --texto: #e8eaed;
             --texto-fraco: #8a919a;
@@ -19,962 +20,730 @@
             background: var(--bg);
             color: var(--texto);
             margin: 0;
-            display: flex;
             height: 100vh;
             overflow: hidden;
         }
         .mono { font-family: "SFMono-Regular", Consolas, monospace; }
-
-        /* ---------- Barra lateral ---------- */
-        .barra-lateral {
-            width: 280px;
-            flex-shrink: 0;
-            background: var(--painel);
-            border-right: 1px solid var(--borda);
-            padding: 24px 20px;
-            display: flex;
-            flex-direction: column;
-            gap: 18px;
-            overflow-y: auto;
-        }
-        .marca { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-        .marca .ponto { width: 10px; height: 10px; border-radius: 50%; background: var(--sinal); }
-        .marca h1 { font-size: 17px; margin: 0; font-weight: 600; letter-spacing: 0.2px; }
-
-        label { font-size: 12px; color: var(--texto-fraco); margin-bottom: -10px; }
-        input, select {
-            padding: 10px 12px; border-radius: 6px; border: 1px solid var(--borda);
-            background: #0e1013; color: var(--texto); font-size: 14px; outline: none;
-            width: 100%;
-        }
-        input:focus, select:focus { border-color: var(--sinal); }
-        input::placeholder { color: #565c63; }
-
         button {
-            padding: 11px 14px; border-radius: 6px; border: none; font-size: 14px;
+            padding: 8px 12px; border-radius: 6px; border: none; font-size: 13px;
             font-weight: 600; cursor: pointer; transition: 0.15s ease; color: var(--texto);
-            background: #262b31;
+            background: #262b31; font-family: inherit;
         }
         button:hover:not(:disabled) { background: #31373e; }
         button:disabled { opacity: 0.4; cursor: not-allowed; }
-        #btn-conectar { background: var(--texto); color: #0b0d10; }
-        #btn-conectar:hover:not(:disabled) { background: #c7cbd1; }
-        #btn-transmitir { background: var(--sinal); color: #1a0505; }
-        #btn-transmitir:hover:not(:disabled) { background: #ff6b6b; }
-        #btn-parar { background: transparent; border: 1px solid var(--sinal); color: var(--sinal); display: none; }
-        #btn-parar:hover { background: rgba(255,77,77,0.1); }
-
-        .btn-mic-toggle.ativo { background: #3bd671; color: #06230f; }
-        .btn-mic-toggle.ativo:hover { background: #58e08a; }
-        .btn-mic-teste.ativo { background: var(--acento); color: #2b1a00; }
-        .btn-mic-teste.ativo:hover { background: #ffc14d; }
-
-        /* Painel flutuante de áudio por pessoa, aberto ao clicar no nome */
-        .painel-audio-pessoa {
-            position: fixed; z-index: 1000;
-            background: var(--painel); border: 1px solid var(--borda);
-            border-radius: 8px; padding: 14px; width: 220px;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-            display: flex; flex-direction: column; gap: 10px;
+        input, select {
+            padding: 9px 11px; border-radius: 6px; border: 1px solid var(--borda);
+            background: #0e1013; color: var(--texto); font-size: 13px; outline: none;
+            font-family: inherit; width: 100%;
         }
-        .painel-audio-pessoa .titulo-painel {
-            font-size: 13px; font-weight: 600; color: var(--texto);
+        input:focus, select:focus { border-color: var(--sinal); }
+
+        /* ---------- Foto de fundo (opcional, só no PC de cada pessoa) ---------- */
+        /* A camada fica atrás de tudo. As bordas passam da tela (inset negativo) pro desfoque não clarear as pontas. */
+        .fundo-app {
+            position: fixed; inset: -40px; z-index: 0; display: none; pointer-events: none;
+            background-image: linear-gradient(rgba(0,0,0,var(--fundo-escuro, 0.6)), rgba(0,0,0,var(--fundo-escuro, 0.6))), var(--fundo-img);
+            background-size: cover; background-position: center; background-repeat: no-repeat;
+            filter: blur(var(--fundo-desfoque, 0px));
+        }
+        body.com-fundo .fundo-app { display: block; }
+        /* Com foto, as colunas ficam translúcidas (menus e janelinhas continuam opacos, pra leitura). */
+        body.com-fundo { --painel-vidro: rgba(20,23,27,0.80); --painel2-vidro: rgba(24,27,31,0.86); }
+        body.com-fundo .coluna-principal { background: rgba(0,0,0,0.22); }
+
+        /* ---------- Layout de 3 colunas ---------- */
+        .app { display: flex; height: 100vh; position: relative; z-index: 1; }
+
+        /* Coluna 1: canais */
+        .coluna-canais {
+            width: 240px; flex-shrink: 0; background: var(--painel-vidro, var(--painel));
+            display: flex; flex-direction: column; border-right: 1px solid var(--borda);
+        }
+        .cabecalho-servidor {
+            padding: 16px; font-weight: 700; font-size: 15px;
+            border-bottom: 1px solid var(--borda); display: flex; align-items: center; gap: 8px;
+        }
+        .cabecalho-servidor .ponto { width: 9px; height: 9px; border-radius: 50%; background: var(--sinal); flex-shrink: 0; }
+        .cabecalho-servidor #nome-servidor-cabecalho { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .btn-icone-cabecalho { background: none; padding: 3px 6px; font-size: 12px; opacity: 0.55; flex-shrink: 0; }
+        .btn-icone-cabecalho:hover:not(:disabled) { opacity: 1; background: rgba(255,255,255,0.08); }
+        .lista-canais { flex: 1; overflow-y: auto; padding: 12px 8px; }
+        .secao-canais { margin-bottom: 16px; }
+        .titulo-secao-canais {
             display: flex; justify-content: space-between; align-items: center;
+            padding: 4px 8px; font-size: 11px; color: var(--texto-fraco); font-weight: 600;
         }
-        .painel-audio-pessoa .titulo-painel button {
-            background: none; padding: 2px 6px; font-size: 14px; color: var(--texto-fraco);
+        .titulo-secao-canais button { background: none; padding: 2px 6px; font-size: 14px; color: var(--texto-fraco); }
+        .titulo-secao-canais button:hover { color: var(--texto); background: none; }
+        .item-canal {
+            display: flex; align-items: center; gap: 7px; padding: 7px 8px; border-radius: 6px;
+            font-size: 14px; color: var(--texto-fraco); cursor: pointer; margin-bottom: 1px;
         }
-        .nome-participante { cursor: pointer; }
-        .nome-participante:hover { text-decoration: underline; }
+        .item-canal:hover { background: rgba(255,255,255,0.04); color: var(--texto); }
+        .item-canal.ativo { background: rgba(255,77,77,0.12); color: var(--texto); }
+        .item-canal .icone-canal { opacity: 0.7; flex-shrink: 0; }
+        .item-canal .cadeado { margin-left: auto; opacity: 0.5; font-size: 11px; }
+        .sub-membros-voz { padding-left: 26px; margin-bottom: 4px; }
+        .sub-membro-voz { display: flex; align-items: center; gap: 6px; padding: 3px 8px; font-size: 12.5px; color: var(--texto-fraco); }
+        .sub-membro-voz .mini-avatar {
+            width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center;
+            justify-content: center; font-size: 10px; font-weight: 700; color: #fff; flex-shrink: 0;
+        }
+        .sub-membro-voz.falando .mini-avatar { box-shadow: 0 0 0 2px #3bd671; }
 
-        .status-linha { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--texto-fraco); }
-        .status-bolha { width: 8px; height: 8px; border-radius: 50%; background: #565c63; }
-        .status-bolha.on { background: #3bd671; box-shadow: 0 0 6px #3bd67199; }
-
-        .divisor { border: 0; border-top: 1px solid var(--borda); margin: 4px 0; }
-
-        .check-linha {
-            display: flex; align-items: flex-start; gap: 8px;
-            font-size: 12px; color: var(--texto-fraco); cursor: pointer;
-            margin-bottom: -6px;
+        .painel-usuario {
+            padding: 10px; border-top: 1px solid var(--borda); background: var(--painel2-vidro, var(--painel2));
+            display: flex; flex-direction: column; gap: 8px;
         }
-        .check-linha input { width: auto; margin-top: 2px; accent-color: var(--sinal); }
+        .cartao-usuario { display: flex; align-items: center; gap: 6px; padding: 4px 2px; }
+        .cartao-usuario .avatar-participante { width: 30px; height: 30px; font-size: 12px; flex-shrink: 0; }
+        .info-usuario-rodape { flex: 1; display: flex; flex-direction: column; min-width: 0; gap: 0; }
+        .nome-usuario-exibido { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .status-usuario-rodape { font-size: 10.5px; color: var(--texto-fraco); }
+        .icone-rodape { background: none; padding: 5px 6px; font-size: 14px; flex-shrink: 0; }
+        .icone-rodape:hover { background: rgba(255,255,255,0.08); }
+        /* Microfone: verde = ligado, vermelho com risco = desligado, apagado = fora da voz */
+        .icone-rodape { position: relative; }
+        .icone-rodape.ativo { background: rgba(59,214,113,0.18); box-shadow: inset 0 0 0 1px rgba(59,214,113,0.55); }
+        .icone-rodape.mudo { background: rgba(255,77,77,0.14); box-shadow: inset 0 0 0 1px rgba(255,77,77,0.5); }
+        .icone-rodape.mudo::after, .icone-mic.mudo::after {
+            content: ''; position: absolute; left: 12%; right: 12%; top: 50%; height: 2px;
+            background: var(--sinal); transform: rotate(-40deg); border-radius: 2px; pointer-events: none;
+        }
+        .icone-mic { position: relative; margin-left: auto; font-size: 12px; line-height: 1; flex-shrink: 0; }
+        .icone-mic.mudo { opacity: 0.65; }
+        .icone-mic + .ponto-qualidade, .icone-silenciado + .ponto-qualidade { margin-left: 8px; }
+        .icone-silenciado { margin-left: 6px; font-size: 12px; flex-shrink: 0; }
 
-        .painel-pendentes {
-            background: rgba(255,176,32,0.08); border: 1px solid rgba(255,176,32,0.3);
-            border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;
+        /* Menu do botão direito (pessoas na voz e canais) */
+        .menu-contexto {
+            position: fixed; z-index: 1100; min-width: 240px; background: var(--painel);
+            border: 1px solid var(--borda); border-radius: 8px; padding: 6px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.55); display: flex; flex-direction: column; gap: 1px;
         }
-        .pedido-item {
-            display: flex; align-items: center; justify-content: space-between; gap: 8px;
-            font-size: 13px;
+        .cabecalho-menu { padding: 6px 10px 8px; font-size: 12px; color: var(--texto-fraco); border-bottom: 1px solid var(--borda); margin-bottom: 4px; }
+        .separador-menu { height: 1px; background: var(--borda); margin: 4px 2px; }
+        .item-menu {
+            display: block; width: 100%; text-align: left; background: none; padding: 8px 10px;
+            border-radius: 5px; font-weight: 500; font-size: 13px;
         }
+        .item-menu:hover:not(:disabled) { background: rgba(255,255,255,0.08); }
+        .item-menu.perigo { color: var(--sinal); }
+
+        /* Excluir canal (aparece ao passar o mouse) */
+        .btn-excluir-canal { margin-left: auto; opacity: 0; font-size: 12px; padding: 0 2px; cursor: pointer; flex-shrink: 0; }
+        .cadeado + .btn-excluir-canal { margin-left: 6px; }
+        .item-canal:hover .btn-excluir-canal { opacity: 0.55; }
+        .item-canal .btn-excluir-canal:hover { opacity: 1; }
+
+        .tela-login {
+            position: fixed; inset: 0; z-index: 3000; display: none;
+            align-items: center; justify-content: center;
+            background: rgba(6, 7, 9, 0.88); backdrop-filter: blur(4px);
+        }
+        .cartao-login {
+            background: var(--painel); border: 1px solid var(--borda); border-radius: 12px;
+            padding: 28px; width: 320px; display: flex; flex-direction: column; gap: 14px;
+            box-shadow: 0 16px 48px rgba(0,0,0,0.6);
+        }
+        .marca-login { display: flex; align-items: center; gap: 9px; font-size: 19px; font-weight: 700; margin-bottom: 4px; }
+        .marca-login .ponto { width: 11px; height: 11px; border-radius: 50%; background: var(--sinal); }
+        .cartao-login label { font-size: 12.5px; color: var(--texto-fraco); }
+        .cartao-login input { padding: 11px 12px; font-size: 14px; }
+        .dica-login { font-size: 12px; line-height: 1.45; color: var(--texto-fraco); margin-top: -6px; }
+        .cartao-login button { padding: 11px; font-size: 14px; background: var(--sinal); color: #1a0505; }
+        .cartao-login button:hover { background: #ff6b6b; }
+        .status-voz-persistente {
+            display: flex; flex-direction: column; gap: 6px; padding: 8px 9px;
+            background: rgba(59, 214, 113, 0.1); border: 1px solid rgba(59, 214, 113, 0.3);
+            border-radius: 6px; cursor: pointer;
+        }
+        .status-voz-persistente:hover { background: rgba(59, 214, 113, 0.16); }
+        .linha-topo-status-voz { display: flex; align-items: center; justify-content: space-between; }
+        .rotulo-voz-conectada { font-size: 11px; font-weight: 700; color: #3bd671; }
+        /* Conectando / aguardando aprovação / reconectando */
+        .status-voz-persistente.instavel { background: rgba(255, 176, 32, 0.1); border-color: rgba(255, 176, 32, 0.35); }
+        .status-voz-persistente.instavel .rotulo-voz-conectada { color: var(--acento); }
+        .status-voz-persistente.instavel .ponto-ao-vivo-mini { background: var(--acento); box-shadow: none; }
+        .icones-status-voz { display: flex; gap: 4px; }
+        .icones-status-voz button { padding: 4px 6px; font-size: 13px; background: none; }
+        .icones-status-voz button:hover { background: rgba(255,255,255,0.08); }
+        #btn-sair-voz { color: var(--sinal); }
+        .linha-canal-servidor { display: flex; align-items: center; gap: 8px; }
+        .ponto-ao-vivo-mini { width: 8px; height: 8px; border-radius: 50%; background: #3bd671; box-shadow: 0 0 6px #3bd671; flex-shrink: 0; }
+        .texto-canal-servidor { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+        .texto-canal-servidor div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        #texto-canal-voz { font-size: 13.5px; font-weight: 600; color: var(--texto); }
+        #texto-servidor-voz { font-size: 11.5px; color: var(--texto-fraco); }
+        .fileira-icones-voz { display: none; gap: 6px; }
+        .fileira-icones-voz.visivel { display: flex; }
+        .fileira-icones-voz button { flex: 1; padding: 8px 0; font-size: 15px; }
+        .fileira-icones-voz button.ativo { background: #3bd671; color: #06230f; }
+
+        .painel-soundboard {
+            flex-direction: column; gap: 6px; padding: 8px;
+            background: rgba(255,255,255,0.03); border: 1px solid var(--borda); border-radius: 8px;
+        }
+        .painel-soundboard button { font-size: 12.5px; justify-content: flex-start; text-align: left; }
+
+        .controles-rodape { display: none; gap: 6px; }
+        .controles-rodape.visivel { display: flex; }
+        .controles-rodape button { flex: 1; padding: 8px; font-size: 15px; }
+        .controles-rodape button.ativo { background: #3bd671; color: #06230f; }
+        #btn-sair-voz { background: var(--sinal); color: #1a0505; }
+        #btn-sair-voz:hover { background: #ff6b6b; }
+
+        /* Coluna 2: conteúdo principal */
+        .coluna-principal { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+        .cabecalho-canal {
+            height: 52px; flex-shrink: 0; display: flex; align-items: center; gap: 8px;
+            padding: 0 18px; border-bottom: 1px solid var(--borda); font-weight: 600; font-size: 15px;
+        }
+        .cabecalho-canal .icone-canal { color: var(--texto-fraco); }
+
+        .area-vazia {
+            flex: 1; display: flex; align-items: center; justify-content: center;
+            color: var(--texto-fraco); font-size: 14px; flex-direction: column; gap: 10px;
+        }
+        .area-vazia .icone { font-size: 36px; opacity: 0.4; }
+
+        /* ---- Área de texto ---- */
+        .area-texto { flex: 1; display: none; flex-direction: column; min-height: 0; }
+        .mensagens-chat { flex: 1; overflow-y: auto; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; }
+        .mensagem-chat { display: flex; gap: 10px; max-width: 640px; }
+        .mensagem-chat .avatar-mensagem {
+            width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0; color: #fff;
+            display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px;
+        }
+        .mensagem-chat .corpo-mensagem { display: flex; flex-direction: column; gap: 2px; }
+        .mensagem-chat .cabecalho-mensagem { display: flex; gap: 8px; align-items: baseline; }
+        .mensagem-chat .autor-mensagem { font-weight: 600; font-size: 13.5px; }
+        .mensagem-chat .hora-mensagem { font-size: 11px; color: var(--texto-fraco); }
+        .mensagem-chat .texto-mensagem { font-size: 14px; line-height: 1.5; word-break: break-word; }
+        .rotulo-sistema { text-align: center; font-size: 12px; color: var(--texto-fraco); padding: 8px 0; }
+
+        .campo-mensagem-wrap { padding: 14px 18px; flex-shrink: 0; }
+        .campo-mensagem-wrap input { padding: 12px 14px; border-radius: 10px; background: #1b1e23; }
+
+        /* ---- Área de voz ---- */
+        .area-voz { flex: 1; display: none; flex-direction: column; min-width: 0; min-height: 0; }
+        .barra-controles-voz {
+            display: flex; align-items: center; gap: 10px; padding: 10px 16px;
+            border-bottom: 1px solid var(--borda); flex-wrap: wrap;
+        }
+        .barra-controles-voz select { width: auto; min-width: 150px; }
+        .barra-controles-voz .espacador { flex: 1; }
+        #btn-atualizar-fontes { padding: 8px 10px; font-size: 14px; }
+        .opcao-discord { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--texto); cursor: pointer; }
+        .opcao-discord input { width: auto; }
+        #btn-transmitir-voz { background: var(--sinal); color: #1a0505; }
+        #btn-transmitir-voz:hover { background: #ff6b6b; }
+        #btn-parar-voz { background: transparent; border: 1px solid var(--sinal); color: var(--sinal); display: none; }
+        #btn-parar-voz:hover { background: rgba(255,77,77,0.1); }
+
+        #painel-personalizado-voz {
+            display: none; flex-direction: column; gap: 8px; padding: 10px;
+            background: rgba(255,255,255,0.03); border: 1px solid var(--borda); border-radius: 8px; font-size: 12.5px;
+        }
+        #painel-personalizado-voz label { color: var(--texto-fraco); }
+        #painel-personalizado-voz .grade-campos { display: flex; flex-direction: column; gap: 10px; }
+        #painel-personalizado-voz .campo { display: flex; flex-direction: column; gap: 4px; width: auto; }
+        #painel-personalizado-voz .linha-campos { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        /* Caixas de largura e altura dividem a linha; o menu de prontas ocupa a linha de baixo */
+        #painel-personalizado-voz .campo-resolucao .linha-campos input { flex: 1; min-width: 0; width: auto; text-align: center; padding-left: 8px; padding-right: 8px; }
+        #painel-personalizado-voz .campo-resolucao .linha-campos select { flex: 0 0 100%; width: 100%; margin-left: 0; }
+        .dica-personalizado { font-size: 11.5px; color: var(--texto-fraco); }
+
+        #painel-pendentes-voz {
+            display: none; margin: 10px 16px 0; background: rgba(255,176,32,0.08);
+            border: 1px solid rgba(255,176,32,0.3); border-radius: 8px; padding: 10px 12px;
+            flex-direction: column; gap: 8px; font-size: 13px;
+        }
+        .pedido-item { display: flex; justify-content: space-between; align-items: center; }
         .pedido-botoes { display: flex; gap: 6px; }
-        .pedido-botoes button {
-            padding: 5px 9px; font-size: 12px; font-weight: 600;
-        }
+        .pedido-botoes button { padding: 5px 9px; font-size: 12px; }
         .btn-aceitar { background: #3bd671; color: #06230f; }
-        .btn-aceitar:hover { background: #58e08a; }
         .btn-recusar { background: transparent; border: 1px solid var(--sinal); color: var(--sinal); }
-        .btn-recusar:hover { background: rgba(255,77,77,0.1); }
 
-        .secao-titulo {
-            font-size: 11px; color: var(--texto-fraco);
-            display: flex; justify-content: space-between; align-items: center;
-        }
-
-        /* ---------- Lista de participantes ---------- */
-        #lista-participantes { display: flex; flex-direction: column; gap: 6px; }
-        .participante-item {
-            display: flex; align-items: center; gap: 10px; padding: 6px 8px;
-            border-radius: 6px; font-size: 13px;
-        }
-        .avatar-participante {
-            width: 26px; height: 26px; border-radius: 50%; background: #2f353c;
-            display: flex; align-items: center; justify-content: center;
-            font-size: 12px; font-weight: 700; color: var(--texto-fraco); flex-shrink: 0;
-        }
-        .participante-item.transmitindo .avatar-participante {
-            background: rgba(255,77,77,0.15); color: var(--sinal); box-shadow: 0 0 0 2px var(--sinal);
-        }
-        .participante-item.falando .avatar-participante {
-            box-shadow: 0 0 0 2px #3bd671, 0 0 8px #3bd67199;
-        }
-        .rotulo-vazio { font-size: 12px; color: var(--texto-fraco); font-style: normal; }
-
-        .participante-item { flex-wrap: wrap; }
-        .envoltorio-slider { width: 100%; display: flex; align-items: center; gap: 8px; margin-top: 2px; }
-        .rotulo-slider { font-size: 10px; color: var(--texto-fraco); white-space: nowrap; width: 82px; flex-shrink: 0; }
-        .slider-volume {
-            flex: 1; accent-color: var(--texto-fraco);
-            height: 4px; cursor: pointer;
-        }
-        .participante-item.falando .rotulo-slider:first-of-type { color: #3bd671; }
-
-        /* ---------- Área principal (grade de monitores) ---------- */
-        .area-principal { flex: 1; padding: 20px; overflow: auto; display: flex; flex-direction: column; gap: 12px; }
-
-        .barra-video { display: none; }
-        .barra-video.visivel { display: flex; justify-content: flex-end; }
-        .btn-toolbar {
-            background: var(--painel); border: 1px solid var(--borda); font-size: 12px;
-            padding: 7px 12px; font-weight: 500; color: var(--texto-fraco);
-        }
-        .btn-toolbar:hover { color: var(--texto); }
-
-        .grade-video {
-            flex: 1;
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-            gap: 16px;
-            align-content: start;
-        }
+        .grade-video { flex: 1; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; padding: 14px; align-content: start; overflow: auto; }
         .grade-video:has(.placeholder-vazio) { display: flex; align-items: center; justify-content: center; }
         .grade-video:has(.tile-video:only-child) { grid-template-columns: 1fr; align-content: stretch; }
         .grade-video:has(.tile-video:only-child) .tile-video { aspect-ratio: unset; }
+        .grade-video.modo-foco { display: flex; flex-direction: column; gap: 12px; }
+        .grade-video.modo-foco > .tile-video--foco { flex: 1; min-height: 0; aspect-ratio: unset; }
+        .linha-miniaturas { display: flex; gap: 10px; height: 100px; flex-shrink: 0; overflow-x: auto; }
+        .linha-miniaturas .tile-video { width: 170px; height: 100%; flex-shrink: 0; aspect-ratio: unset; }
+        .linha-miniaturas .tile-video:hover { outline: 2px solid var(--sinal); }
 
-        /* Modo foco: uma transmissão grande + miniaturas das outras embaixo */
-        .grade-video.modo-foco {
-            display: flex;
-            flex-direction: column;
-            gap: 14px;
-        }
-        .grade-video.modo-foco > .tile-video--foco {
-            flex: 1;
-            min-height: 0;
-            aspect-ratio: unset;
-        }
-        .linha-miniaturas {
-            display: flex;
-            gap: 10px;
-            height: 110px;
-            flex-shrink: 0;
-            overflow-x: auto;
-        }
-        .linha-miniaturas .tile-video {
-            width: 190px;
-            height: 100%;
-            flex-shrink: 0;
-            aspect-ratio: unset;
-        }
-        .linha-miniaturas .tile-video { outline: 2px solid transparent; }
-        .linha-miniaturas .tile-video:hover { outline-color: var(--sinal); }
-
-        .tile-video {
-            position: relative;
-            background: #000;
-            border: 1px solid var(--borda);
-            border-radius: 8px;
-            overflow: hidden;
-            aspect-ratio: 16 / 9;
-        }
+        .tile-video { position: relative; background: #000; border: 1px solid var(--borda); border-radius: 8px; overflow: hidden; aspect-ratio: 16/9; }
         .tile-video.clicavel { cursor: pointer; }
         .tile-video video { width: 100%; height: 100%; object-fit: contain; display: block; }
-        .tile-rotulo {
-            position: absolute; left: 0; right: 0; bottom: 0;
-            padding: 8px 10px; font-size: 12px;
-            background: linear-gradient(to top, rgba(0,0,0,0.75), transparent);
-            display: flex; align-items: center; gap: 6px;
-        }
-        .ponto-ao-vivo {
-            width: 7px; height: 7px; border-radius: 50%; background: var(--sinal);
-            box-shadow: 0 0 6px var(--sinal); animation: pulsar 1.6s ease-in-out infinite;
-            flex-shrink: 0;
-        }
+        .tile-rotulo { position: absolute; left: 0; right: 0; bottom: 0; padding: 7px 10px; font-size: 12px; background: linear-gradient(to top, rgba(0,0,0,0.75), transparent); display: flex; align-items: center; gap: 6px; }
+        .diagnostico-info { margin-left: 8px; font-family: "SFMono-Regular", Consolas, monospace; font-size: 10.5px; color: #c7cbd1; opacity: 0.85; }
+        .ponto-ao-vivo { width: 7px; height: 7px; border-radius: 50%; background: var(--sinal); box-shadow: 0 0 6px var(--sinal); animation: pulsar 1.6s ease-in-out infinite; flex-shrink: 0; }
         @keyframes pulsar { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
-
-        .btn-tela-cheia {
-            position: absolute; top: 8px; right: 8px;
-            width: 30px; height: 30px; border-radius: 6px;
-            background: rgba(0,0,0,0.55); border: 1px solid rgba(255,255,255,0.15);
-            color: var(--texto); font-size: 15px; display: flex; align-items: center; justify-content: center;
-            cursor: pointer; opacity: 0; transition: opacity 0.15s ease;
-        }
+        .btn-tela-cheia { position: absolute; top: 7px; right: 7px; width: 28px; height: 28px; border-radius: 6px; background: rgba(0,0,0,0.55); border: 1px solid rgba(255,255,255,0.15); color: var(--texto); font-size: 14px; display: flex; align-items: center; justify-content: center; cursor: pointer; opacity: 0; transition: opacity 0.15s; }
         .tile-video:hover .btn-tela-cheia { opacity: 1; }
-        .btn-tela-cheia:hover { background: rgba(0,0,0,0.8); }
-        .btn-tela-cheia.pip { right: 46px; font-size: 13px; }
+        .btn-tela-cheia.pip { right: 42px; font-size: 12px; }
+        .btn-tela-cheia.cinema { right: 77px; font-size: 14px; }
+        /* Modo ampliado: só a área de voz fica */
+        body.modo-cinema .barra-servidores, body.modo-cinema .coluna-canais, body.modo-cinema .coluna-membros { display: none; }
+        body.modo-cinema .grade-video { padding: 6px; }
+        .placeholder-vazio { text-align: center; color: var(--texto-fraco); font-size: 13.5px; max-width: 260px; }
+        .placeholder-vazio .icone { font-size: 30px; margin-bottom: 8px; opacity: 0.5; }
 
-        .placeholder-vazio { text-align: center; color: var(--texto-fraco); font-size: 14px; max-width: 280px; }
-        .placeholder-vazio .icone { font-size: 32px; margin-bottom: 10px; opacity: 0.5; }
+        /* Coluna 3: membros */
+        .coluna-membros { width: 280px; flex-shrink: 0; background: var(--painel-vidro, var(--painel)); border-left: 1px solid var(--borda); display: flex; flex-direction: column; min-height: 0; }
+        .abas-direita { display: flex; flex-shrink: 0; border-bottom: 1px solid var(--borda); }
+        .aba-direita { flex: 1; background: none; border-radius: 0; padding: 14px 8px; font-size: 12.5px; color: var(--texto-fraco); border-bottom: 2px solid transparent; }
+        .aba-direita:hover:not(:disabled) { background: rgba(255,255,255,0.03); color: var(--texto); }
+        .aba-direita.ativa { color: var(--texto); border-bottom-color: var(--sinal); }
+        .conteudo-aba { flex: 1; overflow-y: auto; padding: 14px 10px; }
 
-        /* ---------- Copiar ID da sala ---------- */
-        .linha-input-copiar { display: flex; gap: 6px; }
-        .linha-input-copiar input { flex: 1; }
-        #btn-copiar-sala { flex-shrink: 0; padding: 10px 12px; font-size: 14px; }
-        #btn-copiar-sala.copiado { background: #3bd671; }
+        .secao-config { display: flex; flex-direction: column; gap: 8px; padding-bottom: 16px; margin-bottom: 16px; border-bottom: 1px solid var(--borda); }
+        .secao-config:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+        .titulo-config { font-size: 11px; font-weight: 700; color: var(--texto-fraco); letter-spacing: 0.05em; text-transform: uppercase; }
+        .rotulo-config { font-size: 12px; color: var(--texto-fraco); }
+        .dica-config { font-size: 11.5px; line-height: 1.45; color: var(--texto-fraco); }
+        .segmentado { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+        .segmentado button { padding: 8px 2px; font-size: 11.5px; }
+        .segmentado button.ativo { background: var(--sinal); color: #1a0505; }
+        .linha-slider { align-items: center; gap: 10px; }
+        .linha-slider input[type=range] { flex: 1; padding: 0; accent-color: var(--sinal); }
+        .linha-slider span { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; width: 42px; text-align: right; }
+        .linha-botoes-fundo { display: flex; gap: 6px; }
+        .linha-botoes-fundo button { flex: 1; }
 
-        /* ---------- Avatares coloridos (gerados a partir do nome) ---------- */
-        .avatar-participante { color: #fff !important; }
+        /* Tamanho da transmissão na tela (escolhido na aba "Vídeo"). "cheio" é o comportamento normal. */
+        .area-voz[data-tamanho="parcial"] .grade-video:has(.tile-video:only-child) { grid-template-columns: var(--tam-video); justify-content: center; align-content: center; }
+        .area-voz[data-tamanho="parcial"] .grade-video:has(.tile-video:only-child) .tile-video { aspect-ratio: 16 / 9; }
+        .area-voz[data-tamanho="parcial"] .grade-video.modo-foco > .tile-video--foco { flex: 0 0 auto; width: var(--tam-video); align-self: center; aspect-ratio: 16 / 9; }
 
-        /* ---------- Indicador de qualidade de conexão ---------- */
-        .ponto-qualidade {
-            width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
-            margin-left: auto;
-        }
-        .ponto-qualidade.excelente { background: #3bd671; }
-        .ponto-qualidade.boa { background: #ffb020; }
-        .ponto-qualidade.ruim { background: var(--sinal); }
-        .ponto-qualidade.desconhecida { background: #565c63; }
+        /* Caixa de texto (substitui o prompt(), que o Electron não suporta) */
+        .titulo-modal { font-size: 17px; font-weight: 700; }
+        .opcao-modal { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; color: var(--texto); cursor: pointer; line-height: 1.4; }
+        .botoes-modal { display: flex; gap: 8px; }
+        .botoes-modal button { flex: 1; }
+        .cartao-login button.btn-secundario { background: #262b31; color: var(--texto); }
+        .cartao-login button.btn-secundario:hover { background: #31373e; }
+        .secao-titulo-membros { font-size: 11px; color: var(--texto-fraco); font-weight: 600; padding: 4px 6px 8px; }
+        .item-membro { display: flex; align-items: center; gap: 9px; padding: 6px; border-radius: 6px; cursor: pointer; font-size: 13.5px; }
+        .item-membro:hover { background: rgba(255,255,255,0.04); }
+        .item-membro .info-membro { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+        .item-membro .info-membro span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .item-membro .legenda-canal-voz { font-size: 10.5px; color: var(--texto-fraco); }
+        .avatar-participante { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 12px; color: #fff; flex-shrink: 0; }
+        .item-membro.transmitindo .avatar-participante { box-shadow: 0 0 0 2px var(--sinal); }
+        .item-membro.falando .avatar-participante { box-shadow: 0 0 0 2px #3bd671, 0 0 8px #3bd67199; }
+        .ponto-qualidade { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; margin-left: auto; }
+        .ponto-qualidade.excelente { background: #3bd671; } .ponto-qualidade.boa { background: #ffb020; }
+        .ponto-qualidade.ruim { background: var(--sinal); } .ponto-qualidade.desconhecida { background: #565c63; }
 
-        /* ---------- Notificações flutuantes (em vez de alert()) ---------- */
-        #container-notificacoes {
-            position: fixed; bottom: 20px; right: 20px; z-index: 2000;
-            display: flex; flex-direction: column-reverse; gap: 8px;
-            pointer-events: none;
-        }
-        .notificacao {
-            background: var(--painel); border: 1px solid var(--borda);
-            border-left: 3px solid var(--sinal); border-radius: 6px;
-            padding: 12px 16px; font-size: 13px; max-width: 320px;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.4);
-            animation: entrar-notificacao 0.2s ease;
-        }
+        /* ---------- Painel flutuante de áudio por pessoa ---------- */
+        .painel-audio-pessoa { position: fixed; z-index: 1000; background: var(--painel); border: 1px solid var(--borda); border-radius: 8px; padding: 14px; width: 270px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 10px; }
+        .painel-audio-pessoa .titulo-painel { font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+        .painel-audio-pessoa .titulo-painel button { background: none; padding: 2px 6px; font-size: 14px; color: var(--texto-fraco); }
+        .btn-mic-toggle.ativo { background: #3bd671; color: #06230f; }
+        .btn-mic-teste.ativo { background: var(--acento); color: #2b1a00; }
+        .btn-parar-transmissao-alheia { background: transparent; border: 1px solid var(--sinal); color: var(--sinal); font-size: 12px; }
+        .envoltorio-slider { width: 100%; display: flex; align-items: center; gap: 8px; }
+        .rotulo-slider { font-size: 10px; color: var(--texto-fraco); white-space: nowrap; width: 82px; flex-shrink: 0; }
+        .slider-volume { flex: 1; accent-color: var(--texto-fraco); height: 4px; cursor: pointer; }
+
+        /* ---------- Notificações ---------- */
+        #container-notificacoes { position: fixed; bottom: 20px; right: 20px; z-index: 2000; display: flex; flex-direction: column-reverse; gap: 8px; pointer-events: none; }
+        .notificacao { background: var(--painel); border: 1px solid var(--borda); border-left: 3px solid var(--sinal); border-radius: 6px; padding: 12px 16px; font-size: 13px; max-width: 320px; box-shadow: 0 4px 16px rgba(0,0,0,0.4); animation: entrar-notificacao 0.2s ease; }
         .notificacao.info { border-left-color: #3bd671; }
-        @keyframes entrar-notificacao {
-            from { opacity: 0; transform: translateX(20px); }
-            to { opacity: 1; transform: translateX(0); }
+        @keyframes entrar-notificacao { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+
+
+        /* ---------- Barra de servidores (esquerda) ---------- */
+        .barra-servidores {
+            width: 68px; flex-shrink: 0; background: var(--painel-vidro, var(--painel));
+            border-right: 1px solid var(--borda); display: flex; flex-direction: column; align-items: center;
+            gap: 8px; padding: 10px 0; overflow-y: auto;
         }
+        .barra-servidores::-webkit-scrollbar { width: 0; }
+        .btn-servidor { position: relative; width: 46px; height: 46px; padding: 0; border-radius: 50%; background: none; border: none; flex-shrink: 0; }
+        .btn-servidor .icone-servidor { transition: border-radius 0.15s ease, transform 0.15s ease; }
+        .btn-servidor:hover .icone-servidor { border-radius: 14px; }
+        .btn-servidor.ativo .icone-servidor { border-radius: 14px; }
+        .btn-servidor.ativo::before { content: ''; position: absolute; left: -11px; top: 12px; width: 4px; height: 22px; border-radius: 0 4px 4px 0; background: var(--texto); }
+        .icone-servidor {
+            width: 46px; height: 46px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+            font-weight: 700; font-size: 17px; color: #fff; overflow: hidden; flex-shrink: 0; background: #2a2f35;
+        }
+        .icone-servidor img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .icone-servidor.grande { width: 64px; height: 64px; font-size: 24px; border-radius: 16px; }
+        .btn-servidor-add .icone-servidor { background: transparent; border: 1px dashed var(--borda); color: var(--texto-fraco); font-size: 22px; }
+        .btn-servidor-add:hover .icone-servidor { color: var(--texto); border-color: var(--texto-fraco); }
+        .separador-servidores { width: 28px; height: 1px; background: var(--borda); flex-shrink: 0; }
+
+        /* ---------- Janelas de servidor (criar / entrar / ajustes) ---------- */
+        .cartao-largo { width: 440px; max-width: calc(100vw - 32px); max-height: calc(100vh - 40px); overflow-y: auto; }
+        .abas-inicio { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+        .cartao-login .abas-inicio button { background: #262b31; color: var(--texto-fraco); padding: 9px; font-size: 13px; }
+        .cartao-login .abas-inicio button.ativo { background: var(--sinal); color: #1a0505; }
+        .linha-icone { display: flex; align-items: center; gap: 12px; }
+        .linha-icone .botoes-icone { display: flex; flex-direction: column; gap: 6px; }
+        .cartao-login .linha-icone button { padding: 7px 12px; font-size: 12.5px; }
+        .cartao-login input[type=color] { width: 44px; height: 34px; padding: 2px; cursor: pointer; }
+        .secao-ajustes { display: flex; flex-direction: column; gap: 8px; padding-top: 14px; border-top: 1px solid var(--borda); }
+        .titulo-ajustes { font-size: 11px; font-weight: 700; color: var(--texto-fraco); letter-spacing: 0.05em; text-transform: uppercase; }
+        .linha-ajuste { display: flex; align-items: center; gap: 8px; }
+        .linha-ajuste input[type=text] { flex: 1; min-width: 0; }
+        .cartao-login .linha-ajuste button, .cartao-login .secao-ajustes button { padding: 7px 12px; font-size: 12.5px; }
+        .cartao-login button.btn-perigo { background: transparent; border: 1px solid var(--sinal); color: var(--sinal); }
+        .cartao-login button.btn-perigo:hover { background: rgba(255,77,77,0.12); }
+        .item-lista-ajustes { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; background: rgba(255,255,255,0.03); font-size: 13px; }
+        .item-lista-ajustes .rotulo { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .item-lista-ajustes .sub { color: var(--texto-fraco); font-size: 11.5px; }
+        .codigo-convite { font-family: Consolas, monospace; font-size: 16px; letter-spacing: 0.08em; }
+        .cartao-login .item-lista-ajustes button { padding: 4px 9px; font-size: 12px; }
+        #inicio-erro, #ajustes-erro { color: var(--sinal); font-size: 12.5px; min-height: 0; }
+
+
+        /* ---------- Controles de volume ---------- */
+        .controle-volume { display: flex; flex-direction: column; gap: 4px; width: 100%; }
+        .rotulo-volume { font-size: 11.5px; color: var(--texto-fraco); }
+        .linha-volume { display: flex; align-items: center; gap: 6px; }
+        .linha-volume .slider-volume { flex: 1; min-width: 0; padding: 0; height: 18px; accent-color: var(--sinal); cursor: pointer; }
+        .linha-volume button { background: rgba(255,255,255,0.07); padding: 0; width: 24px; height: 24px; border-radius: 6px; font-size: 14px; line-height: 1; flex-shrink: 0; }
+        .linha-volume button:hover { background: rgba(255,255,255,0.14); }
+        .campo-volume { width: 46px; padding: 4px 4px; font-size: 12px; text-align: right; flex-shrink: 0; -moz-appearance: textfield; }
+        .campo-volume::-webkit-outer-spin-button, .campo-volume::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        .pct-volume { font-size: 12px; color: var(--texto-fraco); margin-left: -3px; flex-shrink: 0; }
+        .tile-nome.com-audio { cursor: pointer; padding: 2px 8px; border-radius: 6px; background: rgba(255,255,255,0.1); }
+        .tile-nome.com-audio:hover { background: rgba(255,255,255,0.22); }
+        .painel-audio-pessoa button { font-size: 12.5px; }
+        .tile-volume {
+            position: absolute; right: 8px; bottom: 8px; width: 230px; max-width: calc(100% - 16px); z-index: 3;
+            padding: 6px 8px; border-radius: 8px; background: rgba(0,0,0,0.62); border: 1px solid rgba(255,255,255,0.12);
+            opacity: 0; transition: opacity 0.15s; cursor: default;
+        }
+        .tile-video:hover .tile-volume, .tile-volume:focus-within { opacity: 1; }
+        .tile-video:fullscreen { aspect-ratio: auto; border: none; border-radius: 0; width: 100vw; height: 100vh; }
+        .tile-video:fullscreen video { width: 100%; height: 100%; }
+
+        #modal-texto { z-index: 3100; }
+
+        ::-webkit-scrollbar { width: 9px; } ::-webkit-scrollbar-thumb { background: #2a2f35; border-radius: 5px; }
     </style>
 </head>
 <body>
 
-    <div class="barra-lateral">
-        <div class="marca">
-            <span class="ponto"></span>
-            <h1>Concord</h1>
+    <div class="fundo-app" id="fundo-app"></div>
+
+    <div class="app">
+        <!-- Barra de servidores -->
+        <nav class="barra-servidores" id="barra-servidores" aria-label="Servidores"></nav>
+        <!-- Coluna 1: canais -->
+        <div class="coluna-canais">
+            <div class="cabecalho-servidor"><span class="ponto"></span><span id="nome-servidor-cabecalho">Meu Servidor</span><button id="btn-renomear-servidor" class="btn-icone-cabecalho" title="Ajustes do servidor">⚙️</button></div>
+            <div class="lista-canais">
+                <div class="secao-canais">
+                    <div class="titulo-secao-canais"><span>CANAIS DE TEXTO</span><button id="btn-add-texto" title="Criar canal de texto">+</button></div>
+                    <div id="lista-canais-texto"></div>
+                </div>
+                <div class="secao-canais">
+                    <div class="titulo-secao-canais"><span>CANAIS DE VOZ</span><button id="btn-add-voz" title="Criar canal de voz">+</button></div>
+                    <div id="lista-canais-voz"></div>
+                </div>
+            </div>
+            <div class="painel-usuario">
+                <div class="cartao-usuario" id="cartao-usuario">
+                    <span class="avatar-participante" id="avatar-usuario-exibido"></span>
+                    <span class="info-usuario-rodape">
+                        <span id="nome-usuario-exibido" class="nome-usuario-exibido">—</span>
+                        <span id="status-usuario-rodape" class="status-usuario-rodape" style="display:none;">🔊 Em voz</span>
+                    </span>
+                    <button id="btn-microfone-rodape" class="icone-rodape" title="Entre num canal de voz pra usar o microfone" disabled>🎤</button>
+                    <button id="btn-editar-nome" class="icone-rodape" title="Trocar nome">✏️</button>
+                </div>
+                <div class="status-voz-persistente" id="status-voz-persistente" style="display:none;">
+                    <div class="linha-topo-status-voz">
+                        <div class="rotulo-voz-conectada" id="rotulo-voz-conectada">Voz conectada</div>
+                        <div class="icones-status-voz">
+                            <button id="btn-surdo-rodape" title="Silenciar áudio recebido">🔊</button>
+                            <button id="btn-sair-voz" title="Sair do canal de voz">📞</button>
+                        </div>
+                    </div>
+                    <div class="linha-canal-servidor">
+                        <span class="ponto-ao-vivo-mini"></span>
+                        <div class="texto-canal-servidor">
+                            <div id="texto-canal-voz">—</div>
+                            <div id="texto-servidor-voz">—</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="fileira-icones-voz" id="fileira-icones-voz">
+                    <button id="btn-camera-rodape" title="Ativar/desativar câmera">📹</button>
+                    <button id="btn-tela-rodape" title="Iniciar/parar transmissão de tela">🖥️</button>
+                    <button id="btn-membros-rodape" title="Mostrar/esconder participantes">👥</button>
+                    <button id="btn-soundboard-rodape" title="Soundboard">🔈</button>
+                </div>
+
+                <div id="painel-soundboard" class="painel-soundboard" style="display:none;">
+                    <button data-som="buzina">📯 Buzina</button>
+                    <button data-som="aplausos">👏 Aplausos</button>
+                    <button data-som="alarme">🚨 Alarme</button>
+                </div>
+
+            </div>
         </div>
 
-        <label>Seu nome</label>
-        <input type="text" id="input-usuario" placeholder="Ex: Mateus">
+        <!-- Coluna 2: conteúdo -->
+        <div class="coluna-principal">
+            <div class="cabecalho-canal" id="cabecalho-canal">
+                <span>Selecione um canal na lateral</span>
+            </div>
 
-        <label>ID da sala (canal)</label>
-        <div class="linha-input-copiar">
-            <input type="text" id="input-sala" placeholder="Ex: sala-dos-guri">
-            <button id="btn-copiar-sala" title="Copiar nome da sala">📋</button>
+            <div class="area-vazia" id="area-vazia">
+                <div class="icone">💬</div>
+                <div>Escolha um canal de texto ou de voz pra começar.</div>
+            </div>
+
+            <!-- Texto -->
+            <div class="area-texto" id="area-texto">
+                <div class="mensagens-chat" id="mensagens-chat"></div>
+                <div class="campo-mensagem-wrap">
+                    <input type="text" id="input-mensagem" placeholder="Enviar mensagem...">
+                </div>
+            </div>
+
+            <!-- Voz -->
+            <div class="area-voz" id="area-voz">
+                <div class="barra-controles-voz">
+                    <select id="select-fontes" disabled><option value="">Escolha o que transmitir...</option></select>
+                    <button id="btn-atualizar-fontes" title="Atualizar a lista de janelas (use depois de abrir um jogo)">🔄</button>
+                    <div class="espacador"></div>
+                    <button id="btn-transmitir-voz" disabled>Iniciar transmissão</button>
+                    <button id="btn-parar-voz">Parar transmissão</button>
+                </div>
+
+                <div id="painel-pendentes-voz">
+                    <div style="font-weight:600;">Pedidos de entrada</div>
+                    <div id="lista-pendentes-voz"><div style="color:var(--texto-fraco);font-size:12.5px;">Ninguém esperando.</div></div>
+                </div>
+
+                <div class="grade-video" id="grade-video">
+                    <div class="placeholder-vazio"><div class="icone">▢</div>Nenhuma transmissão ativa neste canal</div>
+                </div>
+            </div>
         </div>
 
-        <label class="check-linha">
-            <input type="checkbox" id="check-exigir-aprovacao">
-            Exigir aprovação para entrar (você vira o anfitrião)
-        </label>
+        <!-- Coluna 3: abas (Membros / Vídeo) -->
+        <div class="coluna-membros">
+            <div class="abas-direita">
+                <button class="aba-direita ativa" data-aba="membros">👥 Membros</button>
+                <button class="aba-direita" data-aba="video">🎛️ Vídeo</button>
+                <button class="aba-direita" data-aba="visual">🎨 Visual</button>
+            </div>
 
-        <button id="btn-conectar">Entrar na sala</button>
-        <div class="status-linha">
-            <span class="status-bolha" id="status-bolha"></span>
-            <span id="status-texto">Desconectado</span>
-        </div>
+            <div class="conteudo-aba" id="aba-membros">
+                <div class="secao-titulo-membros" id="titulo-online">ONLINE — 0</div>
+                <div id="lista-online"></div>
 
-        <div id="painel-pendentes" class="painel-pendentes" style="display: none;">
-            <div class="secao-titulo"><span>Pedidos de entrada</span></div>
-            <div id="lista-pendentes"></div>
-        </div>
+                <div class="secao-titulo-membros" id="titulo-membros" style="display:none; margin-top:16px;">EM VOZ — 0</div>
+                <div id="lista-membros"></div>
+            </div>
 
-        <hr class="divisor">
+            <div class="conteudo-aba" id="aba-video" style="display:none;">
+                <div class="secao-config">
+                    <div class="titulo-config">Tamanho na sua tela</div>
+                    <div class="rotulo-config">Como você vê a transmissão dos outros</div>
+                    <div class="segmentado" id="seg-tamanho">
+                        <button data-tam="pequeno">Pequena</button>
+                        <button data-tam="medio">Média</button>
+                        <button data-tam="grande" class="ativo">Grande</button>
+                        <button data-tam="personalizado">Outra</button>
+                    </div>
+                    <div class="linha-slider" id="linha-slider-tamanho" style="display:none;">
+                        <input type="range" id="slider-tamanho-video" min="25" max="100" step="5" value="100">
+                        <span id="valor-tamanho-video">100%</span>
+                    </div>
+                    <div class="dica-config">"Grande" ocupa toda a área. Pra tela cheia de verdade, passe o mouse sobre a transmissão e use o botão ⤢.</div>
+                </div>
 
-        <label>O que deseja transmitir?</label>
-        <select id="select-fontes" disabled>
-            <option>Aguardando conexão...</option>
-        </select>
+                <div class="secao-config">
+                    <div class="titulo-config">Qualidade do que você envia</div>
+                    <select id="select-qualidade">
+                        <option value="automatico">Automático — 1080p30</option>
+                        <option value="alta">Alta — 1080p60</option>
+                        <option value="balanceado">Balanceado — 720p30</option>
+                        <option value="economia">Economia — 480p15</option>
+                        <option value="personalizado">Personalizado...</option>
+                    </select>
+                <div id="painel-personalizado-voz">
+                            <div class="grade-campos">
+                                <div class="campo campo-resolucao"><label>Resolução (largura × altura)</label>
+                                    <div class="linha-campos">
+                                        <input type="number" id="custom-largura" value="1920" min="160" max="3840" step="2">
+                                        <span>×</span>
+                                        <input type="number" id="custom-altura" value="1080" min="90" max="2160" step="2">
+                                        <select id="custom-preset" title="Resoluções prontas">
+                                            <option value="">Prontas...</option>
+                                            <option value="854x480">480p</option>
+                                            <option value="1280x720">720p</option>
+                                            <option value="1920x1080">1080p</option>
+                                            <option value="2560x1440">1440p</option>
+                                            <option value="3840x2160">4K</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="campo"><label>FPS máx.</label><input type="number" id="custom-fps" value="60" min="1" max="60"></div>
+                                <div class="campo"><label>Bitrate (Mbps)</label><input type="number" id="custom-bitrate" value="6" min="0.1" max="50" step="0.1"></div>
+                                <div class="campo"><label><input type="checkbox" id="custom-simulcast" style="width:auto"> Simulcast</label></div>
+                            </div>
+                            <div class="dica-personalizado">Limites: resolução de 160×90 até 3840×2160 · FPS de 1 a 60 · bitrate de 0,1 a 50 Mbps. Valores fora disso são ajustados sozinhos.</div>
+                        </div>
+                    <div class="rotulo-config">Codec de vídeo</div>
+                    <select id="select-codec" title="H264 usa a placa de vídeo (alivia o processador); VP8 usa o processador. Não dá pra trocar durante a transmissão.">
+                        <option value="h264">H264 (placa de vídeo)</option>
+                        <option value="vp8">VP8 (processador)</option>
+                    </select>
+                </div>
 
-        <label>Qualidade da transmissão</label>
-        <select id="select-qualidade">
-            <option value="automatico">Automático (recomendado)</option>
-            <option value="alta">Alta qualidade — 1080p60</option>
-            <option value="balanceado">Balanceado — 720p30</option>
-            <option value="economia">Economia de dados — 480p15</option>
-        </select>
+                <div class="secao-config">
+                    <div class="titulo-config">Discord</div>
+                    <label class="opcao-discord" title="Mostra no seu perfil do Discord o nome da janela que você está transmitindo. Desmarque se o título puder revelar algo que você não quer mostrar (por exemplo, a aba do navegador).">
+                        <input type="checkbox" id="check-mostrar-janela" checked> <span>Mostrar a janela no Discord</span>
+                    </label>
+                </div>
+            </div>
 
-        <button id="btn-transmitir" disabled>Iniciar transmissão</button>
-        <button id="btn-parar">Parar transmissão</button>
+            <div class="conteudo-aba" id="aba-visual" style="display:none;">
+                <div class="secao-config">
+                    <div class="titulo-config">Foto de fundo</div>
+                    <div class="dica-config">Aparece só no seu computador. A foto é reduzida (até 1920 px) e guardada dentro do app, então fica leve.</div>
+                    <div class="linha-botoes-fundo">
+                        <button id="btn-escolher-fundo">Escolher foto</button>
+                        <button id="btn-remover-fundo" disabled>Remover</button>
+                    </div>
+                    <input type="file" id="input-arquivo-fundo" accept="image/*" style="display:none;">
+                    <div class="dica-config" id="info-fundo">Nenhuma foto escolhida.</div>
 
-        <hr class="divisor">
-
-        <div class="secao-titulo">
-            <span>Na sala</span>
-            <span class="mono" id="contagem-participantes">0</span>
-        </div>
-        <div id="lista-participantes">
-            <div class="rotulo-vazio">Ninguém conectado ainda.</div>
-        </div>
-    </div>
-
-    <div class="area-principal">
-        <div class="barra-video" id="barra-video">
-            <button class="btn-toolbar" id="btn-ver-grade">◱ Ver todas em grade</button>
-        </div>
-        <div class="grade-video" id="grade-video">
-            <div class="placeholder-vazio">
-                <div class="icone">▢</div>
-                Nenhuma transmissão ativa na sala
+                    <div class="rotulo-config">Escurecer a foto</div>
+                    <div class="linha-slider" style="display:flex;">
+                        <input type="range" id="slider-fundo-escuro" min="0" max="90" step="5" value="60">
+                        <span id="valor-fundo-escuro">60%</span>
+                    </div>
+                    <div class="rotulo-config">Desfoque</div>
+                    <div class="linha-slider" style="display:flex;">
+                        <input type="range" id="slider-fundo-desfoque" min="0" max="20" step="1" value="0">
+                        <span id="valor-fundo-desfoque">0 px</span>
+                    </div>
+                    <div class="dica-config">Se o texto ficar difícil de ler, aumente o escurecimento.</div>
+                </div>
             </div>
         </div>
     </div>
 
-    <!-- Carregado localmente via UMD: sem nodeIntegration, o renderer não pode
-         mais fazer require('livekit-client') diretamente.
-         O arquivo abaixo vem de node_modules/livekit-client/dist/. -->
     <div id="container-notificacoes"></div>
 
+    <div id="modal-texto" class="tela-login">
+        <div class="cartao-login">
+            <div class="titulo-modal" id="modal-texto-titulo">Título</div>
+            <div id="modal-texto-dica" class="dica-login" style="display:none;"></div>
+            <input type="text" id="modal-texto-input" maxlength="40">
+            <label id="modal-texto-check-linha" class="opcao-modal" style="display:none;">
+                <input type="checkbox" id="modal-texto-check" style="width:auto"> <span id="modal-texto-check-rotulo"></span>
+            </label>
+            <div class="botoes-modal">
+                <button id="modal-texto-cancelar" class="btn-secundario">Cancelar</button>
+                <button id="modal-texto-ok">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Primeira abertura / criar ou entrar num servidor -->
+    <div id="tela-inicio" class="tela-login">
+        <div class="cartao-login cartao-largo">
+            <div class="marca-login"><span class="ponto"></span> <span id="inicio-titulo">Bem-vindo ao Estrivisor</span></div>
+            <div id="inicio-texto" class="dica-login"></div>
+            <div class="abas-inicio">
+                <button id="inicio-aba-criar" class="ativo">Criar meu servidor</button>
+                <button id="inicio-aba-entrar">Entrar com convite</button>
+            </div>
+            <div id="inicio-criar" style="display:flex; flex-direction:column; gap:10px;">
+                <label for="inicio-nome">Nome do servidor</label>
+                <input type="text" id="inicio-nome" maxlength="30" placeholder="Ex: Os Parça">
+                <label>Ícone (opcional)</label>
+                <div class="linha-icone">
+                    <span id="inicio-previa" class="icone-servidor grande">?</span>
+                    <div class="botoes-icone">
+                        <button id="inicio-escolher-icone" class="btn-secundario">Escolher imagem</button>
+                        <button id="inicio-remover-icone" class="btn-secundario" style="display:none;">Remover</button>
+                    </div>
+                    <input type="file" id="inicio-arquivo" accept="image/*" style="display:none;">
+                </div>
+                <div class="dica-login">Cada pessoa pode ter 1 servidor. Depois você muda nome, ícone e canais quando quiser.</div>
+                <button id="inicio-criar-ok">Criar servidor</button>
+            </div>
+            <div id="inicio-entrar" style="display:none; flex-direction:column; gap:10px;">
+                <label for="inicio-codigo">Código do convite</label>
+                <input type="text" id="inicio-codigo" maxlength="12" placeholder="ABCD-EFGH" autocomplete="off" spellcheck="false">
+                <div class="dica-login">Peça o código a quem já está no servidor. Ele vale por 7 dias.</div>
+                <button id="inicio-entrar-ok">Entrar no servidor</button>
+            </div>
+            <div id="inicio-erro"></div>
+            <button id="inicio-fechar" class="btn-secundario" style="display:none;">Fechar</button>
+        </div>
+    </div>
+
+    <!-- Ajustes do servidor -->
+    <div id="modal-ajustes" class="tela-login">
+        <div class="cartao-login cartao-largo">
+            <div class="marca-login"><span class="icone-servidor" id="ajustes-icone" style="width:34px;height:34px;font-size:14px;border-radius:10px;"></span> <span id="ajustes-titulo">Servidor</span></div>
+            <div id="ajustes-aparencia" class="secao-ajustes" style="border-top:none; padding-top:0;">
+                <div class="titulo-ajustes">Aparência</div>
+                <div class="linha-ajuste">
+                    <input type="text" id="ajustes-nome" maxlength="30">
+                    <button id="ajustes-salvar-nome">Salvar nome</button>
+                </div>
+                <div class="linha-icone">
+                    <div class="botoes-icone" style="flex-direction:row; flex-wrap:wrap;">
+                        <button id="ajustes-escolher-icone" class="btn-secundario">Trocar ícone</button>
+                        <button id="ajustes-remover-icone" class="btn-secundario">Remover ícone</button>
+                    </div>
+                    <input type="file" id="ajustes-arquivo" accept="image/*" style="display:none;">
+                </div>
+                <div class="linha-ajuste">
+                    <span class="dica-login" style="margin:0;">Cor do servidor</span>
+                    <input type="color" id="ajustes-cor" value="#5865f2">
+                    <button id="ajustes-limpar-cor" class="btn-secundario">Automática</button>
+                </div>
+            </div>
+            <div class="secao-ajustes">
+                <div class="titulo-ajustes">Convites</div>
+                <div class="dica-login" style="margin:0;">Qualquer membro pode gerar. Cada código vale 7 dias.</div>
+                <div class="linha-ajuste"><button id="ajustes-gerar-convite">Gerar convite</button></div>
+                <div id="ajustes-convite-novo"></div>
+                <div id="ajustes-convites"></div>
+            </div>
+            <div class="secao-ajustes">
+                <div class="titulo-ajustes" id="ajustes-titulo-membros">Membros</div>
+                <div id="ajustes-membros" style="display:flex; flex-direction:column; gap:4px;"></div>
+            </div>
+            <div class="secao-ajustes">
+                <button id="ajustes-perigo" class="btn-perigo">Sair do servidor</button>
+            </div>
+            <div id="ajustes-erro"></div>
+            <button id="ajustes-fechar" class="btn-secundario">Fechar</button>
+        </div>
+    </div>
+
+    <div id="tela-login" class="tela-login">
+        <div class="cartao-login">
+            <div class="marca-login"><span class="ponto"></span> Estrivisor</div>
+            <label>Como você quer ser chamado?</label>
+            <div id="dica-login" class="dica-login" style="display:none;">Você entrou com seu perfil do Discord. Se quiser um apelido só aqui, digite abaixo. Deixe em branco pra usar o nome do Discord.</div>
+            <input type="text" id="input-login-nome" placeholder="Ex: Mateus" maxlength="30">
+            <button id="btn-login-entrar">Entrar</button>
+        </div>
+    </div>
+
     <script src="./node_modules/livekit-client/dist/livekit-client.umd.js"></script>
-
-    <script>
-        // Nada de 'require' aqui: contextIsolation está ativo.
-        // Toda ponte com o processo principal passa por window.electronAPI (preload.js).
-        // ---------- Notificações flutuantes (substituem o alert()) ----------
-        function mostrarNotificacao(mensagem, tipo) {
-            const container = document.getElementById('container-notificacoes');
-            const nota = document.createElement('div');
-            nota.className = 'notificacao' + (tipo === 'info' ? ' info' : '');
-            nota.textContent = mensagem;
-            container.appendChild(nota);
-            setTimeout(() => nota.remove(), 4500);
-        }
-
-        // ---------- Cor de avatar consistente, gerada a partir do nome ----------
-        function corDoAvatar(texto) {
-            let hash = 0;
-            for (let i = 0; i < texto.length; i++) {
-                hash = texto.charCodeAt(i) + ((hash << 5) - hash);
-            }
-            const matiz = Math.abs(hash) % 360;
-            return `hsl(${matiz}, 48%, 38%)`;
-        }
-
-        let currentRoom = null;
-        let idTileLocal = null; // trackSid da própria transmissão, se houver
-
-        // trackSid -> { videoEl, nome, ehVoce }
-        const tiles = new Map();
-        let trackEmFoco = null; // trackSid em destaque, quando há várias transmissões
-
-        const grade = document.getElementById('grade-video');
-        const barraVideo = document.getElementById('barra-video');
-
-        // Cada perfil define resolução/fps/bitrate máximos. "Automático"
-        // liga o simulcast: a transmissão sai em múltiplas qualidades ao
-        // mesmo tempo, e o LiveKit entrega a cada espectador a versão que
-        // a internet dele aguenta — é o mais próximo de um ajuste
-        // automático conforme a conexão de cada pessoa.
-        const PERFIS_QUALIDADE = {
-            automatico:  { resolution: { width: 1920, height: 1080 }, maxFramerate: 30, maxBitrate: 3_000_000, simulcast: true },
-            alta:        { resolution: { width: 1920, height: 1080 }, maxFramerate: 60, maxBitrate: 6_000_000, simulcast: false },
-            balanceado:  { resolution: { width: 1280, height: 720 },  maxFramerate: 30, maxBitrate: 2_000_000, simulcast: false },
-            economia:    { resolution: { width: 854,  height: 480 },  maxFramerate: 15, maxBitrate: 700_000,   simulcast: false },
-        };
-
-        function criarElementoTile(trackSid, info, grande) {
-            const tile = document.createElement('div');
-            tile.className = 'tile-video' + (grande ? ' tile-video--foco' : '');
-            tile.id = 'tile-' + trackSid;
-
-            info.videoEl.autoplay = true;
-            tile.appendChild(info.videoEl);
-
-            const btnTelaCheia = document.createElement('button');
-            btnTelaCheia.className = 'btn-tela-cheia';
-            btnTelaCheia.title = 'Tela cheia';
-            btnTelaCheia.innerHTML = '⤢';
-            btnTelaCheia.addEventListener('click', (e) => {
-                e.stopPropagation();
-                if (info.videoEl.requestFullscreen) info.videoEl.requestFullscreen();
-            });
-            tile.appendChild(btnTelaCheia);
-
-            // Janela flutuante: fica fora da janela do app, pode ser
-            // arrastada pra outro monitor e redimensionada livremente,
-            // mantendo a proporção — sem precisar de uma janela Electron nova.
-            if (document.pictureInPictureEnabled) {
-                const btnPip = document.createElement('button');
-                btnPip.className = 'btn-tela-cheia pip';
-                btnPip.title = 'Janela flutuante (arrastável, redimensionável)';
-                btnPip.innerHTML = '⧉';
-                btnPip.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    info.videoEl.requestPictureInPicture().catch(err => {
-                        console.error('Erro ao abrir janela flutuante:', err);
-                    });
-                });
-                tile.appendChild(btnPip);
-            }
-
-            const rotulo = document.createElement('div');
-            rotulo.className = 'tile-rotulo';
-            rotulo.innerHTML = `<span class="ponto-ao-vivo"></span> ${info.nome}${info.ehVoce ? ' (você)' : ''}`;
-            tile.appendChild(rotulo);
-
-            // Com mais de uma transmissão ativa, clicar em qualquer uma
-            // (grande ou miniatura) a coloca em destaque — como no Discord.
-            if (tiles.size > 1) {
-                tile.classList.add('clicavel');
-                tile.addEventListener('click', () => {
-                    trackEmFoco = trackSid;
-                    renderizarVideo();
-                });
-            }
-
-            return tile;
-        }
-
-        function renderizarVideo() {
-            grade.innerHTML = '';
-
-            if (tiles.size === 0) {
-                grade.className = 'grade-video';
-                barraVideo.classList.remove('visivel');
-                grade.innerHTML = `
-                    <div class="placeholder-vazio">
-                        <div class="icone">▢</div>
-                        Nenhuma transmissão ativa na sala
-                    </div>`;
-                return;
-            }
-
-            if (tiles.size === 1) {
-                grade.className = 'grade-video';
-                barraVideo.classList.remove('visivel');
-                const [trackSid, info] = [...tiles.entries()][0];
-                grade.appendChild(criarElementoTile(trackSid, info, true));
-                return;
-            }
-
-            // Duas ou mais transmissões: se alguma estiver em foco, mostra
-            // ela grande + as demais como miniaturas clicáveis embaixo.
-            if (trackEmFoco && tiles.has(trackEmFoco)) {
-                grade.className = 'grade-video modo-foco';
-                barraVideo.classList.add('visivel');
-
-                const infoFoco = tiles.get(trackEmFoco);
-                grade.appendChild(criarElementoTile(trackEmFoco, infoFoco, true));
-
-                const linha = document.createElement('div');
-                linha.className = 'linha-miniaturas';
-                tiles.forEach((info, trackSid) => {
-                    if (trackSid === trackEmFoco) return;
-                    linha.appendChild(criarElementoTile(trackSid, info, false));
-                });
-                grade.appendChild(linha);
-            } else {
-                // Ninguém focado ainda: mostra todas do mesmo tamanho na grade.
-                grade.className = 'grade-video';
-                barraVideo.classList.remove('visivel');
-                tiles.forEach((info, trackSid) => {
-                    grade.appendChild(criarElementoTile(trackSid, info, true));
-                });
-            }
-        }
-
-        // O botão de microfone agora mora dentro do painel flutuante (abre
-        // ao clicar no seu próprio nome), não mais fixo na barra lateral.
-        let microfoneAtivo = false;
-
-        async function alternarMicrofone(btn) {
-            try {
-                microfoneAtivo = !microfoneAtivo;
-                await currentRoom.localParticipant.setMicrophoneEnabled(microfoneAtivo);
-                btn.textContent = microfoneAtivo ? '🎤 Desativar microfone' : '🎤 Ativar microfone';
-                btn.classList.toggle('ativo', microfoneAtivo);
-            } catch (err) {
-                microfoneAtivo = !microfoneAtivo; // desfaz a troca, já que falhou
-                console.error('Erro ao ativar microfone:', err);
-                mostrarNotificacao('Erro ao ativar microfone: ' + err.message);
-            }
-        }
-
-        document.getElementById('btn-ver-grade').addEventListener('click', () => {
-            trackEmFoco = null;
-            renderizarVideo();
-        });
-
-        function adicionarTile(trackSid, elementoMidia, nomeParticipante, ehVoce) {
-            tiles.set(trackSid, { videoEl: elementoMidia, nome: nomeParticipante, ehVoce });
-            renderizarVideo();
-        }
-
-        function removerTile(trackSid) {
-            tiles.delete(trackSid);
-            if (trackEmFoco === trackSid) trackEmFoco = null;
-            renderizarVideo();
-        }
-
-        // Identidades (identity) dos participantes falando no momento,
-        // atualizado pelo evento ActiveSpeakersChanged do LiveKit.
-        let identidadesFalando = new Set();
-
-        // identity -> 'excelente' | 'boa' | 'ruim' | 'desconhecida', pro
-        // pontinho de qualidade de conexão ao lado do nome.
-        const qualidadePorIdentidade = new Map();
-
-        function mapearQualidade(qualidadeLiveKit) {
-            switch (qualidadeLiveKit) {
-                case LivekitClient.ConnectionQuality.Excellent: return 'excelente';
-                case LivekitClient.ConnectionQuality.Good: return 'boa';
-                case LivekitClient.ConnectionQuality.Poor: return 'ruim';
-                default: return 'desconhecida';
-            }
-        }
-
-        // identity -> { microfone: volume, compartilhamento: volume }, pra
-        // lembrar o ajuste de cada pessoa mesmo quando a lista é redesenhada.
-        const volumesPorIdentidade = new Map();
-        // identity -> { microfone: Set de elementos, compartilhamento: Set de elementos }
-        const elementosAudioPorIdentidade = new Map();
-
-        function garantirEntradaAudio(identity) {
-            if (!volumesPorIdentidade.has(identity)) {
-                volumesPorIdentidade.set(identity, { microfone: 100, compartilhamento: 100 });
-            }
-            if (!elementosAudioPorIdentidade.has(identity)) {
-                elementosAudioPorIdentidade.set(identity, { microfone: new Set(), compartilhamento: new Set() });
-            }
-        }
-
-        function criarSliderVolume(identity, nome, tipo, rotulo) {
-            const envoltorio = document.createElement('div');
-            envoltorio.className = 'envoltorio-slider';
-
-            const label = document.createElement('span');
-            label.className = 'rotulo-slider';
-            label.textContent = rotulo;
-
-            const volumeAtual = volumesPorIdentidade.get(identity)[tipo];
-            const slider = document.createElement('input');
-            slider.type = 'range';
-            slider.className = 'slider-volume';
-            slider.min = '0';
-            slider.max = '100';
-            slider.value = String(volumeAtual);
-            slider.title = `${rotulo} de ${nome}: ${volumeAtual}%`;
-            slider.addEventListener('input', () => {
-                const novoVolume = Number(slider.value);
-                volumesPorIdentidade.get(identity)[tipo] = novoVolume;
-                slider.title = `${rotulo} de ${nome}: ${novoVolume}%`;
-                elementosAudioPorIdentidade.get(identity)[tipo].forEach(el => { el.volume = novoVolume / 100; });
-            });
-
-            envoltorio.appendChild(label);
-            envoltorio.appendChild(slider);
-            return envoltorio;
-        }
-
-        // ---------- Testar microfone (ouvir a própria voz) ----------
-        // Independente da sala: pega o microfone cru e toca de volta pra
-        // você mesmo, só pra confirmar que está funcionando e com volume ok.
-        let microfoneTesteAtivo = false;
-        let streamTesteMic = null;
-        let audioTesteMic = null;
-
-        async function alternarTesteMicrofone() {
-            if (microfoneTesteAtivo) {
-                pararTesteMicrofone();
-                return;
-            }
-            try {
-                streamTesteMic = await navigator.mediaDevices.getUserMedia({ audio: true });
-                audioTesteMic = document.createElement('audio');
-                audioTesteMic.srcObject = streamTesteMic;
-                audioTesteMic.autoplay = true;
-                document.body.appendChild(audioTesteMic);
-                microfoneTesteAtivo = true;
-            } catch (err) {
-                console.error('Erro ao testar microfone:', err);
-                mostrarNotificacao('Erro ao testar microfone: ' + err.message);
-            }
-        }
-
-        function pararTesteMicrofone() {
-            if (streamTesteMic) streamTesteMic.getTracks().forEach(t => t.stop());
-            if (audioTesteMic) audioTesteMic.remove();
-            streamTesteMic = null;
-            audioTesteMic = null;
-            microfoneTesteAtivo = false;
-        }
-
-        // ---------- Painel flutuante de áudio por pessoa ----------
-        // Clicar (ou botão direito) no nome de alguém na lista abre isto,
-        // parecido com o menu de usuário do Discord.
-        let painelAudioAberto = null;
-
-        function fecharPainelAudio() {
-            if (painelAudioAberto) {
-                painelAudioAberto.remove();
-                painelAudioAberto = null;
-                document.removeEventListener('click', fecharPainelAoClicarFora, true);
-            }
-        }
-
-        function fecharPainelAoClicarFora(e) {
-            if (painelAudioAberto && !painelAudioAberto.contains(e.target)) {
-                fecharPainelAudio();
-            }
-        }
-
-        function abrirPainelAudio(identity, nome, ehVoce, x, y) {
-            fecharPainelAudio();
-
-            const painel = document.createElement('div');
-            painel.className = 'painel-audio-pessoa';
-
-            const titulo = document.createElement('div');
-            titulo.className = 'titulo-painel';
-            titulo.innerHTML = `<span>${nome}${ehVoce ? ' (você)' : ''}</span>`;
-            const btnFechar = document.createElement('button');
-            btnFechar.textContent = '✕';
-            btnFechar.addEventListener('click', fecharPainelAudio);
-            titulo.appendChild(btnFechar);
-            painel.appendChild(titulo);
-
-            if (ehVoce) {
-                const btnMic = document.createElement('button');
-                btnMic.className = 'btn-mic-toggle' + (microfoneAtivo ? ' ativo' : '');
-                btnMic.textContent = microfoneAtivo ? '🎤 Desativar microfone' : '🎤 Ativar microfone';
-                btnMic.addEventListener('click', () => alternarMicrofone(btnMic));
-                painel.appendChild(btnMic);
-
-                const btnTestar = document.createElement('button');
-                btnTestar.className = 'btn-mic-teste' + (microfoneTesteAtivo ? ' ativo' : '');
-                btnTestar.textContent = microfoneTesteAtivo ? '🎧 Parar teste' : '🎧 Testar microfone';
-                btnTestar.addEventListener('click', async () => {
-                    await alternarTesteMicrofone();
-                    btnTestar.textContent = microfoneTesteAtivo ? '🎧 Parar teste' : '🎧 Testar microfone';
-                    btnTestar.classList.toggle('ativo', microfoneTesteAtivo);
-                });
-                painel.appendChild(btnTestar);
-            } else {
-                painel.appendChild(criarSliderVolume(identity, nome, 'microfone', '🎤 Voz'));
-                painel.appendChild(criarSliderVolume(identity, nome, 'compartilhamento', '🖥️ Som da tela'));
-            }
-
-            document.body.appendChild(painel);
-
-            // Posiciona perto do clique, sem deixar sair da tela.
-            painel.style.left = '0px';
-            painel.style.top = '0px';
-            const retanguloPainel = painel.getBoundingClientRect();
-            let left = Math.min(x, window.innerWidth - retanguloPainel.width - 10);
-            let top = Math.min(y, window.innerHeight - retanguloPainel.height - 10);
-            painel.style.left = Math.max(left, 10) + 'px';
-            painel.style.top = Math.max(top, 10) + 'px';
-
-            painelAudioAberto = painel;
-            setTimeout(() => document.addEventListener('click', fecharPainelAoClicarFora, true), 0);
-        }
-
-        function atualizarListaParticipantes() {
-            const lista = document.getElementById('lista-participantes');
-            const contagem = document.getElementById('contagem-participantes');
-            if (!currentRoom) return;
-
-            const participantes = [currentRoom.localParticipant, ...currentRoom.remoteParticipants.values()];
-            contagem.textContent = participantes.length;
-            lista.innerHTML = '';
-
-            participantes.forEach(p => {
-                const ehVoce = p === currentRoom.localParticipant;
-                const nome = p.name || p.identity || '?';
-                const transmitindo = [...p.videoTrackPublications.values()]
-                    .some(pub => pub.source === LivekitClient.Track.Source.ScreenShare);
-                const falando = identidadesFalando.has(p.identity);
-
-                if (!ehVoce) garantirEntradaAudio(p.identity);
-
-                const item = document.createElement('div');
-                item.className = 'participante-item'
-                    + (transmitindo ? ' transmitindo' : '')
-                    + (falando ? ' falando' : '');
-                item.innerHTML = `
-                    <span class="avatar-participante" style="background: ${corDoAvatar(p.identity || nome)}">${nome.charAt(0).toUpperCase()}</span>
-                    <span class="nome-participante" title="Clique para ajustar áudio">${nome}${ehVoce ? ' (você)' : ''}</span>
-                    <span class="ponto-qualidade ${qualidadePorIdentidade.get(p.identity) || 'desconhecida'}" title="Qualidade da conexão"></span>`;
-
-                // Clicar (ou botão direito) no nome abre o painel de áudio
-                // daquela pessoa — igual ao menu de usuário do Discord.
-                const abrir = (e) => {
-                    e.preventDefault();
-                    abrirPainelAudio(p.identity, nome, ehVoce, e.clientX, e.clientY);
-                };
-                item.querySelector('.nome-participante').addEventListener('click', abrir);
-                item.querySelector('.nome-participante').addEventListener('contextmenu', abrir);
-
-                lista.appendChild(item);
-            });
-        }
-
-        document.getElementById('btn-copiar-sala').addEventListener('click', async () => {
-            const sala = document.getElementById('input-sala').value.trim();
-            if (!sala) return mostrarNotificacao('Digite o nome de uma sala primeiro.');
-
-            await navigator.clipboard.writeText(sala);
-            const btn = document.getElementById('btn-copiar-sala');
-            btn.textContent = '✅';
-            btn.classList.add('copiado');
-            setTimeout(() => {
-                btn.textContent = '📋';
-                btn.classList.remove('copiado');
-            }, 1500);
-        });
-
-        // Lembra o nome e a sala usados da última vez, pra não ter que
-        // redigitar toda vez que abrir o app.
-        document.getElementById('input-usuario').value = localStorage.getItem('streamshare_nome') || '';
-        document.getElementById('input-sala').value = localStorage.getItem('streamshare_sala') || '';
-
-        document.getElementById('btn-conectar').addEventListener('click', async () => {
-            const usuario = document.getElementById('input-usuario').value.trim();
-            const sala = document.getElementById('input-sala').value.trim();
-            const exigirAprovacao = document.getElementById('check-exigir-aprovacao').checked;
-
-            if (!usuario || !sala) return mostrarNotificacao("Preencha todos os campos!");
-
-            localStorage.setItem('streamshare_nome', usuario);
-            localStorage.setItem('streamshare_sala', sala);
-
-            document.getElementById('btn-conectar').disabled = true;
-            document.getElementById('status-texto').textContent = 'Conectando...';
-
-            try {
-                const tokenValido = await window.electronAPI.gerarToken({ sala, usuario });
-                const urlServidor = await window.electronAPI.obterUrlServidor();
-
-                currentRoom = new LivekitClient.Room({
-                    adaptiveStream: true,
-                    dynacast: true,
-                });
-
-                // Só telas compartilhadas viram um "monitor" na grade;
-                // áudio é tocado, mas não ocupa espaço visual.
-                currentRoom.on(LivekitClient.RoomEvent.TrackSubscribed, (track, publication, participant) => {
-                    if (track.kind === 'video' && track.source === LivekitClient.Track.Source.ScreenShare) {
-                        const el = track.attach();
-                        adicionarTile(track.sid, el, participant.name || participant.identity, false);
-                    } else if (track.kind === 'audio') {
-                        const el = track.attach();
-                        const tipo = track.source === LivekitClient.Track.Source.Microphone ? 'microfone' : 'compartilhamento';
-
-                        garantirEntradaAudio(participant.identity);
-                        el.volume = volumesPorIdentidade.get(participant.identity)[tipo] / 100;
-                        elementosAudioPorIdentidade.get(participant.identity)[tipo].add(el);
-                    }
-                    atualizarListaParticipantes();
-                });
-
-                currentRoom.on(LivekitClient.RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
-                    const elementosRemovidos = track.detach();
-                    if (track.kind === 'video') removerTile(track.sid);
-                    if (track.kind === 'audio') {
-                        const tipo = track.source === LivekitClient.Track.Source.Microphone ? 'microfone' : 'compartilhamento';
-                        const entrada = elementosAudioPorIdentidade.get(participant.identity);
-                        if (entrada) elementosRemovidos.forEach(el => entrada[tipo].delete(el));
-                    }
-                    atualizarListaParticipantes();
-                });
-
-                currentRoom.on(LivekitClient.RoomEvent.ParticipantConnected, atualizarListaParticipantes);
-                currentRoom.on(LivekitClient.RoomEvent.ParticipantDisconnected, atualizarListaParticipantes);
-
-                // Dá o destaque verde de "falando" na lista de participantes.
-                currentRoom.on(LivekitClient.RoomEvent.ActiveSpeakersChanged, (falantes) => {
-                    identidadesFalando = new Set(falantes.map(p => p.identity));
-                    atualizarListaParticipantes();
-                });
-
-                // Pontinho de qualidade de conexão (verde/amarelo/vermelho)
-                // ao lado do nome de cada pessoa.
-                currentRoom.on(LivekitClient.RoomEvent.ConnectionQualityChanged, (qualidade, participante) => {
-                    qualidadePorIdentidade.set(participante.identity, mapearQualidade(qualidade));
-                    atualizarListaParticipantes();
-                });
-
-                await currentRoom.connect(urlServidor, tokenValido);
-
-                document.getElementById('status-bolha').classList.add('on');
-                document.getElementById('status-texto').textContent = 'Conectado';
-                document.getElementById('select-fontes').disabled = false;
-                document.getElementById('check-exigir-aprovacao').disabled = true;
-
-                atualizarListaParticipantes();
-                listarJanelasDoSistema();
-
-                if (exigirAprovacao) {
-                    await window.electronAPI.tornarDono({ sala, usuario });
-                    document.getElementById('painel-pendentes').style.display = 'flex';
-                    iniciarChecagemPendentes(sala);
-                }
-            } catch (err) {
-                console.error("Erro no console do cliente:", err);
-                mostrarNotificacao("Erro ao conectar: " + err.message);
-                document.getElementById('status-texto').textContent = 'Desconectado';
-                document.getElementById('btn-conectar').disabled = false;
-            }
-        });
-
-        // A cada poucos segundos, pergunta ao servidor se tem alguém
-        // esperando aprovação pra entrar nesta sala.
-        function iniciarChecagemPendentes(sala) {
-            setInterval(async () => {
-                const pedidos = await window.electronAPI.listarPendentes({ sala });
-                renderizarPendentes(sala, pedidos);
-            }, 2500);
-        }
-
-        function renderizarPendentes(sala, pedidos) {
-            const lista = document.getElementById('lista-pendentes');
-            lista.innerHTML = '';
-
-            if (pedidos.length === 0) {
-                lista.innerHTML = '<div class="rotulo-vazio">Ninguém esperando no momento.</div>';
-                return;
-            }
-
-            pedidos.forEach(pedido => {
-                const item = document.createElement('div');
-                item.className = 'pedido-item';
-                item.innerHTML = `
-                    <span>${pedido.usuario} quer entrar</span>
-                    <span class="pedido-botoes">
-                        <button class="btn-aceitar">Aceitar</button>
-                        <button class="btn-recusar">Recusar</button>
-                    </span>`;
-
-                item.querySelector('.btn-aceitar').addEventListener('click', () =>
-                    window.electronAPI.decidirPendente({ sala, solicitacaoId: pedido.solicitacaoId, decisao: 'aprovado' })
-                );
-                item.querySelector('.btn-recusar').addEventListener('click', () =>
-                    window.electronAPI.decidirPendente({ sala, solicitacaoId: pedido.solicitacaoId, decisao: 'negado' })
-                );
-
-                lista.appendChild(item);
-            });
-        }
-
-        // Escaneia janelas/telas disponíveis via API exposta pelo preload
-        async function listarJanelasDoSistema() {
-            const select = document.getElementById('select-fontes');
-            select.innerHTML = '';
-            const fontes = await window.electronAPI.listarFontes();
-
-            fontes.forEach(fonte => {
-                const option = document.createElement('option');
-                option.value = fonte.id;
-                option.text = fonte.name;
-                select.appendChild(option);
-            });
-            document.getElementById('btn-transmitir').disabled = false;
-        }
-
-        let transmitindo = false;
-
-        async function iniciarTransmissao() {
-            const fonteId = document.getElementById('select-fontes').value;
-
-            // Avisa o processo principal qual fonte usar quando o
-            // livekit-client chamar getDisplayMedia() internamente.
-            await window.electronAPI.definirFonte(fonteId);
-
-            const perfil = PERFIS_QUALIDADE[document.getElementById('select-qualidade').value] || PERFIS_QUALIDADE.automatico;
-
-            const publicacao = await currentRoom.localParticipant.setScreenShareEnabled(true, {
-                audio: true,
-                video: true,
-                screenShareEncoding: {
-                    resolution: perfil.resolution,
-                    maxFramerate: perfil.maxFramerate,
-                    maxBitrate: perfil.maxBitrate
-                }
-            }, {
-                simulcast: perfil.simulcast
-            });
-
-            // Mostra a própria transmissão como um monitor na grade —
-            // sem isso, só quem entrar depois na sala veria o vídeo.
-            if (publicacao && publicacao.videoTrack) {
-                idTileLocal = publicacao.trackSid;
-                const el = publicacao.videoTrack.attach();
-                adicionarTile(idTileLocal, el, currentRoom.localParticipant.name || currentRoom.localParticipant.identity, true);
-            }
-            atualizarListaParticipantes();
-        }
-
-        async function pararTransmissao() {
-            await currentRoom.localParticipant.setScreenShareEnabled(false);
-            if (idTileLocal) {
-                removerTile(idTileLocal);
-                idTileLocal = null;
-            }
-            atualizarListaParticipantes();
-        }
-
-        document.getElementById('btn-transmitir').addEventListener('click', async () => {
-            try {
-                await iniciarTransmissao();
-                document.getElementById('btn-transmitir').style.display = 'none';
-                document.getElementById('btn-parar').style.display = 'block';
-                document.getElementById('select-qualidade').disabled = true;
-                transmitindo = true;
-            } catch (err) {
-                console.error("Erro ao transmitir:", err);
-                mostrarNotificacao("Erro ao transmitir: " + err.message);
-            }
-        });
-
-        document.getElementById('btn-parar').addEventListener('click', async () => {
-            await pararTransmissao();
-            document.getElementById('btn-transmitir').style.display = 'block';
-            document.getElementById('btn-parar').style.display = 'none';
-            document.getElementById('select-qualidade').disabled = false;
-            transmitindo = false;
-        });
-
-        // Trocar a fonte no dropdown enquanto já está transmitindo troca
-        // ao vivo, sem precisar parar e clicar em "Iniciar" de novo.
-        document.getElementById('select-fontes').addEventListener('change', async () => {
-            if (!transmitindo) return;
-            try {
-                await pararTransmissao();
-                await iniciarTransmissao();
-            } catch (err) {
-                console.error("Erro ao trocar de fonte:", err);
-                mostrarNotificacao("Erro ao trocar de fonte: " + err.message);
-            }
-        });
-    </script>
+    <script src="./estrivisor-app.js"></script>
 </body>
 </html>

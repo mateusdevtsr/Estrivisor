@@ -1,7 +1,8 @@
 {
-  "name": "concord-desktop-pro",
-  "version": "1.0.0",
-  "description": "App Electron de compartilhamento de tela via LiveKit",
+  "name": "estrivisor",
+  "productName": "Estrivisor",
+  "version": "3.6.1",
+  "description": "Estrivisor — voz, chat e compartilhamento de tela entre amigos",
   "author": "mateusdevtsr",
   "license": "UNLICENSED",
   "main": "main.js",
@@ -12,24 +13,31 @@
   "dependencies": {
     "dotenv": "^16.4.5",
     "livekit-client": "^2.5.0",
-    "electron-updater": "^6.3.9"
+    "electron-updater": "^6.3.9",
+    "discord-rpc": "^4.0.1"
   },
   "devDependencies": {
     "electron": "^31.0.0",
     "electron-builder": "^24.13.3"
   },
   "build": {
-    "appId": "com.concord.desktop",
-    "productName": "Concord",
+    "appId": "com.estrivisor.desktop",
+    "productName": "Estrivisor",
     "files": [
       "main.js",
       "preload.js",
+      "migrar-dados.js",
+      "perfil-discord.js",
+      "icone.png",
+      "configuracao.js",
       "index.html",
+      "estrivisor-app.js",
       ".env",
       "node_modules/**/*"
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "icone.png"
     },
     "nsis": {
       "oneClick": false,
@@ -38,7 +46,8 @@
     "publish": {
       "provider": "github",
       "owner": "mateusdevtsr",
-      "repo": "Concord"
+      "repo": "Estrivisor",
+      "releaseType": "release"
     }
   }
 }

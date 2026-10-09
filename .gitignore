@@ -4,3 +4,15 @@ server.env
 node_modules/
 dist/
 *.log
+
+# Dados do servidor de tokens: IDs do Discord dos membros, convites e cópias de segurança.
+dados/
+*.bak
+*.tmp
+*.corrompido-*
+
+# Configuração do LiveKit próprio da época antes do LiveKit Cloud (não é mais usada).
+livekit.yaml
+
+# Sobras de arquivos extraídos/copiados.
+mnt/

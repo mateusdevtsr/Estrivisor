@@ -1,4 +1,4 @@
-# Concord — hospedando no seu PC + gerando o instalador para os amigos
+# Estrivisor — hospedando no seu PC + gerando o instalador para os amigos
 
 ## Visão geral
 
@@ -53,8 +53,7 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
-Confirme que os dois serviços (`streamshare-livekit` e
-`streamshare-token-server`) subiram sem erro.
+Confirme que o serviço `estrivisor-token-server` subiu sem erro.
 
 ## Passo 5 — Configurar o app cliente (o que vai pros amigos)
 
@@ -76,13 +75,13 @@ npm install
 npm run dist
 ```
 
-O instalador fica em `dist/Concord Setup 1.0.0.exe`. Envie esse
+O instalador fica em `dist/Estrivisor Setup X.Y.Z.exe` (X.Y.Z = a versão do package.json). Envie esse
 arquivo pros seus amigos — eles só precisam rodar o instalador, **não
 precisam instalar Node.js, Docker nem nada além disso**.
 
 ## Testando
 
-1. Você abre o Concord (via `npm start` ou o próprio instalado) e
+1. Você abre o Estrivisor (via `npm start` ou o próprio instalado) e
    entra numa sala, ex: `sala-dos-guri`
 2. Seu amigo abre o dele, entra na **mesma sala**
 3. Qualquer um dos dois clica em "Iniciar transmissão" e escolhe uma
