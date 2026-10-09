@@ -1,106 +1,76 @@
-# Estrivisor — hospedando no seu PC + gerando o instalador para os amigos
+# Estrivisor
 
-## Visão geral
+Voz, chat e transmissão de tela entre amigos, no estilo do Discord: cada pessoa pode ter
+o seu servidor (com canais de texto e de voz) e chamar os amigos com um código de convite.
 
-Duas partes bem separadas:
-
-1. **Servidor** (só na sua máquina): LiveKit + servidor de token, rodando
-   via Docker. Fica ligado o tempo todo que você quiser que o app funcione
-   pros seus amigos — se desligar seu PC, ninguém consegue entrar.
-2. **Cliente** (instalado no PC de cada amigo): o `.exe` gerado pelo
-   `electron-builder`. Não precisa de Node.js nem Docker — é um programa
-   completo, como qualquer outro instalador do Windows.
-
-Eles se falam por dois endereços que você expõe do seu roteador:
-LiveKit (porta 7880/7881 + faixa UDP) e o servidor de token (porta 8080).
-
-## Passo 1 — Dynamic DNS (endereço fixo pra sua casa)
-
-Seu provedor de internet troca seu IP de vez em quando, então em vez de
-usar o IP direto, usamos um serviço gratuito de DNS dinâmico:
-
-1. Crie uma conta grátis em https://www.duckdns.org
-2. Crie um subdomínio, ex: `meuapp.duckdns.org`
-3. Siga as instruções do próprio DuckDNS pra instalar o cliente deles no
-   seu PC (um programinha pequeno que atualiza o IP automaticamente)
-
-## Passo 2 — Abrir as portas no roteador (port forwarding)
-
-No painel administrativo do seu roteador (geralmente `192.168.0.1` ou
-`192.168.1.1`), encontre "Port Forwarding" / "Virtual Server" e libere,
-apontando todas para o IP local do seu PC (ex: `192.168.1.50`):
-
-| Porta         | Protocolo | Serviço              |
-|---------------|-----------|----------------------|
-| 7880          | TCP       | LiveKit (sinalização)|
-| 7881          | TCP       | LiveKit (fallback)   |
-| 50000–50100   | UDP       | LiveKit (mídia)      |
-| 8080          | TCP       | Servidor de token    |
-
-## Passo 3 — Configurar os segredos do servidor
-
-Copie `server.env.example` para `server.env` e preencha com suas chaves
-reais do LiveKit (as mesmas que estão em `livekit.yaml`) e escolha uma
-`INVITE_KEY` — é a "senha" que seus amigos vão precisar pra pedir token,
-sem ser a chave criptográfica de verdade.
-
-**Esse arquivo (`server.env`) nunca deve sair do seu PC.**
-
-## Passo 4 — Subir o servidor
+## Como funciona
 
 ```
-docker compose up -d --build
-docker compose logs -f
+ App (Electron, no PC de cada um)
+   │  login com Discord · servidores · convites · presença · pedido de token
+   ▼
+ https://api.SEU-DOMINIO  ──(Cloudflare Tunnel)──►  servidor do Estrivisor (Docker, no seu PC)
+                                                      └─ dados/ (servidores, sessões)
+ App  ◄──── voz, vídeo e chat (WebRTC) ────►  LiveKit Cloud
 ```
 
-Confirme que o serviço `estrivisor-token-server` subiu sem erro.
+- **Servidor do Estrivisor** (`token-server/`): guarda servidores, canais, membros, convites e
+  sessões de login, e entrega os tokens do LiveKit. Só ele conhece as chaves do LiveKit e o
+  Client Secret do Discord.
+- **Cloudflare Tunnel** (`cloudflared`): publica o servidor em HTTPS sem abrir porta no
+  roteador e sem mostrar o IP da sua casa.
+- **LiveKit Cloud**: transporta a voz, o vídeo e as mensagens dos canais.
+- **App** (`main.js`, `preload.js`, `index.html`, `estrivisor-app.js`): o instalador que vai
+  pros amigos. A sessão de login fica guardada criptografada pelo Windows.
 
-## Passo 5 — Configurar o app cliente (o que vai pros amigos)
+## Configurar o servidor (uma vez, no PC que fica ligado)
 
-Copie `.env.example` para `.env` (na raiz do projeto, junto com
-`main.js`) e preencha:
+Precisa de: Docker Desktop, um domínio na Cloudflare, um app no Discord Developer Portal e uma
+conta no LiveKit Cloud.
 
-```
-LIVEKIT_URL=ws://meuapp.duckdns.org:7880
-TOKEN_SERVER_URL=http://meuapp.duckdns.org:8080
-INVITE_KEY=a-mesma-chave-que-voce-colocou-em-server.env
-```
+1. **Domínio na Cloudflare.** Compre um domínio pela própria Cloudflare (Domain Registration)
+   ou, se ele for de outro lugar (ex.: registro.br), adicione o site na Cloudflare e troque os
+   servidores DNS no registrador pelos que a Cloudflare indicar.
+2. **Discord.** Em [discord.com/developers/applications](https://discord.com/developers/applications),
+   abra o seu app e vá em **OAuth2**:
+   - em **Redirects**, adicione exatamente `http://127.0.0.1:53134/callback` e salve;
+   - copie o **Client ID** e gere/copie o **Client Secret**.
+3. **Arquivos de configuração** (ficam só no seu PC; o `.gitignore` já impede de subir):
+   - copie `server.env.example` para `server.env` e preencha (LiveKit, `INVITE_KEY`, Discord);
+   - copie `tunnel.env.example` para `tunnel.env` (o token vem no passo 4).
+4. **Túnel.** No painel da Cloudflare, **Networking → Tunnels → Create a tunnel**, dê um nome,
+   escolha **Docker** e copie o token (a parte longa depois de `--token`) para o `tunnel.env`.
+5. **Subir tudo:** `docker compose up -d --build`. No painel, o túnel deve ficar *Healthy*.
+6. **Publicar.** No túnel, **Routes → Add route → Published application**: subdomínio `api`,
+   o seu domínio e, em *Service URL*, `http://token-server:8080`.
+7. **Testar:** abra `https://api.SEU-DOMINIO/saude` no navegador. Tem que aparecer `{"ok":true}`.
 
-Esse `.env` (sem as chaves reais do LiveKit) é o que vai dentro do `.exe`.
+## Configurar e gerar o app
 
-## Passo 6 — Gerar o instalador (.exe)
+1. Copie `.env.example` para `.env` e preencha (`TOKEN_SERVER_URL=https://api.SEU-DOMINIO`).
+   Esse arquivo vai **dentro** do instalador: nunca coloque nele o Client Secret nem as chaves
+   do LiveKit.
+2. `npm install` e `npm start` para testar.
+3. Aumente a `version` no `package.json` e rode `npm run dist` (com `GH_TOKEN` definido, o
+   instalador é publicado nos Releases do GitHub e os apps instalados se atualizam sozinhos).
 
-```
-npm install
-npm run dist
-```
+## Transição para o login obrigatório
 
-O instalador fica em `dist/Estrivisor Setup X.Y.Z.exe` (X.Y.Z = a versão do package.json). Envie esse
-arquivo pros seus amigos — eles só precisam rodar o instalador, **não
-precisam instalar Node.js, Docker nem nada além disso**.
+Enquanto ainda houver amigos com app antigo (sem login), deixe `EXIGIR_LOGIN=0` no
+`server.env`. Quando todo mundo estiver na versão com login:
 
-## Testando
+1. `EXIGIR_LOGIN=1` no `server.env`;
+2. no `docker-compose.yml`, troque `"28080:8080"` por `"127.0.0.1:28080:8080"`;
+3. feche a porta 28080 no roteador;
+4. `docker compose up -d`.
 
-1. Você abre o Estrivisor (via `npm start` ou o próprio instalado) e
-   entra numa sala, ex: `sala-dos-guri`
-2. Seu amigo abre o dele, entra na **mesma sala**
-3. Qualquer um dos dois clica em "Iniciar transmissão" e escolhe uma
-   janela/tela
+## Segurança — o que está coberto
 
-## Segurança — o que melhorou e o que ainda é uma pegada informal
-
-- ✅ A chave criptográfica real do LiveKit (`LIVEKIT_API_SECRET`) nunca
-  sai do seu PC agora — só o servidor de token a conhece.
-- ✅ Cada participante recebe só as permissões da sala (`roomJoin`,
-  `canPublish`, `canSubscribe`), sem privilégio de admin.
-- ⚠️ A conexão usa `ws://` e `http://` simples (sem TLS), porque
-  configurar certificado válido pra um IP residencial dá mais trabalho.
-  Isso significa que o tráfego de sinalização (não o vídeo em si, que já
-  é criptografado pelo próprio WebRTC) passa sem criptografia extra pela
-  internet. Para um grupo pequeno de amigos de confiança, isso costuma
-  ser aceitável — mas não é o ideal para uso mais sério. Se quiser
-  fechar essa lacuna depois, dá pra colocar um Caddy na frente com TLS
-  automático via Let's Encrypt, usando seu domínio DuckDNS.
-- ⚠️ A `INVITE_KEY` não impede mal-intencionados de tentar adivinhar a
-  senha por força bruta indefinidamente — para mais segurança, considere
-  trocar essa chave periodicamente.
+- A identidade de cada pessoa vem do login (Discord confirmado pelo servidor, ou um código
+  criado pelo servidor para quem entra sem Discord). O app não consegue "dizer" que é outra pessoa.
+- Só o dono do servidor mexe em canais, convites, membros e moderação; o servidor confere.
+- As chaves de sessão ficam guardadas só como hash no servidor e criptografadas no PC de cada um.
+- Tráfego com o servidor em HTTPS (túnel da Cloudflare); voz e vídeo criptografados pelo WebRTC.
+- Tokens do LiveKit valem 15 minutos (só para entrar na sala).
+- A `INVITE_KEY` vai dentro do instalador: ela só filtra quem usa o app, não identifica ninguém.
+  Se vazar, troque nos dois `.env` e gere um instalador novo.

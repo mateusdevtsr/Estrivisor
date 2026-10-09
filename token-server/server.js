@@ -1,3 +1,6 @@
+'use strict';
+const path = require('path');
+const crypto = require('crypto');
 const express = require('express');
 const { AccessToken, RoomServiceClient } = require('livekit-server-sdk');
 
@@ -7,6 +10,17 @@ const API_SECRET = process.env.LIVEKIT_API_SECRET;
 const INVITE_KEY = process.env.INVITE_KEY;
 const LIVEKIT_URL = process.env.LIVEKIT_URL;
 
+// Login com Discord (Developer Portal > seu app > OAuth2). Sem isso, só funciona "entrar sem Discord".
+const DISCORD_CLIENT_ID = (process.env.DISCORD_CLIENT_ID || '').trim();
+const DISCORD_CLIENT_SECRET = (process.env.DISCORD_CLIENT_SECRET || '').trim();
+// Endereços de retorno aceitos depois do login (separados por vírgula). Têm que ser
+// exatamente os mesmos cadastrados no Discord e usados pelo app.
+const DISCORD_REDIRECTS = (process.env.DISCORD_REDIRECT_URI || 'http://127.0.0.1:53134/callback')
+  .split(',').map((s) => s.trim()).filter(Boolean);
+// Transição: enquanto ainda houver app antigo (sem login), "0" aceita a identidade que o
+// próprio app informa. Depois que todo mundo atualizar, coloque EXIGIR_LOGIN=1 no server.env.
+const EXIGIR_LOGIN = process.env.EXIGIR_LOGIN === '1';
+
 if (!API_KEY || !API_SECRET || !INVITE_KEY || !LIVEKIT_URL) {
   console.error(
     'ERRO: defina LIVEKIT_API_KEY, LIVEKIT_API_SECRET, INVITE_KEY e ' +
@@ -14,47 +28,165 @@ if (!API_KEY || !API_SECRET || !INVITE_KEY || !LIVEKIT_URL) {
   );
   process.exit(1);
 }
+if (!DISCORD_CLIENT_ID || !DISCORD_CLIENT_SECRET) {
+  console.warn('[aviso] DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET não definidos: o login com Discord fica desligado.');
+}
 
-// A API de administração (listar salas, forçar parar transmissão) usa
-// HTTP(S), não WS(S) — troca o esquema da URL pra montar o endereço certo.
+// A API de administração (listar participantes, mutar, remover) usa HTTP(S), não WS(S).
 const HOST_ADMIN = LIVEKIT_URL.replace(/^ws/, 'http');
 let roomService = new RoomServiceClient(HOST_ADMIN, API_KEY, API_SECRET);
+let buscarNoDiscord = (...args) => fetch(...args); // trocável nos testes
 
-const { criarRepositorio, ErroRegra, limparTexto, limparAvatar: limparAvatarServidor, interpretarSala } = require('./servidores');
-const repo = criarRepositorio({ arquivo: process.env.DATA_FILE || '/data/servidores.json' });
+const { criarRepositorio, ErroRegra, limparTexto, limparAvatar, interpretarSala } = require('./servidores');
+const { criarSessoes } = require('./sessoes');
+const { contaDoCodigo, ErroDiscord } = require('./discord');
+
+const ARQUIVO_DADOS = process.env.DATA_FILE || '/data/servidores.json';
+const repo = criarRepositorio({ arquivo: ARQUIVO_DADOS });
+const sessoes = criarSessoes({ arquivo: process.env.SESSOES_FILE || path.join(path.dirname(ARQUIVO_DADOS), 'sessoes.json') });
 
 const app = express();
 // Os ícones dos servidores viajam em base64 (até ~40 mil caracteres), então o limite sobe um pouco.
 app.use(express.json({ limit: '200kb' }));
 
-// Estado em memória (some se o servidor reiniciar — aceitável para o
-// tamanho deste projeto): quem é o "anfitrião" de cada sala, e os pedidos
-// de entrada aguardando decisão dele.
-const donosPorSala = new Map();       // sala -> identidade do anfitrião
-const pendentesPorSala = new Map();   // sala -> Map(solicitacaoId -> pedido)
-
-function gerarId() {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-}
-
 function chaveValida(req) {
   return req.get('x-invite-key') === INVITE_KEY;
 }
 
-// ---------- Perfil: nome de exibição e avatar ----------
-// O nome de exibição e o avatar vêm do app de cada pessoa, então são
-// validados aqui antes de virarem parte do token que os outros vão ler.
-function limparNome(nome) {
-  if (typeof nome !== 'string') return '';
-  return nome.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 40);
+// ============================================================
+// Quem está pedindo
+// ============================================================
+// Com login, a identidade vem da SESSÃO (cabeçalho Authorization) — o app não consegue
+// mais simplesmente dizer quem é. Sem sessão, só no modo de transição, vale o que o app
+// antigo informa (cabeçalho x-usuario, ou o campo que ele usava em cada pedido).
+function erroLogin(mensagem) {
+  const erro = new ErroRegra(401, mensagem);
+  erro.codigo = 'login'; // o app entende isso como "mostrar a tela de login"
+  return erro;
 }
 
-// Só aceita imagens do CDN do Discord (evita que alguém coloque um endereço
-// qualquer que os outros apps seriam obrigados a abrir).
-const REGEX_AVATAR = /^https:\/\/cdn\.discordapp\.com\/[A-Za-z0-9_\-\/\.]+(\?[A-Za-z0-9_=&\-]*)?$/;
-function limparAvatar(url) {
-  if (typeof url !== 'string' || url.length > 250) return '';
-  return REGEX_AVATAR.test(url) ? url : '';
+function chaveDeSessao(req) {
+  const m = /^Bearer\s+(\S+)$/i.exec(req.get('authorization') || '');
+  return m ? m[1] : null;
+}
+
+function identidadeDe(req, usuarioLegado) {
+  const chave = chaveDeSessao(req);
+  if (chave) {
+    const sessao = sessoes.validar(chave);
+    if (!sessao) throw erroLogin('Sua sessão expirou. Entre de novo.');
+    return { usuario: sessao.usuario, sessao };
+  }
+  if (EXIGIR_LOGIN) throw erroLogin('Atualize o Estrivisor e entre com a sua conta.');
+  const usuario = usuarioLegado !== undefined ? usuarioLegado : req.get('x-usuario');
+  if (!usuario || typeof usuario !== 'string') throw erroLogin('Entre com a sua conta pra continuar.');
+  return { usuario, sessao: null };
+}
+
+function responderErro(res, err) {
+  if (err instanceof ErroRegra) return res.status(err.status).json({ erro: err.message, codigo: err.codigo });
+  console.error('Erro interno:', err);
+  return res.status(500).json({ erro: 'Erro interno do servidor.' });
+}
+
+// Embrulha uma rota: exige a chave do app, descobre quem pediu e trata os erros.
+// "legado" diz de onde o app antigo mandava a identidade naquele pedido.
+function rota(fn, { legado } = {}) {
+  return async (req, res) => {
+    if (!chaveValida(req)) return res.status(401).json({ erro: 'Chave de convite inválida.' });
+    try {
+      const { usuario, sessao } = identidadeDe(req, legado ? legado(req) : undefined);
+      await fn(req, res, usuario, sessao);
+    } catch (err) {
+      responderErro(res, err);
+    }
+  };
+}
+
+// Pra o túnel e pra você conferirem que o serviço está no ar (não revela nada).
+app.get('/saude', (req, res) => res.json({ ok: true }));
+
+// ============================================================
+// Login
+// ============================================================
+// Freio simples contra enxurrada de logins (ex.: alguém criando contas "sem Discord" em massa).
+const limiteLogin = { inicio: 0, n: 0 };
+function loginLiberado() {
+  const agora = Date.now();
+  if (agora - limiteLogin.inicio > 60 * 1000) { limiteLogin.inicio = agora; limiteLogin.n = 0; }
+  limiteLogin.n++;
+  return limiteLogin.n <= 30;
+}
+
+const contaPublica = (usuario, tipo, perfil) => ({ usuario, tipo, nome: perfil.nome, avatar: perfil.avatar || null });
+
+app.post('/auth/discord', async (req, res) => {
+  if (!chaveValida(req)) return res.status(401).json({ erro: 'Chave de convite inválida.' });
+  if (!loginLiberado()) return res.status(429).json({ erro: 'Muitos logins seguidos. Espere um minuto.' });
+  if (!DISCORD_CLIENT_ID || !DISCORD_CLIENT_SECRET) {
+    return res.status(503).json({ erro: 'O login com Discord ainda não foi configurado no servidor.' });
+  }
+  const { codigo, redirectUri } = req.body || {};
+  if (typeof codigo !== 'string' || !/^[A-Za-z0-9_-]{10,200}$/.test(codigo)) {
+    return res.status(400).json({ erro: 'Código de login inválido.' });
+  }
+  if (!DISCORD_REDIRECTS.includes(redirectUri)) {
+    return res.status(400).json({ erro: 'Endereço de retorno do login não autorizado no servidor.' });
+  }
+  try {
+    const perfil = await contaDoCodigo({
+      codigo, redirectUri, clientId: DISCORD_CLIENT_ID, clientSecret: DISCORD_CLIENT_SECRET, buscar: buscarNoDiscord,
+    });
+    const usuario = `discord:${perfil.id}`;
+    const { chave } = sessoes.criar({ usuario, tipo: 'discord', perfil });
+    res.json({ sessao: chave, conta: contaPublica(usuario, 'discord', perfil) });
+  } catch (err) {
+    if (err instanceof ErroDiscord) return res.status(401).json({ erro: err.message });
+    responderErro(res, err);
+  }
+});
+
+// "Entrar sem Discord": o servidor cria um código aleatório pra pessoa (ninguém escolhe o próprio).
+app.post('/auth/local', (req, res) => {
+  if (!chaveValida(req)) return res.status(401).json({ erro: 'Chave de convite inválida.' });
+  if (!loginLiberado()) return res.status(429).json({ erro: 'Muitos logins seguidos. Espere um minuto.' });
+  const nome = limparTexto((req.body || {}).nome, 40);
+  if (!nome) return res.status(400).json({ erro: 'Digite um nome.' });
+  const usuario = 'local:' + crypto.randomUUID();
+  const perfil = { nome, avatar: null };
+  const { chave } = sessoes.criar({ usuario, tipo: 'local', perfil });
+  res.json({ sessao: chave, conta: contaPublica(usuario, 'local', perfil) });
+});
+
+app.get('/auth/eu', rota((req, res, usuario, sessao) => {
+  if (!sessao) throw erroLogin('Entre com a sua conta.');
+  res.json({ conta: contaPublica(usuario, sessao.tipo, sessao.perfil) });
+}));
+
+app.post('/auth/sair', (req, res) => {
+  if (!chaveValida(req)) return res.status(401).json({ erro: 'Chave de convite inválida.' });
+  const chave = chaveDeSessao(req);
+  if (chave) sessoes.revogar(chave);
+  res.json({ ok: true });
+});
+
+// ============================================================
+// Tokens do LiveKit (entrar nos canais)
+// ============================================================
+// O token só serve pra ENTRAR na sala: quem já está dentro continua conectado (o LiveKit
+// renova sozinho). Prazo curto = quem foi expulso não consegue reaproveitar um token velho.
+const VALIDADE_TOKEN_LIVEKIT = '15m';
+
+async function criarToken(usuario, sala, nome, avatar) {
+  const at = new AccessToken(API_KEY, API_SECRET, {
+    identity: usuario,
+    name: nome || usuario,
+    ttl: VALIDADE_TOKEN_LIVEKIT,
+    // O avatar viaja como "metadata" do participante: todo mundo na sala recebe.
+    metadata: avatar ? JSON.stringify({ avatar }) : undefined,
+  });
+  at.addGrant({ roomJoin: true, room: sala, canPublish: true, canSubscribe: true });
+  return at.toJwt();
 }
 
 async function donoEstaNaSala(sala, dono) {
@@ -62,38 +194,14 @@ async function donoEstaNaSala(sala, dono) {
     const participantes = await roomService.listParticipants(sala);
     return participantes.some((p) => p.identity === dono);
   } catch (e) {
-    return false; // sala não existe ou LiveKit fora do ar: entra direto
+    return false; // sala vazia ou LiveKit fora do ar: entra direto
   }
 }
 
-async function criarToken(usuario, sala, nome, avatar) {
-  const at = new AccessToken(API_KEY, API_SECRET, {
-    identity: usuario,
-    name: nome || usuario,
-    ttl: '4h',
-    // O avatar viaja como "metadata" do participante: todo mundo na sala
-    // recebe, sem precisar de nenhum outro serviço.
-    metadata: avatar ? JSON.stringify({ avatar }) : undefined,
-  });
-  at.addGrant({
-    roomJoin: true,
-    room: sala,
-    canPublish: true,
-    canSubscribe: true,
-  });
-  return at.toJwt();
-}
+// Pedidos de entrada esperando o dono decidir (canais com aprovação).
+const pendentesPorSala = new Map(); // sala -> Map(solicitacaoId -> pedido)
 
-// Em salas de servidor, só o dono (cabeçalho x-usuario) pode ver/decidir pedidos.
-// Salas do modo antigo continuam como sempre (sem esta checagem).
-function souAnfitriaoDeServidor(req, sala) {
-  if (!interpretarSala(sala)) return true;
-  const dono = repo.donoDaSala(sala);
-  return !!dono && req.get('x-usuario') === dono;
-}
-
-// Pedidos esquecidos (ninguém decidiu em 2 minutos) viram "negado". Depois de 5 minutos o
-// pedido é apagado de vez — antes eles ficavam na memória pra sempre.
+// Pedidos esquecidos (ninguém decidiu em 2 minutos) viram "negado"; depois de 5 minutos são apagados.
 setInterval(() => {
   const agora = Date.now();
   for (const [sala, pendentes] of pendentesPorSala) {
@@ -106,148 +214,84 @@ setInterval(() => {
   }
 }, 15000).unref();
 
-// Marca quem é o anfitrião de uma sala — a partir daí, novos pedidos de
-// entrada de outras pessoas ficam pendentes até ele decidir.
-app.post('/rooms/:sala/tornar-dono', (req, res) => {
-  if (!chaveValida(req)) return res.status(401).json({ erro: 'Chave de convite inválida.' });
+app.post('/token', rota(async (req, res, usuario, sessao) => {
+  const { sala, nome, avatar } = req.body || {};
+  // Só salas de servidor ("sXXXXXXXXXX__canal"). As salas avulsas da versão antiga foram desligadas.
+  if (typeof sala !== 'string' || !interpretarSala(sala)) throw new ErroRegra(400, 'Sala inválida.');
+  const { servidor, canal } = repo.verificarAcessoSala(sala, usuario); // só membros
 
-  const { usuario } = req.body || {};
-  if (!usuario) return res.status(400).json({ erro: 'usuario é obrigatório.' });
-  // Em salas de servidor o anfitrião é sempre o dono do servidor (não dá pra "tomar" a sala).
-  if (interpretarSala(req.params.sala)) return res.status(403).json({ erro: 'Nas salas de servidor o anfitrião é o dono do servidor.' });
+  // O nome pode ser o apelido escolhido no app; o avatar vem da conta (com login).
+  const nomeExibicao = limparTexto(nome, 40) || (sessao && sessao.perfil.nome) || usuario;
+  const avatarSeguro = sessao ? (sessao.perfil.avatar || '') : limparAvatar(avatar);
 
-  donosPorSala.set(req.params.sala, usuario);
-  res.json({ ok: true });
-});
-
-// O anfitrião consulta aqui quem está esperando pra entrar.
-app.get('/rooms/:sala/pendentes', (req, res) => {
-  if (!chaveValida(req)) return res.status(401).json({ erro: 'Chave de convite inválida.' });
-  if (!souAnfitriaoDeServidor(req, req.params.sala)) return res.status(403).json({ erro: 'Só o dono do servidor pode ver os pedidos.' });
-
-  const pendentes = pendentesPorSala.get(req.params.sala);
-  const pedidos = pendentes
-    ? [...pendentes.entries()]
-        .filter(([, p]) => p.status === 'pendente')
-        .map(([solicitacaoId, p]) => ({ solicitacaoId, usuario: p.usuario, nome: p.nome || p.usuario }))
-    : [];
-
-  res.json({ pedidos });
-});
-
-// O anfitrião aceita ou recusa um pedido específico.
-app.post('/rooms/:sala/decidir', async (req, res) => {
-  if (!chaveValida(req)) return res.status(401).json({ erro: 'Chave de convite inválida.' });
-  if (!souAnfitriaoDeServidor(req, req.params.sala)) return res.status(403).json({ erro: 'Só o dono do servidor pode decidir.' });
-
-  const { solicitacaoId, decisao } = req.body || {};
-  const pendentes = pendentesPorSala.get(req.params.sala);
-  const pedido = pendentes && pendentes.get(solicitacaoId);
-  if (!pedido) return res.status(404).json({ erro: 'Pedido não encontrado (pode ter expirado).' });
-
-  if (decisao === 'aprovado') {
-    try {
-      pedido.token = await criarToken(pedido.usuario, req.params.sala, pedido.nome, pedido.avatar);
-      pedido.status = 'aprovado';
-    } catch (err) {
-      console.error('Erro ao gerar token de aprovação:', err);
-      pedido.status = 'negado';
-      return res.status(500).json({ erro: 'Falha ao gerar token de aprovação.' });
-    }
-  } else {
-    pedido.status = 'negado';
+  // A aprovação só vale se o canal pedir E o dono estiver lá dentro (senão ninguém esperaria à toa).
+  const precisaAprovacao = canal.tipo === 'voz' && canal.aprovacao && servidor.dono !== usuario && await donoEstaNaSala(sala, servidor.dono);
+  if (!precisaAprovacao) {
+    return res.json({ token: await criarToken(usuario, sala, nomeExibicao, avatarSeguro) });
   }
 
-  res.json({ ok: true });
-});
+  if (!pendentesPorSala.has(sala)) pendentesPorSala.set(sala, new Map());
+  const solicitacaoId = crypto.randomBytes(16).toString('hex');
+  pendentesPorSala.get(sala).set(solicitacaoId, {
+    usuario, nome: nomeExibicao, avatar: avatarSeguro, status: 'pendente', token: null, criadoEm: Date.now(),
+  });
+  res.json({ aguardando: true, solicitacaoId });
+}, { legado: (req) => (req.body || {}).usuario }));
 
-// Quem está esperando consulta aqui se já foi decidido.
+// Quem está esperando consulta aqui se já foi decidido (com login, só o próprio pedido).
 app.get('/token/status/:solicitacaoId', (req, res) => {
   if (!chaveValida(req)) return res.status(401).json({ erro: 'Chave de convite inválida.' });
-
+  let usuario = null; // null = app antigo no modo de transição (sem conferência, como antes)
+  if (chaveDeSessao(req) || EXIGIR_LOGIN) {
+    try { usuario = identidadeDe(req).usuario; } catch (err) { return responderErro(res, err); }
+  }
   for (const pendentes of pendentesPorSala.values()) {
     const pedido = pendentes.get(req.params.solicitacaoId);
-    if (pedido) {
+    if (pedido && (usuario === null || pedido.usuario === usuario)) {
       return res.json({ status: pedido.status, token: pedido.token || undefined });
     }
   }
   res.status(404).json({ erro: 'Pedido não encontrado.' });
 });
 
-app.post('/token', async (req, res) => {
-  // A "chave de convite" não é a chave criptográfica real do LiveKit —
-  // é só uma senha de app, mais fácil de trocar se vazar, sem precisar
-  // gerar novas chaves do LiveKit nem reconfigurar o servidor inteiro.
-  if (!chaveValida(req)) {
-    return res.status(401).json({ erro: 'Chave de convite inválida.' });
-  }
+// O dono do servidor consulta quem está esperando pra entrar...
+app.get('/rooms/:sala/pendentes', rota((req, res, usuario) => {
+  if (repo.donoDaSala(req.params.sala) !== usuario) throw new ErroRegra(403, 'Só o dono do servidor pode ver os pedidos.');
+  const pendentes = pendentesPorSala.get(req.params.sala);
+  const pedidos = pendentes
+    ? [...pendentes.entries()]
+        .filter(([, p]) => p.status === 'pendente')
+        .map(([solicitacaoId, p]) => ({ solicitacaoId, usuario: p.usuario, nome: p.nome || p.usuario }))
+    : [];
+  res.json({ pedidos });
+}));
 
-  const { sala, usuario, nome, avatar } = req.body || {};
-  if (!sala || !usuario) {
-    return res.status(400).json({ erro: 'Os campos sala e usuario são obrigatórios.' });
-  }
-  if (typeof sala !== 'string' || typeof usuario !== 'string' || usuario.length > 100) {
-    return res.status(400).json({ erro: 'Os campos sala e usuario são inválidos.' });
-  }
-
-  // "usuario" é a identidade (única); "nome" é só o texto que aparece pros
-  // outros. App antigo não manda "nome": aí o nome é a própria identidade.
-  const nomeExibicao = limparNome(nome) || usuario;
-  const avatarSeguro = limparAvatar(avatar);
-
-  let dono = donosPorSala.get(sala);
-
-  // Sala de servidor: só membros entram. O anfitrião é o dono do servidor, e a aprovação
-  // só vale se o canal pedir E o dono estiver lá dentro (senão ninguém ficaria esperando à toa).
-  if (interpretarSala(sala)) {
-    try {
-      const { servidor, canal } = repo.verificarAcessoSala(sala, usuario);
-      dono = null;
-      if (canal.tipo === 'voz' && canal.aprovacao && servidor.dono !== usuario && await donoEstaNaSala(sala, servidor.dono)) {
-        dono = servidor.dono;
-      }
-    } catch (err) {
-      if (err instanceof ErroRegra) return res.status(err.status).json({ erro: err.message });
-      throw err;
-    }
-  }
-
-  // Sala sem anfitrião definido (modo aberto, como sempre foi) ou é o
-  // próprio anfitrião pedindo de novo: token na hora, sem espera.
-  if (!dono || dono === usuario) {
-    try {
-      return res.json({ token: await criarToken(usuario, sala, nomeExibicao, avatarSeguro) });
-    } catch (err) {
-      console.error('Erro ao gerar token:', err);
-      return res.status(500).json({ erro: 'Falha interna ao gerar o token.' });
-    }
-  }
-
-  // Sala com anfitrião: cria um pedido pendente em vez de liberar na hora.
-  if (!pendentesPorSala.has(sala)) pendentesPorSala.set(sala, new Map());
+// ...e aceita ou recusa um pedido.
+app.post('/rooms/:sala/decidir', rota(async (req, res, usuario) => {
+  const sala = req.params.sala;
+  if (repo.donoDaSala(sala) !== usuario) throw new ErroRegra(403, 'Só o dono do servidor pode decidir.');
+  const { solicitacaoId, decisao } = req.body || {};
   const pendentes = pendentesPorSala.get(sala);
-  const solicitacaoId = gerarId();
-  pendentes.set(solicitacaoId, { usuario, nome: nomeExibicao, avatar: avatarSeguro, status: 'pendente', token: null, criadoEm: Date.now() });
-
-  res.json({ aguardando: true, solicitacaoId });
-});
-
-// ---------- Salas ativas (pra listar em vez de digitar o nome de cabeça) ----------
-app.get('/rooms/ativas', async (req, res) => {
-  if (!chaveValida(req)) return res.status(401).json({ erro: 'Chave de convite inválida.' });
-
-  try {
-    const salas = await roomService.listRooms();
-    res.json({
-      salas: salas.map(s => ({ nome: s.name, participantes: s.numParticipants }))
-    });
-  } catch (err) {
-    console.error('Erro ao listar salas ativas:', err);
-    res.status(500).json({ erro: 'Falha ao consultar salas ativas.' });
+  const pedido = pendentes && pendentes.get(solicitacaoId);
+  if (!pedido) throw new ErroRegra(404, 'Pedido não encontrado (pode ter expirado).');
+  if (decisao === 'aprovado') {
+    try {
+      pedido.token = await criarToken(pedido.usuario, sala, pedido.nome, pedido.avatar);
+      pedido.status = 'aprovado';
+    } catch (err) {
+      console.error('Erro ao gerar token de aprovação:', err);
+      pedido.status = 'negado';
+      throw new ErroRegra(500, 'Falha ao gerar token de aprovação.');
+    }
+  } else {
+    pedido.status = 'negado';
   }
-});
+  res.json({ ok: true });
+}));
 
-// ---------- Moderação (só o anfitrião da sala) ----------
+// ============================================================
+// Moderação (só o dono do servidor)
+// ============================================================
 // Tipos de faixa do LiveKit. Dependendo da versão do SDK, o servidor devolve o tipo como
 // NÚMERO (2, 3...) ou como TEXTO ("MICROPHONE"...). Aceitamos os dois jeitos.
 const FAIXA = {
@@ -259,72 +303,39 @@ function faixaEhDe(faixa, ...tipos) {
   return tipos.some((t) => faixa.source === t.numero || String(faixa.source).toUpperCase() === t.nome);
 }
 
-// Muta (à força, pelo servidor) as faixas de um tipo de outra pessoa. Só quem é o
-// anfitrião da sala pode pedir isso.
-async function mutarFaixasDe(req, res, tipos, mensagemErro) {
-  if (!chaveValida(req)) return res.status(401).json({ erro: 'Chave de convite inválida.' });
-
-  const { usuarioQueMandou, identidadeAlvo } = req.body || {};
+// Muta (à força, pelo servidor) as faixas de um tipo de outra pessoa.
+async function mutarFaixasDe(req, res, usuario, tipos, mensagemErro) {
   const sala = req.params.sala;
-  const dono = interpretarSala(sala) ? repo.donoDaSala(sala) : donosPorSala.get(sala);
-
-  if (!dono || dono !== usuarioQueMandou) {
-    return res.status(403).json({ erro: 'Só o anfitrião da sala pode fazer isso.' });
-  }
-  if (!identidadeAlvo || typeof identidadeAlvo !== 'string') {
-    return res.status(400).json({ erro: 'identidadeAlvo é obrigatório.' });
-  }
-
+  if (repo.donoDaSala(sala) !== usuario) throw new ErroRegra(403, 'Só o dono do servidor pode fazer isso.');
+  const { identidadeAlvo } = req.body || {};
+  if (!identidadeAlvo || typeof identidadeAlvo !== 'string') throw new ErroRegra(400, 'identidadeAlvo é obrigatório.');
   try {
     const participante = await roomService.getParticipant(sala, identidadeAlvo);
     const faixas = (participante.tracks || []).filter((t) => faixaEhDe(t, ...tipos));
-
     for (const faixa of faixas) {
       await roomService.mutePublishedTrack(sala, identidadeAlvo, faixa.sid, true);
     }
-
     res.json({ ok: true, faixasPausadas: faixas.length });
   } catch (err) {
     console.error(mensagemErro, err);
-    res.status(500).json({ erro: mensagemErro });
+    throw new ErroRegra(500, mensagemErro);
   }
 }
 
+const quemMandouLegado = { legado: (req) => (req.body || {}).usuarioQueMandou };
+
 // Parar a transmissão de tela de outra pessoa (vídeo e o áudio que vem junto).
-app.post('/rooms/:sala/parar-transmissao', (req, res) =>
-  mutarFaixasDe(req, res, [FAIXA.TELA, FAIXA.AUDIO_DA_TELA], 'Falha ao forçar parar a transmissão.'));
+app.post('/rooms/:sala/parar-transmissao', rota((req, res, usuario) =>
+  mutarFaixasDe(req, res, usuario, [FAIXA.TELA, FAIXA.AUDIO_DA_TELA], 'Falha ao forçar parar a transmissão.'), quemMandouLegado));
 
 // Mutar o microfone de outra pessoa (pra todos na sala).
-app.post('/rooms/:sala/mutar-microfone', (req, res) =>
-  mutarFaixasDe(req, res, [FAIXA.MICROFONE], 'Falha ao mutar o microfone.'));
+app.post('/rooms/:sala/mutar-microfone', rota((req, res, usuario) =>
+  mutarFaixasDe(req, res, usuario, [FAIXA.MICROFONE], 'Falha ao mutar o microfone.'), quemMandouLegado));
 
 // ============================================================
 // Servidores (cada pessoa pode ter 1; salas "sXXXXXXXXXX__canal")
 // ============================================================
-// A identidade vem no cabeçalho x-usuario (o app manda "discord:<id>"). Continua sendo
-// "honor system" como no resto deste serviço: a chave de convite é o que protege o acesso.
-function usuarioDe(req) {
-  const usuario = req.get('x-usuario');
-  if (!usuario) throw new ErroRegra(400, 'Cabeçalho x-usuario ausente.');
-  return usuario;
-}
-
-// Embrulha uma rota: exige a chave, converte ErroRegra em resposta HTTP e esconde erros internos.
-function rota(fn) {
-  return async (req, res) => {
-    if (!chaveValida(req)) return res.status(401).json({ erro: 'Chave de convite inválida.' });
-    try {
-      await fn(req, res, usuarioDe(req));
-    } catch (err) {
-      if (err instanceof ErroRegra) return res.status(err.status).json({ erro: err.message });
-      console.error('Erro interno:', err);
-      res.status(500).json({ erro: 'Erro interno do servidor.' });
-    }
-  };
-}
-
-// Tira pessoas (ou todo mundo, se usuario for null) das salas de voz no LiveKit. Se falhar,
-// o servidor já mudou de qualquer jeito: o token delas vence em até 4h e nenhum novo é emitido.
+// Tira pessoas (ou todo mundo, se usuario for null) das salas de voz no LiveKit.
 async function desconectar(salas, usuario) {
   for (const sala of salas) {
     try {
@@ -431,8 +442,8 @@ app.post('/convites/usar', rota((req, res, usuario) => {
   }
 }));
 
-// ---- Presença (substitui a sala "presença" do LiveKit, que cobrava minutos 24h por dia) ----
-// Cada app avisa a cada ~20s que está aberto; quem fica 60s sem avisar some da lista.
+// ---- Presença ----
+// Cada app avisa a cada ~10s que está aberto; quem fica 60s sem avisar some da lista.
 const TTL_PRESENCA_MS = 60 * 1000;
 const presenca = new Map(); // servidorId -> Map(usuario -> { nome, avatar, canalVoz, ultimo })
 
@@ -453,14 +464,14 @@ function listarOnline(servidorId) {
   return online;
 }
 
-app.post('/servidores/:id/presenca', rota((req, res, usuario) => {
+app.post('/servidores/:id/presenca', rota((req, res, usuario, sessao) => {
   const servidor = repo.obter(req.params.id, usuario); // 403 se não for membro
   const { nome, avatar, canalVoz } = req.body || {};
   const canalOk = typeof canalVoz === 'string' && servidor.canais.some((c) => c.id === canalVoz && c.tipo === 'voz') ? canalVoz : null;
   if (!presenca.has(servidor.id)) presenca.set(servidor.id, new Map());
   presenca.get(servidor.id).set(usuario, {
-    nome: limparTexto(nome, 40) || usuario,
-    avatar: limparAvatarServidor(avatar),
+    nome: limparTexto(nome, 40) || (sessao && sessao.perfil.nome) || usuario,
+    avatar: sessao ? (sessao.perfil.avatar || '') : limparAvatar(avatar),
     canalVoz: canalOk,
     ultimo: Date.now(),
   });
@@ -474,13 +485,22 @@ app.post('/servidores/:id/presenca/sair', rota((req, res, usuario) => {
   res.json({ ok: true });
 }));
 
-// Limpeza geral de tempos em tempos (servidores sem ninguém ping-ando).
-setInterval(() => { for (const id of [...presenca.keys()]) { listarOnline(id); if (!presenca.get(id).size) presenca.delete(id); } }, 60000).unref();
+// Limpeza geral de tempos em tempos (servidores sem ninguém avisando).
+setInterval(() => {
+  for (const id of [...presenca.keys()]) {
+    listarOnline(id);
+    if (!presenca.get(id).size) presenca.delete(id);
+  }
+}, 60000).unref();
 
-module.exports = { app, repo, _trocarRoomService: (novo) => { roomService = novo; } };
+module.exports = {
+  app, repo, sessoes,
+  _trocarRoomService: (novo) => { roomService = novo; },
+  _trocarBuscaDiscord: (nova) => { buscarNoDiscord = nova; },
+};
 
 if (require.main === module) {
   app.listen(PORT, () => {
-    console.log(`Servidor de token ativo na porta ${PORT}`);
+    console.log(`Servidor do Estrivisor ativo na porta ${PORT} (login obrigatório: ${EXIGIR_LOGIN ? 'sim' : 'não, modo de transição'})`);
   });
 }

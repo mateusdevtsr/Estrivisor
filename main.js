@@ -1,8 +1,10 @@
 const path = require('path');
-const { app, BrowserWindow, ipcMain, desktopCapturer, session, dialog, Tray, Menu, nativeImage } = require('electron');
+const fs = require('fs');
+const http = require('http');
+const crypto = require('crypto');
+const { app, BrowserWindow, ipcMain, desktopCapturer, session, dialog, Tray, Menu, nativeImage, shell, safeStorage } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const { migrarDadosAntigos } = require('./migrar-dados');
-const { montarPerfilDiscord } = require('./perfil-discord');
 const { lerConfiguracao, salvarConfiguracao } = require('./configuracao');
 
 // Carrega o .env pelo caminho absoluto da pasta do app, não pela pasta
@@ -46,15 +48,7 @@ let rpcClient = null;
 let rpcPronto = false;
 let atividadeDiscord = null; // { details, state, inicio } ou null (= limpar)
 let timerReconexaoRpc = null;
-let usuarioDiscord = null;   // { id, nome, avatar } de quem está logado no Discord aberto
 let janelaPrincipal = null;
-
-// Avisa a janela quando o perfil do Discord ficar disponível (ou mudar).
-function enviarUsuarioDiscord() {
-  if (janelaPrincipal && !janelaPrincipal.isDestroyed()) {
-    janelaPrincipal.webContents.send('usuario-discord', usuarioDiscord);
-  }
-}
 
 function aplicarAtividadeDiscord() {
   if (!rpcClient || !rpcPronto) return;
@@ -100,13 +94,6 @@ function conectarDiscordRpc() {
     rpcPronto = true;
     console.log('[discord] Rich Presence conectado.');
     aplicarAtividadeDiscord();
-
-    // O Discord informa quem está logado nele; usamos isso como perfil.
-    usuarioDiscord = montarPerfilDiscord(client.user);
-    if (usuarioDiscord) {
-      console.log('[discord] Perfil carregado:', usuarioDiscord.nome);
-      enviarUsuarioDiscord();
-    }
   });
 
   client.on('disconnected', () => {
@@ -123,16 +110,8 @@ function conectarDiscordRpc() {
   });
 }
 
-// O app pergunta pelo perfil do Discord ao abrir. "configurado" diz se o
-// recurso está ligado (se tem DISCORD_CLIENT_ID no .env); sem isso não vale
-// a pena esperar pelo Discord.
-ipcMain.handle('obter-usuario-discord', () => ({
-  configurado: Boolean(DISCORD_CLIENT_ID),
-  usuario: usuarioDiscord
-}));
-
 // O renderer avisa o que a pessoa está fazendo; null limpa o status.
-ipcMain.handle('definir-atividade-discord', (event, atividade) => {
+responder('definir-atividade-discord', (event, atividade) => {
   if (atividade && typeof atividade === 'object') {
     atividadeDiscord = {
       details: String(atividade.details || '').slice(0, 120),
@@ -268,176 +247,306 @@ function createWindow() {
   win.loadFile('index.html');
 }
 
-// Em vez de gerar o token aqui (o que exigiria guardar a chave secreta do
-// LiveKit em cada instalação distribuída), pedimos ao servidor de token,
-// que é o único lugar que conhece essa chave.
-ipcMain.handle('gerar-token-seguro', async (event, { sala, usuario, nome, avatar }) => {
-  if (!sala || !usuario) throw new Error('Sala e usuário são obrigatórios.');
-
-  const resposta = await fetch(`${TOKEN_SERVER_URL}/token`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-invite-key': INVITE_KEY
-    },
-    body: JSON.stringify({ sala, usuario, nome, avatar })
+// ============================================================
+// Pedidos da tela (IPC)
+// ============================================================
+// Só a própria janela do app (index.html carregado do disco) pode pedir coisas ao processo
+// principal. Qualquer outra origem é recusada.
+function remetenteValido(evento) {
+  const url = evento && evento.senderFrame && evento.senderFrame.url;
+  return typeof url === 'string' && url.startsWith('file://') && url.endsWith('/index.html');
+}
+function responder(canal, fn) {
+  ipcMain.handle(canal, (evento, ...args) => {
+    if (!remetenteValido(evento)) throw new Error('Pedido recusado: origem desconhecida.');
+    return fn(evento, ...args);
   });
+}
 
-  if (!resposta.ok) {
-    const erro = await resposta.json().catch(() => ({}));
-    throw new Error(erro.erro || `O servidor de token respondeu com erro ${resposta.status}.`);
+// ============================================================
+// Conta (login) — a sessão fica SÓ aqui no processo principal
+// ============================================================
+// A chave de sessão que o servidor entrega no login é guardada criptografada pelo próprio
+// Windows (safeStorage) na pasta de dados do app. A tela nunca vê essa chave: ela só pede
+// as coisas, e este processo manda a chave junto em cada pedido ao servidor.
+const sessao = { chave: null, conta: null };
+const arquivoSessao = () => path.join(app.getPath('userData'), 'sessao.dat');
+
+function carregarSessao() {
+  try {
+    const bruto = fs.readFileSync(arquivoSessao());
+    const texto = safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(bruto) : bruto.toString('utf8');
+    const dados = JSON.parse(texto);
+    if (dados && typeof dados.chave === 'string' && dados.conta && typeof dados.conta.usuario === 'string') {
+      sessao.chave = dados.chave;
+      sessao.conta = dados.conta;
+    }
+  } catch (e) {
+    // Sem sessão salva (ou ilegível): a tela pede login.
   }
+}
 
-  const dados = await resposta.json();
-  if (dados.token) return dados.token;
-  if (dados.aguardando) return esperarAprovacao(dados.solicitacaoId);
+function gravarSessao() {
+  try {
+    const texto = JSON.stringify({ chave: sessao.chave, conta: sessao.conta });
+    const dados = safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(texto) : Buffer.from(texto, 'utf8');
+    fs.mkdirSync(app.getPath('userData'), { recursive: true });
+    const temporario = arquivoSessao() + '.tmp';
+    fs.writeFileSync(temporario, dados);
+    fs.renameSync(temporario, arquivoSessao());
+  } catch (e) {
+    console.warn('[sessão] não consegui salvar:', e.message);
+  }
+}
 
+function apagarSessao() {
+  sessao.chave = null;
+  sessao.conta = null;
+  try { fs.unlinkSync(arquivoSessao()); } catch (e) { /* já não existia */ }
+}
+
+// O servidor disse que a sessão não vale mais (venceu ou foi encerrada): avisa a tela.
+function sessaoExpirou() {
+  if (!sessao.chave) return;
+  apagarSessao();
+  if (janelaPrincipal && !janelaPrincipal.isDestroyed()) janelaPrincipal.webContents.send('sessao-expirou');
+}
+
+// Único lugar que fala com o servidor do Estrivisor.
+async function chamarServidor(caminho, { metodo = 'GET', corpo, semSessao = false, tempo = 10000 } = {}) {
+  const headers = { 'x-invite-key': INVITE_KEY };
+  if (corpo !== undefined) headers['Content-Type'] = 'application/json';
+  const chaveUsada = semSessao ? null : sessao.chave;
+  if (chaveUsada) headers.Authorization = `Bearer ${chaveUsada}`;
+  let resposta;
+  try {
+    resposta = await fetch(`${TOKEN_SERVER_URL}${caminho}`, {
+      method: metodo,
+      headers,
+      body: corpo !== undefined ? JSON.stringify(corpo) : undefined,
+      signal: AbortSignal.timeout(tempo),
+    });
+  } catch (e) {
+    return { ok: false, status: 0, erro: 'Sem conexão com o servidor do Estrivisor.' };
+  }
+  const dados = await resposta.json().catch(() => ({}));
+  if (resposta.ok) return { ok: true, status: resposta.status, dados };
+  // Só derruba a sessão se ela ainda for a mesma que foi usada neste pedido.
+  if (resposta.status === 401 && dados.codigo === 'login' && chaveUsada && chaveUsada === sessao.chave) sessaoExpirou();
+  return { ok: false, status: resposta.status, erro: dados.erro || `Erro ${resposta.status} do servidor.`, codigo: dados.codigo };
+}
+
+responder('conta-atual', () => {
+  if (!sessao.chave) return { conta: null };
+  // Confere com o servidor em segundo plano: atualiza nome/foto ou descobre que a sessão venceu.
+  chamarServidor('/auth/eu').then((r) => {
+    if (r.ok && r.dados && r.dados.conta) { sessao.conta = r.dados.conta; gravarSessao(); }
+  });
+  return { conta: sessao.conta };
+});
+
+responder('login-local', async (evento, nome) => {
+  const r = await chamarServidor('/auth/local', { metodo: 'POST', corpo: { nome: String(nome || '').slice(0, 40) }, semSessao: true });
+  if (!r.ok) return { ok: false, erro: r.erro };
+  sessao.chave = r.dados.sessao;
+  sessao.conta = r.dados.conta;
+  gravarSessao();
+  return { ok: true, conta: sessao.conta };
+});
+
+responder('sair-da-conta', async () => {
+  if (sessao.chave) await chamarServidor('/auth/sair', { metodo: 'POST', tempo: 5000 });
+  apagarSessao();
+  return { ok: true };
+});
+
+// ---------- Login com Discord ----------
+// 1) Abre o Discord no navegador da pessoa.  2) Depois que ela autoriza, o Discord manda o
+// navegador de volta pra http://127.0.0.1:53134/callback — um mini servidor aqui no PC, que
+// só existe durante o login.  3) O código recebido vai pro servidor do Estrivisor, que confirma
+// a conta com o Discord e devolve a sessão. O Client Secret nunca passa por este PC.
+const DISCORD_REDIRECT_URI = (process.env.DISCORD_REDIRECT_URI || 'http://127.0.0.1:53134/callback').trim();
+let loginDiscordAtual = null; // { promessa, cancelar }
+
+function paginaDeRetorno(titulo, texto) {
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Estrivisor</title>
+<style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0b0d10;color:#e8eaed;font-family:"Segoe UI",sans-serif}
+.c{background:#14171b;border:1px solid #23272c;border-radius:12px;padding:28px 32px;max-width:420px;text-align:center}
+h1{font-size:20px;margin:0 0 10px}p{color:#8a919a;margin:0;line-height:1.5}</style></head>
+<body><div class="c"><h1>${esc(titulo)}</h1><p>${esc(texto)}</p></div></body></html>`;
+}
+
+function loginComDiscord() {
+  if (loginDiscordAtual) return loginDiscordAtual.promessa; // já tem um login aberto: reaproveita
+  let finalizar = null;
+  const promessa = new Promise((resolve) => {
+    if (!DISCORD_CLIENT_ID) {
+      resolve({ ok: false, erro: 'O login com Discord não está configurado (falta DISCORD_CLIENT_ID no .env).' });
+      return;
+    }
+    let destino;
+    try { destino = new URL(DISCORD_REDIRECT_URI); } catch (e) {
+      resolve({ ok: false, erro: 'DISCORD_REDIRECT_URI inválido no .env.' });
+      return;
+    }
+    const estado = crypto.randomBytes(16).toString('hex'); // protege contra um retorno falso
+    let terminado = false;
+    let relogio = null;
+    const servidorLocal = http.createServer(async (req, res) => {
+      const url = new URL(req.url, DISCORD_REDIRECT_URI);
+      if (req.method !== 'GET' || url.pathname !== destino.pathname) { res.writeHead(404); res.end(); return; }
+      const enviarPagina = (status, titulo, texto) => {
+        res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(paginaDeRetorno(titulo, texto));
+      };
+      if (url.searchParams.get('state') !== estado) {
+        enviarPagina(400, 'Link de login inválido', 'Volte ao Estrivisor e clique em "Entrar com Discord" de novo.');
+        return;
+      }
+      if (url.searchParams.get('error')) {
+        enviarPagina(200, 'Login cancelado', 'Você pode fechar esta aba e voltar ao Estrivisor.');
+        finalizar({ ok: false, cancelado: true });
+        return;
+      }
+      const codigo = url.searchParams.get('code');
+      if (!codigo) { enviarPagina(400, 'Algo deu errado', 'O Discord não mandou o código de login. Tente de novo.'); return; }
+      const r = await chamarServidor('/auth/discord', { metodo: 'POST', corpo: { codigo, redirectUri: DISCORD_REDIRECT_URI }, semSessao: true, tempo: 20000 });
+      if (!r.ok) {
+        enviarPagina(200, 'Não deu certo', `${r.erro} Volte ao Estrivisor e tente de novo.`);
+        finalizar({ ok: false, erro: r.erro });
+        return;
+      }
+      sessao.chave = r.dados.sessao;
+      sessao.conta = r.dados.conta;
+      gravarSessao();
+      enviarPagina(200, 'Pronto!', 'Você entrou no Estrivisor. Pode fechar esta aba e voltar pro app.');
+      finalizar({ ok: true, conta: sessao.conta });
+      mostrarJanela();
+    });
+
+    finalizar = (resultado) => {
+      if (terminado) return;
+      terminado = true;
+      clearTimeout(relogio);
+      servidorLocal.close();
+      loginDiscordAtual = null;
+      resolve(resultado);
+    };
+    relogio = setTimeout(() => finalizar({ ok: false, erro: 'O login demorou demais. Tente de novo.' }), 5 * 60 * 1000);
+    servidorLocal.on('error', (e) => finalizar({
+      ok: false,
+      erro: e.code === 'EADDRINUSE'
+        ? `A porta ${destino.port} (usada no login) está ocupada por outro programa. Feche-o e tente de novo.`
+        : 'Não consegui iniciar o login.',
+    }));
+    // Só escuta no próprio PC (127.0.0.1): ninguém da rede consegue acessar.
+    servidorLocal.listen(Number(destino.port) || 80, destino.hostname, () => {
+      const parametros = new URLSearchParams({
+        client_id: DISCORD_CLIENT_ID,
+        response_type: 'code',
+        redirect_uri: DISCORD_REDIRECT_URI,
+        scope: 'identify',
+        state: estado,
+        prompt: 'none', // quem já autorizou antes não precisa clicar de novo
+      });
+      shell.openExternal(`https://discord.com/oauth2/authorize?${parametros}`);
+    });
+  });
+  // (Se nem deu pra começar — falta configuração —, não fica nenhum login "pendurado".)
+  if (finalizar) loginDiscordAtual = { promessa, cancelar: () => finalizar({ ok: false, cancelado: true }) };
+  return promessa;
+}
+
+responder('login-discord', () => loginComDiscord());
+responder('cancelar-login', () => { if (loginDiscordAtual) loginDiscordAtual.cancelar(); });
+
+// ============================================================
+// Canais de voz/texto (tokens do LiveKit)
+// ============================================================
+// Em vez de gerar o token aqui (o que exigiria guardar a chave secreta do LiveKit em cada
+// instalação), pedimos ao servidor do Estrivisor, que é o único lugar que conhece essa chave.
+responder('gerar-token-seguro', async (evento, { sala, nome } = {}) => {
+  if (typeof sala !== 'string' || !sala) throw new Error('Sala inválida.');
+  const r = await chamarServidor('/token', { metodo: 'POST', corpo: { sala, nome } });
+  if (!r.ok) throw new Error(r.erro);
+  if (r.dados.token) return r.dados.token;
+  if (r.dados.aguardando) return esperarAprovacao(r.dados.solicitacaoId);
   throw new Error('Resposta inesperada do servidor de token.');
 });
 
-// A sala tem um anfitrião: fica consultando o servidor até ele decidir,
-// ou até passar o tempo limite.
+// O canal pede aprovação e o dono está lá: consulta o servidor até ele decidir.
 async function esperarAprovacao(solicitacaoId) {
   const TEMPO_LIMITE_MS = 120000;
   const INTERVALO_MS = 2000;
   const inicio = Date.now();
-
   while (Date.now() - inicio < TEMPO_LIMITE_MS) {
-    await new Promise(resolve => setTimeout(resolve, INTERVALO_MS));
-
-    const resposta = await fetch(`${TOKEN_SERVER_URL}/token/status/${solicitacaoId}`, {
-      headers: { 'x-invite-key': INVITE_KEY }
-    });
-    if (!resposta.ok) continue;
-
-    const dados = await resposta.json();
-    if (dados.status === 'aprovado') return dados.token;
-    if (dados.status === 'negado') throw new Error('O anfitrião recusou sua entrada na sala.');
+    await new Promise((resolve) => setTimeout(resolve, INTERVALO_MS));
+    const r = await chamarServidor(`/token/status/${encodeURIComponent(solicitacaoId)}`);
+    if (!r.ok) {
+      if (r.status === 404) throw new Error('O pedido de entrada expirou. Tente de novo.');
+      continue; // falha de rede momentânea: tenta de novo
+    }
+    if (r.dados.status === 'aprovado') return r.dados.token;
+    if (r.dados.status === 'negado') throw new Error('O dono recusou sua entrada na sala.');
   }
-
-  throw new Error('Tempo esgotado esperando aprovação do anfitrião.');
+  throw new Error('Tempo esgotado esperando a aprovação do dono.');
 }
 
-// Marca o usuário como anfitrião da sala: a partir daí, quem mais tentar
-// entrar fica pendente até ele aceitar ou recusar.
-ipcMain.handle('tornar-dono', async (event, { sala, usuario }) => {
-  await fetch(`${TOKEN_SERVER_URL}/rooms/${encodeURIComponent(sala)}/tornar-dono`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-invite-key': INVITE_KEY
-    },
-    body: JSON.stringify({ usuario })
-  });
+// O dono vê quem está esperando pra entrar...
+responder('listar-pendentes', async (evento, { sala } = {}) => {
+  const r = await chamarServidor(`/rooms/${encodeURIComponent(String(sala || ''))}/pendentes`);
+  return r.ok ? (r.dados.pedidos || []) : [];
 });
 
-// O anfitrião usa isso pra ver quem está esperando pra entrar.
-ipcMain.handle('listar-pendentes', async (event, { sala, usuario }) => {
-  const resposta = await fetch(`${TOKEN_SERVER_URL}/rooms/${encodeURIComponent(sala)}/pendentes`, {
-    headers: { 'x-invite-key': INVITE_KEY, 'x-usuario': String(usuario || '') }
-  });
-  if (!resposta.ok) return [];
-  const dados = await resposta.json();
-  return dados.pedidos || [];
+// ...e aceita ou recusa.
+responder('decidir-pendente', async (evento, { sala, solicitacaoId, decisao } = {}) => {
+  const r = await chamarServidor(`/rooms/${encodeURIComponent(String(sala || ''))}/decidir`, { metodo: 'POST', corpo: { solicitacaoId, decisao } });
+  if (!r.ok) throw new Error(r.erro);
 });
 
-// O anfitrião aceita ou recusa um pedido específico.
-ipcMain.handle('decidir-pendente', async (event, { sala, solicitacaoId, decisao, usuario }) => {
-  await fetch(`${TOKEN_SERVER_URL}/rooms/${encodeURIComponent(sala)}/decidir`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-invite-key': INVITE_KEY,
-      'x-usuario': String(usuario || '')
-    },
-    body: JSON.stringify({ solicitacaoId, decisao })
-  });
-});
-
-// Lista as salas com gente conectada agora, pra mostrar em vez de digitar
-// o nome da sala de cabeça.
-ipcMain.handle('listar-salas-ativas', async () => {
-  const resposta = await fetch(`${TOKEN_SERVER_URL}/rooms/ativas`, {
-    headers: { 'x-invite-key': INVITE_KEY }
-  });
-  if (!resposta.ok) return [];
-  const dados = await resposta.json();
-  return dados.salas || [];
-});
-
-// Moderação: só o anfitrião da sala consegue (o servidor confere).
-async function pedirModeracao(sala, acao, usuarioQueMandou, identidadeAlvo, mensagemPadrao) {
-  const resposta = await fetch(`${TOKEN_SERVER_URL}/rooms/${encodeURIComponent(sala)}/${acao}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-invite-key': INVITE_KEY
-    },
-    body: JSON.stringify({ usuarioQueMandou, identidadeAlvo })
-  });
-  if (!resposta.ok) {
-    const erro = await resposta.json().catch(() => ({}));
-    throw new Error(erro.erro || mensagemPadrao);
-  }
-  return resposta.json();
+// Moderação: só o dono do servidor consegue (o servidor confere pela sessão).
+async function pedirModeracao(sala, acao, identidadeAlvo) {
+  const r = await chamarServidor(`/rooms/${encodeURIComponent(String(sala || ''))}/${acao}`, { metodo: 'POST', corpo: { identidadeAlvo } });
+  if (!r.ok) throw new Error(r.erro);
+  return r.dados;
 }
-
-ipcMain.handle('forcar-parar-transmissao', (event, { sala, usuarioQueMandou, identidadeAlvo }) =>
-  pedirModeracao(sala, 'parar-transmissao', usuarioQueMandou, identidadeAlvo, 'Falha ao forçar parar a transmissão.'));
-
-ipcMain.handle('forcar-mutar-microfone', (event, { sala, usuarioQueMandou, identidadeAlvo }) =>
-  pedirModeracao(sala, 'mutar-microfone', usuarioQueMandou, identidadeAlvo, 'Falha ao mutar o microfone.'));
+responder('forcar-parar-transmissao', (evento, { sala, identidadeAlvo } = {}) => pedirModeracao(sala, 'parar-transmissao', identidadeAlvo));
+responder('forcar-mutar-microfone', (evento, { sala, identidadeAlvo } = {}) => pedirModeracao(sala, 'mutar-microfone', identidadeAlvo));
 
 // ---------- Servidores, canais, convites e presença ----------
-// O app só conhece a chave de convite aqui no processo principal. A tela pede por este
-// canal único, e só passam caminhos que começam com /servidores ou /convites.
+// A tela pede por este canal único; só passam caminhos que começam com /servidores ou /convites.
 const METODOS_API = ['GET', 'POST', 'PATCH', 'DELETE'];
 const CAMINHO_API = /^\/(servidores|convites)(\/[A-Za-z0-9._\-]+)*$/;
 
-ipcMain.handle('api-servidor', async (event, { metodo, caminho, corpo, usuario } = {}) => {
+responder('api-servidor', async (evento, { metodo, caminho, corpo } = {}) => {
   if (!METODOS_API.includes(metodo) || typeof caminho !== 'string' || !CAMINHO_API.test(caminho)) {
     return { ok: false, status: 400, erro: 'Pedido inválido.' };
   }
-  if (!usuario || typeof usuario !== 'string') {
-    return { ok: false, status: 400, erro: 'Perfil ainda não carregado.' };
-  }
-  try {
-    const resposta = await fetch(`${TOKEN_SERVER_URL}${caminho}`, {
-      method: metodo,
-      headers: {
-        'Content-Type': 'application/json',
-        'x-invite-key': INVITE_KEY,
-        'x-usuario': usuario
-      },
-      body: corpo !== undefined && metodo !== 'GET' ? JSON.stringify(corpo) : undefined,
-      signal: AbortSignal.timeout(10000)
-    });
-    const dados = await resposta.json().catch(() => ({}));
-    if (!resposta.ok) return { ok: false, status: resposta.status, erro: dados.erro || `Erro ${resposta.status} do servidor.` };
-    return { ok: true, status: resposta.status, dados };
-  } catch (e) {
-    return { ok: false, status: 0, erro: 'Sem conexão com o servidor do Estrivisor.' };
-  }
+  if (!sessao.chave) return { ok: false, status: 401, erro: 'Entre com a sua conta primeiro.', codigo: 'login' };
+  return chamarServidor(caminho, { metodo, corpo: metodo === 'GET' ? undefined : corpo });
 });
 
-// Guarda qual fonte (janela/tela) o usuário escolheu no dropdown, para
-// responder ao pedido de getDisplayMedia() feito pelo livekit-client.
+// ---------- Transmissão de tela ----------
+// Guarda qual fonte (janela/tela) o usuário escolheu na lista, para responder ao pedido de
+// getDisplayMedia() feito pelo livekit-client.
 let fonteEscolhidaId = null;
 
-ipcMain.handle('definir-fonte', (event, id) => {
-  fonteEscolhidaId = id;
+responder('definir-fonte', (evento, id) => {
+  fonteEscolhidaId = typeof id === 'string' ? id : null;
 });
 
-ipcMain.handle('obter-url-servidor', () => LIVEKIT_URL);
+responder('obter-url-servidor', () => LIVEKIT_URL);
 
 // A partir do Electron 17, desktopCapturer só funciona no processo principal.
-ipcMain.handle('listar-fontes', async () => {
+responder('listar-fontes', async () => {
   const fontes = await desktopCapturer.getSources({ types: ['window', 'screen'] });
   return fontes.map(f => ({ id: f.id, name: f.name }));
 });
 
 app.whenReady().then(() => {
   if (!instanciaPrincipal) return; // já existe outra cópia aberta (ela foi avisada e mostra a janela)
+  carregarSessao();
   criarBandeja();
   createWindow();
   conectarDiscordRpc();

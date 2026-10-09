@@ -1,7 +1,7 @@
 {
   "name": "estrivisor",
   "productName": "Estrivisor",
-  "version": "3.6.1",
+  "version": "3.7.0",
   "description": "Estrivisor — voz, chat e compartilhamento de tela entre amigos",
   "author": "mateusdevtsr",
   "license": "UNLICENSED",
@@ -27,7 +27,6 @@
       "main.js",
       "preload.js",
       "migrar-dados.js",
-      "perfil-discord.js",
       "icone.png",
       "configuracao.js",
       "index.html",

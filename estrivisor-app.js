@@ -73,14 +73,15 @@ function slug(texto) {
 });
 
 // ---------- Perfil do usuário ----------
-// "Identidade" é o que identifica a pessoa na sala (precisa ser única):
-//   - com Discord: o ID dele ("discord:123...")
-//   - sem Discord: o próprio nome digitado
-// "Nome" e "avatar" são só o que aparece pros outros.
+// A conta vem do LOGIN e é confirmada pelo servidor:
+//   - com Discord: "discord:<id>" (o servidor confere com o próprio Discord)
+//   - sem Discord: "local:<código>" (o servidor cria o código)
+// "Nome" é o que aparece pros outros: o nome da conta ou um apelido escolhido aqui.
 let nomeUsuarioAtual = '';
 let identidadeUsuarioAtual = '';
 let avatarUsuarioAtual = null;
-let origemPerfil = null; // 'discord' | 'manual' | null (ainda sem perfil)
+let origemPerfil = null; // 'discord' | 'manual' | null (ainda sem conta)
+let contaAtual = null;   // { usuario, tipo, nome, avatar } como o servidor informou
 
 function obterNomeUsuario() {
     return nomeUsuarioAtual;
@@ -89,14 +90,9 @@ function obterIdentidadeUsuario() {
     return identidadeUsuarioAtual;
 }
 
-// Pede o token de uma sala já mandando identidade, nome e avatar.
+// Pede o token de uma sala (a conta vai junto pelo processo principal; aqui só o nome exibido).
 function pedirToken(sala) {
-    return window.electronAPI.gerarToken({
-        sala,
-        usuario: obterIdentidadeUsuario(),
-        nome: obterNomeUsuario(),
-        avatar: avatarUsuarioAtual || undefined
-    });
+    return window.electronAPI.gerarToken({ sala, nome: obterNomeUsuario() });
 }
 
 function aplicarPerfil({ identidade, nome, avatar, origem }) {
@@ -107,148 +103,167 @@ function aplicarPerfil({ identidade, nome, avatar, origem }) {
     document.getElementById('nome-usuario-exibido').textContent = nome;
     aplicarAvatar(document.getElementById('avatar-usuario-exibido'), identidade, nome, avatarUsuarioAtual);
     conectarPresenca();
-    atualizarPresencaDiscord(); // app aberto + perfil definido = "Online no Estrivisor"
+    atualizarPresencaDiscord(); // app aberto + conta definida = "Online no Estrivisor"
 }
 
-// ---- Perfil manual (quando o Discord não está disponível) ----
-// A identidade é um código aleatório fixo deste PC ("local:..."); o nome é só o que aparece.
-// Antes a identidade era o próprio nome: dois "Mateus" viravam a mesma pessoa, trocar o nome
-// fazia perder os servidores e nomes com emoji quebravam a conversa com o servidor.
-function gerarUuid() {
-    if (window.crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
-    const b = crypto.getRandomValues(new Uint8Array(16));
-    b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
-    const h = [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
-    return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
-}
-function identidadeLocal() {
-    let id = null;
-    try { id = localStorage.getItem('estrivisor_id_local'); } catch (e) {}
-    if (!id || !/^local:[0-9a-f-]{36}$/.test(id)) {
-        id = 'local:' + gerarUuid();
-        try { localStorage.setItem('estrivisor_id_local', id); } catch (e) {}
-    }
-    return id;
-}
-function definirNomeUsuario(nome) {
-    const limpo = nome.trim();
-    localStorage.setItem('estrivisor_nome', limpo);
-    aplicarPerfil({ identidade: identidadeLocal(), nome: limpo, avatar: null, origem: 'manual' });
-}
-
-// ---- Perfil vindo do Discord ----
-let perfilDiscord = null; // { id, nome, avatar }
-
-function adotarPerfilDiscord(perfil) {
-    perfilDiscord = perfil;
-    // Lembra pra próxima vez (assim o app abre na hora, mesmo se o Discord
-    // demorar a responder).
-    localStorage.setItem('estrivisor_perfil_discord', JSON.stringify(perfil));
-    // A pessoa pode ter escolhido um apelido só pro Estrivisor.
+function adotarConta(conta) {
+    contaAtual = conta;
     const apelido = (localStorage.getItem('estrivisor_nome_manual') || '').trim();
     aplicarPerfil({
-        identidade: `discord:${perfil.id}`,
-        nome: apelido || perfil.nome,
-        avatar: perfil.avatar,
-        origem: 'discord'
+        identidade: conta.usuario,
+        nome: apelido || conta.nome,
+        avatar: conta.avatar,
+        origem: conta.tipo === 'discord' ? 'discord' : 'manual'
     });
 }
 
-function lerPerfilDiscordGuardado() {
-    try {
-        const p = JSON.parse(localStorage.getItem('estrivisor_perfil_discord') || 'null');
-        if (p && /^\d{5,25}$/.test(String(p.id)) && typeof p.nome === 'string' && p.nome) return p;
-    } catch (e) { /* ignora dado corrompido */ }
-    return null;
+// ---------- Tela de login / perfil ----------
+// modo "entrar": sem conta (Discord ou só um nome) | modo "perfil": apelido e sair da conta
+function erroLogin(texto) {
+    document.getElementById('login-erro').textContent = texto || '';
 }
 
-function mostrarTelaLogin() {
-    const ehDiscord = origemPerfil === 'discord' && perfilDiscord;
-    document.getElementById('dica-login').style.display = ehDiscord ? 'block' : 'none';
-    const input = document.getElementById('input-login-nome');
-    input.value = ehDiscord ? (localStorage.getItem('estrivisor_nome_manual') || '') : nomeUsuarioAtual;
-    input.placeholder = ehDiscord ? perfilDiscord.nome : 'Ex: Mateus';
+function mostrarTelaLogin(modo) {
+    const entrar = modo !== 'perfil';
+    document.getElementById('login-entrar').style.display = entrar ? 'flex' : 'none';
+    document.getElementById('login-perfil').style.display = entrar ? 'none' : 'flex';
+    document.getElementById('login-aguardando').style.display = 'none';
+    definirBotoesLogin(true);
+    erroLogin('');
+    let campo;
+    if (entrar) {
+        campo = document.getElementById('input-login-local');
+        campo.value = (localStorage.getItem('estrivisor_nome') || '').trim();
+    } else {
+        campo = document.getElementById('input-login-nome');
+        campo.value = (localStorage.getItem('estrivisor_nome_manual') || '').trim();
+        campo.placeholder = contaAtual ? contaAtual.nome : '';
+        document.getElementById('dica-login').textContent = contaAtual && contaAtual.tipo === 'discord'
+            ? `Você entrou com o Discord (${contaAtual.nome}). Se quiser um apelido só aqui, digite abaixo; em branco usa o nome do Discord.`
+            : 'Você entrou sem Discord. Pode trocar o nome que aparece pros outros quando quiser.';
+    }
     document.getElementById('tela-login').style.display = 'flex';
-    setTimeout(() => input.focus(), 50);
+    if (!entrar) setTimeout(() => campo.focus(), 50); // na tela de entrar, o destaque é o botão do Discord
 }
 function esconderTelaLogin() {
     document.getElementById('tela-login').style.display = 'none';
 }
+function definirBotoesLogin(ativos) {
+    ['btn-login-discord', 'btn-login-local', 'input-login-local'].forEach((id) => {
+        document.getElementById(id).disabled = !ativos;
+    });
+}
 
-document.getElementById('btn-login-entrar').addEventListener('click', () => {
-    const nome = document.getElementById('input-login-nome').value.trim();
-
-    // Com Discord, este campo é só um apelido opcional (vazio = nome do Discord).
-    if (origemPerfil === 'discord' && perfilDiscord) {
-        localStorage.setItem('estrivisor_nome_manual', nome);
-        adotarPerfilDiscord(perfilDiscord);
+document.getElementById('btn-login-discord').addEventListener('click', async () => {
+    erroLogin('');
+    definirBotoesLogin(false);
+    document.getElementById('login-aguardando').style.display = 'flex';
+    let r;
+    try { r = await window.electronAPI.loginDiscord(); }
+    catch (e) { r = { ok: false, erro: 'Não consegui abrir o login.' }; }
+    document.getElementById('login-aguardando').style.display = 'none';
+    definirBotoesLogin(true);
+    if (r && r.ok && r.conta) {
         esconderTelaLogin();
-        return;
+        adotarConta(r.conta);
+        mostrarNotificacao(`Bem-vindo, ${r.conta.nome}!`, 'info');
+    } else if (!(r && r.cancelado)) {
+        erroLogin((r && r.erro) || 'O login não deu certo. Tente de novo.');
     }
+});
+document.getElementById('btn-login-cancelar').addEventListener('click', () => {
+    window.electronAPI.cancelarLogin().catch(() => {});
+});
 
-    if (!nome) return mostrarNotificacao('Digite um nome pra continuar.');
-    definirNomeUsuario(nome);
+async function entrarSemDiscord() {
+    const nome = document.getElementById('input-login-local').value.replace(/\s+/g, ' ').trim();
+    if (!nome) return erroLogin('Digite um nome pra continuar.');
+    erroLogin('');
+    definirBotoesLogin(false);
+    let r;
+    try { r = await window.electronAPI.loginLocal(nome); }
+    catch (e) { r = { ok: false, erro: 'Não consegui falar com o servidor.' }; }
+    definirBotoesLogin(true);
+    if (!r || !r.ok) return erroLogin((r && r.erro) || 'Não deu certo. Tente de novo.');
+    localStorage.setItem('estrivisor_nome', nome);
+    esconderTelaLogin();
+    adotarConta(r.conta);
+}
+document.getElementById('btn-login-local').addEventListener('click', entrarSemDiscord);
+document.getElementById('input-login-local').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') entrarSemDiscord();
+});
+
+// Modo "perfil": salvar o apelido.
+document.getElementById('btn-login-entrar').addEventListener('click', () => {
+    if (!contaAtual) return;
+    const apelido = document.getElementById('input-login-nome').value.replace(/\s+/g, ' ').trim();
+    localStorage.setItem('estrivisor_nome_manual', apelido);
+    adotarConta(contaAtual);
     esconderTelaLogin();
 });
 document.getElementById('input-login-nome').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') document.getElementById('btn-login-entrar').click();
+    if (e.key === 'Escape') esconderTelaLogin();
 });
-document.getElementById('btn-editar-nome').addEventListener('click', mostrarTelaLogin);
-
-// O Discord pode responder depois que o app já abriu (ex.: a pessoa abriu o
-// Discord depois). Aqui decidimos o que fazer com esse perfil tardio.
-let aguardandoDiscord = null; // resolve a espera inicial quando o Discord responder
-window.electronAPI.aoReceberUsuarioDiscord((perfil) => {
-    if (!perfil) return;
-
-    if (aguardandoDiscord) { aguardandoDiscord(perfil); return; } // ainda na espera inicial
-
-    if (origemPerfil === 'discord') {
-        if (perfilDiscord && perfilDiscord.id === perfil.id) {
-            adotarPerfilDiscord(perfil); // mesma pessoa: só atualiza nome/avatar
-        } else {
-            // Outra conta do Discord: vale a partir da próxima abertura.
-            localStorage.setItem('estrivisor_perfil_discord', JSON.stringify(perfil));
-            mostrarNotificacao('A conta do Discord mudou. Feche e abra o Estrivisor pra usar a nova.', 'info');
-        }
-        return;
-    }
-
-    if (!origemPerfil) { // ainda estava na tela de login: adota na hora
-        adotarPerfilDiscord(perfil);
-        esconderTelaLogin();
-        return;
-    }
-
-    mostrarNotificacao('Discord detectado. Feche e abra o Estrivisor pra usar seu nome e avatar do Discord.', 'info');
+document.getElementById('btn-login-fechar').addEventListener('click', esconderTelaLogin);
+document.getElementById('btn-editar-nome').addEventListener('click', () => {
+    if (contaAtual) mostrarTelaLogin('perfil');
 });
 
-// Decide quem a pessoa é ao abrir o app.
+// Volta o app ao estado "sem conta" (saiu da conta ou a sessão venceu).
+async function encerrarContaNoApp() {
+    await sairCanalVoz();
+    sairDoTextoAtual();
+    pararPing();
+    fecharAjustes();
+    fecharTelaInicio();
+    servidorAtual = SERVIDOR_VAZIO;
+    meusServidores = [];
+    presencaParticipantes.clear();
+    sessaoIniciadaPara = null;
+    contaAtual = null;
+    identidadeUsuarioAtual = '';
+    nomeUsuarioAtual = '';
+    avatarUsuarioAtual = null;
+    origemPerfil = null;
+    document.getElementById('nome-usuario-exibido').textContent = '—';
+    aplicarAvatar(document.getElementById('avatar-usuario-exibido'), '', '?', null);
+    aplicarNomeServidor();
+    renderizarListaCanais();
+    renderizarBarraServidores();
+    atualizarControlesDoServidor();
+    atualizarListaOnline();
+    mostrarAreaVazia();
+    atualizarPresencaDiscord();
+}
+
+document.getElementById('btn-login-sair-conta').addEventListener('click', async () => {
+    const r = await pedirTexto({
+        titulo: 'Sair da conta?',
+        dica: 'Você sai das chamadas e volta pra tela de login. Seus servidores continuam lá quando você entrar de novo.',
+        semCampo: true,
+        rotuloOk: 'Sair'
+    });
+    if (!r) return;
+    try { await window.electronAPI.sairDaConta(); } catch (e) { /* sai mesmo assim */ }
+    await encerrarContaNoApp();
+    mostrarTelaLogin('entrar');
+});
+
+// O servidor avisou que a sessão venceu (ou foi encerrada em outro lugar).
+window.electronAPI.aoExpirarSessao(async () => {
+    await encerrarContaNoApp();
+    mostrarTelaLogin('entrar');
+    mostrarNotificacao('Sua sessão expirou. Entre de novo.');
+});
+
+// Decide quem a pessoa é ao abrir o app: conta salva ou tela de login.
 async function iniciarPerfil() {
-    let discord = null;
-    try {
-        const resposta = await window.electronAPI.obterUsuarioDiscord();
-        discord = resposta.usuario;
-        // Primeira vez com o Discord: dá um tempinho pra ele responder. Se já
-        // conhecemos a pessoa (perfil guardado), não precisa esperar.
-        if (!discord && resposta.configurado && !lerPerfilDiscordGuardado()) {
-            discord = await new Promise((resolve) => {
-                aguardandoDiscord = resolve;
-                setTimeout(() => resolve(null), 2500);
-            });
-            aguardandoDiscord = null;
-        }
-    } catch (e) { /* segue sem Discord */ }
-
-    if (discord) return adotarPerfilDiscord(discord);
-
-    const guardado = lerPerfilDiscordGuardado();
-    if (guardado) return adotarPerfilDiscord(guardado);
-
-    const nomeSalvo = (localStorage.getItem('estrivisor_nome') || '').trim();
-    if (nomeSalvo) return definirNomeUsuario(nomeSalvo);
-
-    mostrarTelaLogin(); // sem Discord e sem nome salvo: pergunta
+    let estado = null;
+    try { estado = await window.electronAPI.contaAtual(); } catch (e) { /* segue pro login */ }
+    if (estado && estado.conta) return adotarConta(estado.conta);
+    mostrarTelaLogin('entrar');
 }
 
 // ============================================================
@@ -267,7 +282,7 @@ function nomeSalaCanal(canal) {
 
 // Fala com o servidor do Estrivisor (a chave de convite fica só no processo principal).
 async function api(metodo, caminho, corpo) {
-    const r = await window.electronAPI.apiServidor({ metodo, caminho, corpo, usuario: obterIdentidadeUsuario() });
+    const r = await window.electronAPI.apiServidor({ metodo, caminho, corpo });
     if (!r.ok) {
         const erro = new Error(r.erro || 'Erro ao falar com o servidor.');
         erro.status = r.status;
@@ -1653,12 +1668,11 @@ function criarSliderVolume(identity, nome, tipo, rotulo) {
     return criarControleVolume(identity, tipo, { rotulo });
 }
 
-// Moderação (só o anfitrião da sala; o servidor confere).
+// Moderação (só o dono do servidor; o servidor confere pela conta de quem pediu).
 async function pararTransmissaoDe(identity, nome) {
     try {
         const r = await window.electronAPI.forcarPararTransmissao({
             sala: nomeSalaCanal(canalVozAtual),
-            usuarioQueMandou: roomVoz.localParticipant.identity,
             identidadeAlvo: identity
         });
         mostrarNotificacao(r && r.faixasPausadas === 0 ? `${nome} não está transmitindo.` : `Transmissão de ${nome} foi encerrada.`, 'info');
@@ -1671,7 +1685,6 @@ async function mutarMicrofoneDe(identity, nome) {
     try {
         const r = await window.electronAPI.forcarMutarMicrofone({
             sala: nomeSalaCanal(canalVozAtual),
-            usuarioQueMandou: roomVoz.localParticipant.identity,
             identidadeAlvo: identity
         });
         mostrarNotificacao(r && r.faixasPausadas === 0 ? `${nome} já estava com o microfone desligado.` : `O microfone de ${nome} foi mutado.`, 'info');
@@ -2635,7 +2648,7 @@ function iniciarChecagemPendentes(sala) {
     pararChecagemPendentes();
     intervaloPendentes = setInterval(async () => {
         try {
-            const pedidos = await window.electronAPI.listarPendentes({ sala, usuario: obterIdentidadeUsuario() });
+            const pedidos = await window.electronAPI.listarPendentes({ sala });
             renderizarPendentes(sala, Array.isArray(pedidos) ? pedidos : []);
         } catch (e) { /* servidor fora do ar: tenta de novo daqui a pouco */ }
     }, 2500);
@@ -2654,7 +2667,7 @@ function renderizarPendentes(sala, pedidos) {
         const item = document.createElement('div');
         item.className = 'pedido-item';
         item.innerHTML = `<span>${escaparHtml(pedido.nome || pedido.usuario)} quer entrar</span><span class="pedido-botoes"><button class="btn-aceitar">Aceitar</button><button class="btn-recusar">Recusar</button></span>`;
-        const decidir = (decisao) => window.electronAPI.decidirPendente({ sala, solicitacaoId: pedido.solicitacaoId, decisao, usuario: obterIdentidadeUsuario() })
+        const decidir = (decisao) => window.electronAPI.decidirPendente({ sala, solicitacaoId: pedido.solicitacaoId, decisao })
             .then(() => item.remove())
             .catch((err) => mostrarNotificacao('Não consegui responder ao pedido: ' + err.message));
         item.querySelector('.btn-aceitar').addEventListener('click', () => decidir('aprovado'));

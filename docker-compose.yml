@@ -1,17 +1,34 @@
 services:
-  # O LiveKit em si não roda mais aqui — foi migrado para o LiveKit Cloud.
-  # Só o servidor de token continua rodando localmente.
+  # Servidor do Estrivisor: login, servidores, convites, presença e tokens do LiveKit.
+  # (A voz e o vídeo em si ficam no LiveKit Cloud.)
   token-server:
     build: ./token-server
     container_name: estrivisor-token-server
     restart: unless-stopped
     ports:
+      # Acesso direto pela porta 28080: só pra testes no seu PC e pros apps antigos durante a
+      # transição. Quando todo mundo estiver na versão com login, troque a linha abaixo por
+      #   - "127.0.0.1:28080:8080"
+      # e feche a porta 28080 no roteador. Aí o acesso de fora é só pelo túnel (HTTPS).
       - "28080:8080"
     env_file:
       - ./server.env
     environment:
       DATA_FILE: /data/servidores.json
     volumes:
-      # Guarda servidores, canais, membros e convites fora do container
+      # Guarda servidores, canais, membros, convites e sessões de login fora do container
       # (sobrevive a "docker compose up -d --build" e a reinícios).
       - ./dados:/data
+
+  # Túnel da Cloudflare: publica o servidor em https://api.SEU-DOMINIO sem abrir porta no
+  # roteador e sem mostrar o IP da sua casa. O token fica no arquivo tunnel.env.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: estrivisor-tunel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    env_file:
+      - path: ./tunnel.env   # uma linha: TUNNEL_TOKEN=...
+        required: false
+    depends_on:
+      - token-server

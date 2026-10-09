@@ -2,6 +2,8 @@
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
+    <!-- Só roda script do próprio app. Conexões: LiveKit (https/wss). Imagens: do app, data: (ícones e fundo) e avatares do Discord. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://cdn.discordapp.com; media-src 'self' blob: mediastream:; connect-src 'self' https: wss:; worker-src 'self' blob:; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
     <title>Estrivisor</title>
     <style>
         :root {
@@ -400,7 +402,15 @@
         .item-lista-ajustes .sub { color: var(--texto-fraco); font-size: 11.5px; }
         .codigo-convite { font-family: Consolas, monospace; font-size: 16px; letter-spacing: 0.08em; }
         .cartao-login .item-lista-ajustes button { padding: 4px 9px; font-size: 12px; }
-        #inicio-erro, #ajustes-erro { color: var(--sinal); font-size: 12.5px; min-height: 0; }
+        #inicio-erro, #ajustes-erro, #login-erro { color: var(--sinal); font-size: 12.5px; min-height: 0; }
+        /* Tela de login */
+        .cartao-login button.btn-discord { background: #5865f2; color: #fff; }
+        .cartao-login button.btn-discord:hover:not(:disabled) { background: #4752c4; }
+        .cartao-login button:disabled { opacity: 0.55; cursor: default; }
+        .aguardando-login { display: flex; flex-direction: column; gap: 8px; font-size: 12.5px; line-height: 1.45; color: var(--texto); background: rgba(88,101,242,0.12); border: 1px solid rgba(88,101,242,0.35); border-radius: 8px; padding: 10px 12px; }
+        .cartao-login .aguardando-login button { padding: 7px 12px; font-size: 12.5px; }
+        .separador-login { display: flex; align-items: center; gap: 10px; color: var(--texto-fraco); font-size: 12px; }
+        .separador-login::before, .separador-login::after { content: ''; flex: 1; height: 1px; background: var(--borda); }
 
 
         /* ---------- Controles de volume ---------- */
@@ -736,10 +746,33 @@
     <div id="tela-login" class="tela-login">
         <div class="cartao-login">
             <div class="marca-login"><span class="ponto"></span> Estrivisor</div>
-            <label>Como você quer ser chamado?</label>
-            <div id="dica-login" class="dica-login" style="display:none;">Você entrou com seu perfil do Discord. Se quiser um apelido só aqui, digite abaixo. Deixe em branco pra usar o nome do Discord.</div>
-            <input type="text" id="input-login-nome" placeholder="Ex: Mateus" maxlength="30">
-            <button id="btn-login-entrar">Entrar</button>
+
+            <!-- Sem conta: entrar -->
+            <div id="login-entrar" style="display:flex; flex-direction:column; gap:12px;">
+                <div class="dica-login" style="margin:0;">Entre com a sua conta do Discord. É ela que confirma quem você é nos servidores dos amigos.</div>
+                <button id="btn-login-discord" class="btn-discord">Entrar com Discord</button>
+                <div id="login-aguardando" class="aguardando-login" style="display:none;">
+                    <span>Abrimos o Discord no seu navegador. Autorize por lá e volte aqui.</span>
+                    <button id="btn-login-cancelar" class="btn-secundario">Cancelar</button>
+                </div>
+                <div class="separador-login"><span>ou</span></div>
+                <label for="input-login-local">Entrar sem Discord, só com um nome</label>
+                <input type="text" id="input-login-local" placeholder="Ex: Mateus" maxlength="30">
+                <button id="btn-login-local" class="btn-secundario">Continuar sem Discord</button>
+                <div class="dica-login" style="margin:0;">Sem Discord você entra nos servidores dos amigos com um convite, mas não pode criar o seu.</div>
+            </div>
+
+            <!-- Com conta: apelido e sair -->
+            <div id="login-perfil" style="display:none; flex-direction:column; gap:12px;">
+                <label for="input-login-nome">Como você quer ser chamado?</label>
+                <div id="dica-login" class="dica-login" style="margin:0;"></div>
+                <input type="text" id="input-login-nome" maxlength="30">
+                <button id="btn-login-entrar">Salvar</button>
+                <button id="btn-login-sair-conta" class="btn-perigo">Sair da conta</button>
+                <button id="btn-login-fechar" class="btn-secundario">Fechar</button>
+            </div>
+
+            <div id="login-erro"></div>
         </div>
     </div>
 
