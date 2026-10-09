@@ -10,7 +10,7 @@ services:
       # transição. Quando todo mundo estiver na versão com login, troque a linha abaixo por
       #   - "127.0.0.1:28080:8080"
       # e feche a porta 28080 no roteador. Aí o acesso de fora é só pelo túnel (HTTPS).
-      - "28080:8080"
+      - "127.0.0.1:28080:8080"
     env_file:
       - ./server.env
     environment:
