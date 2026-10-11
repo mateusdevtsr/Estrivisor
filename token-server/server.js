@@ -227,7 +227,9 @@ app.post('/token', rota(async (req, res, usuario, sessao) => {
   // A aprovação só vale se o canal pedir E o dono estiver lá dentro (senão ninguém esperaria à toa).
   const precisaAprovacao = canal.tipo === 'voz' && canal.aprovacao && servidor.dono !== usuario && await donoEstaNaSala(sala, servidor.dono);
   if (!precisaAprovacao) {
-    return res.json({ token: await criarToken(usuario, sala, nomeExibicao, avatarSeguro) });
+    // A url vai junto: o app usa o LiveKit que o servidor indicar (assim dá pra trocar de VPS
+    // pro notebook só mexendo no server.env, sem lançar versão nova do app).
+    return res.json({ token: await criarToken(usuario, sala, nomeExibicao, avatarSeguro), url: LIVEKIT_URL });
   }
 
   if (!pendentesPorSala.has(sala)) pendentesPorSala.set(sala, new Map());
@@ -248,7 +250,7 @@ app.get('/token/status/:solicitacaoId', (req, res) => {
   for (const pendentes of pendentesPorSala.values()) {
     const pedido = pendentes.get(req.params.solicitacaoId);
     if (pedido && (usuario === null || pedido.usuario === usuario)) {
-      return res.json({ status: pedido.status, token: pedido.token || undefined });
+      return res.json({ status: pedido.status, token: pedido.token || undefined, url: pedido.token ? LIVEKIT_URL : undefined });
     }
   }
   res.status(404).json({ erro: 'Pedido não encontrado.' });

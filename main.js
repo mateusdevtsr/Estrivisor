@@ -466,10 +466,18 @@ responder('cancelar-login', () => { if (loginDiscordAtual) loginDiscordAtual.can
 // ============================================================
 // Em vez de gerar o token aqui (o que exigiria guardar a chave secreta do LiveKit em cada
 // instalação), pedimos ao servidor do Estrivisor, que é o único lugar que conhece essa chave.
+// Endereço do LiveKit que o servidor indicou junto com o último token. Se o servidor for de uma
+// versão antiga (não manda "url"), cai no LIVEKIT_URL do .env do app.
+let urlLivekitDoServidor = null;
+function guardarUrlLivekit(url) {
+  if (typeof url === 'string' && /^wss?:\/\//.test(url)) urlLivekitDoServidor = url;
+}
+
 responder('gerar-token-seguro', async (evento, { sala, nome } = {}) => {
   if (typeof sala !== 'string' || !sala) throw new Error('Sala inválida.');
   const r = await chamarServidor('/token', { metodo: 'POST', corpo: { sala, nome } });
   if (!r.ok) throw new Error(r.erro);
+  guardarUrlLivekit(r.dados.url);
   if (r.dados.token) return r.dados.token;
   if (r.dados.aguardando) return esperarAprovacao(r.dados.solicitacaoId);
   throw new Error('Resposta inesperada do servidor de token.');
@@ -487,7 +495,7 @@ async function esperarAprovacao(solicitacaoId) {
       if (r.status === 404) throw new Error('O pedido de entrada expirou. Tente de novo.');
       continue; // falha de rede momentânea: tenta de novo
     }
-    if (r.dados.status === 'aprovado') return r.dados.token;
+    if (r.dados.status === 'aprovado') { guardarUrlLivekit(r.dados.url); return r.dados.token; }
     if (r.dados.status === 'negado') throw new Error('O dono recusou sua entrada na sala.');
   }
   throw new Error('Tempo esgotado esperando a aprovação do dono.');
@@ -536,7 +544,7 @@ responder('definir-fonte', (evento, id) => {
   fonteEscolhidaId = typeof id === 'string' ? id : null;
 });
 
-responder('obter-url-servidor', () => LIVEKIT_URL);
+responder('obter-url-servidor', () => urlLivekitDoServidor || LIVEKIT_URL);
 
 // A partir do Electron 17, desktopCapturer só funciona no processo principal.
 responder('listar-fontes', async () => {
