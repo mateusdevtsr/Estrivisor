@@ -233,7 +233,9 @@ app.post('/auth/discord', async (req, res) => {
       return res.status(403).json({ erro: mensagemDaSituacao(sit), codigo: 'punido' });
     }
     if (sit.estado !== 'ok') {
-      acesso.registrarPedido(usuario, perfil);
+      if (!acesso.registrarPedido(usuario, perfil)) {
+        return res.status(403).json({ erro: 'Seu acesso ainda não foi liberado e a fila de pedidos está cheia. Fale direto com o dono do Estrivisor.', codigo: 'sem-acesso' });
+      }
       return res.status(403).json({ erro: 'Seu acesso ainda não foi liberado. O pedido foi enviado ao dono do Estrivisor: avise ele para liberar você e depois entre de novo.', codigo: 'sem-acesso' });
     }
     const { chave } = sessoes.criar({ usuario, tipo: 'discord', perfil });
@@ -418,6 +420,10 @@ async function mutarFaixasDe(req, res, usuario, tipos, mensagemErro) {
     }
     res.json({ ok: true, faixasPausadas: faixas.length });
   } catch (err) {
+    // Pessoa que já saiu da sala (ou sala vazia): não há o que parar, então conta como resolvido.
+    if (err && (err.status === 404 || err.code === 'not_found' || /not found|does not exist/i.test(String(err.message || '')))) {
+      return res.json({ ok: true, faixasPausadas: 0 });
+    }
     console.error(mensagemErro, err);
     throw new ErroRegra(500, mensagemErro);
   }

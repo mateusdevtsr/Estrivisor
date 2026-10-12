@@ -129,12 +129,19 @@ function criarAcesso({ arquivo = null, restrito = true, admins = [], agora = () 
     gravar();
   }
 
+  // Devolve true se o pedido ficou registrado (ou já existia), false se não coube.
   function registrarPedido(usuario, perfil) {
     ler();
-    if (punicao(usuario)) return; // banido/suspenso não vira pedido
-    if (!dados.pedidos[usuario] && Object.keys(dados.pedidos).length >= MAX_PEDIDOS) return;
+    if (punicao(usuario)) return false; // banido/suspenso não vira pedido
+    if (!dados.pedidos[usuario] && Object.keys(dados.pedidos).length >= MAX_PEDIDOS) {
+      // Fila cheia: some com os pedidos parados há mais de 30 dias e tenta de novo.
+      const limite = agora() - 30 * 24 * 60 * 60 * 1000;
+      for (const [u, p] of Object.entries(dados.pedidos)) if (!p.ts || p.ts < limite) delete dados.pedidos[u];
+      if (Object.keys(dados.pedidos).length >= MAX_PEDIDOS) { gravar(); return false; }
+    }
     dados.pedidos[usuario] = { nome: String((perfil && perfil.nome) || '').slice(0, 40), avatar: (perfil && perfil.avatar) || '', ts: agora() };
     gravar();
+    return true;
   }
   function autorizar(usuario, por) {
     ler();
