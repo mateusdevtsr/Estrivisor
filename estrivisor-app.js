@@ -1147,6 +1147,20 @@ function descreverTransmissao() {
 }
 
 // A caixinha lembra a escolha da pessoa (ligada por padrão).
+// Liga/desliga a aparição do Estrivisor no perfil do Discord (ligada por padrão).
+function presencaDiscordLigada() { return document.getElementById('check-presenca-discord').checked; }
+function sincronizarOpcoesDiscord() {
+    const ligada = presencaDiscordLigada();
+    document.getElementById('check-mostrar-janela').disabled = !ligada;
+    document.getElementById('rotulo-mostrar-janela').style.opacity = ligada ? '' : '0.5';
+}
+try { document.getElementById('check-presenca-discord').checked = localStorage.getItem('estrivisor_presenca_discord') !== '0'; } catch (e) { /* sem armazenamento: fica ligada */ }
+document.getElementById('check-presenca-discord').addEventListener('change', () => {
+    try { localStorage.setItem('estrivisor_presenca_discord', presencaDiscordLigada() ? '1' : '0'); } catch (e) { /* ignora */ }
+    sincronizarOpcoesDiscord();
+    atualizarPresencaDiscord();
+});
+sincronizarOpcoesDiscord();
 document.getElementById('check-mostrar-janela').checked = localStorage.getItem('estrivisor_mostrar_janela_discord') !== '0';
 document.getElementById('check-mostrar-janela').addEventListener('change', () => {
     localStorage.setItem('estrivisor_mostrar_janela_discord', document.getElementById('check-mostrar-janela').checked ? '1' : '0');
@@ -1162,6 +1176,12 @@ function atualizarPresencaDiscord() {
     //   voz    → dentro de um canal de voz
     //   tela   → transmitindo tela
     let modo = null;
+    if (!presencaDiscordLigada()) {
+        // Desativado pela pessoa: limpa o que estiver aparecendo e não envia mais nada.
+        modoPresencaDiscord = null;
+        window.electronAPI.definirAtividadeDiscord(null).catch(() => {});
+        return;
+    }
     if (nomeUsuarioAtual) modo = 'online';
     if (vozConectada() && canalVozAtual) modo = transmitindoAgora ? 'tela' : 'voz';
 
@@ -1240,10 +1260,127 @@ function atualizarPainelPersonalizado() {
     document.getElementById('painel-personalizado-voz').style.display = personalizado ? 'flex' : 'none';
 }
 document.getElementById('select-qualidade').addEventListener('change', () => {
+    const sel = document.getElementById('select-qualidade');
+    if (opcaoTrancada(sel.value)) {
+        // Qualidade com cadeado: volta pra anterior e pede a chave.
+        const pretendida = sel.value;
+        sel.value = qualidadeValida;
+        atualizarPainelPersonalizado();
+        abrirModalChave(pretendida);
+        return;
+    }
+    qualidadeValida = sel.value;
     atualizarPainelPersonalizado();
     salvarPreferenciasVideo();
 });
 document.getElementById('custom-simulcast').addEventListener('change', salvarPreferenciasVideo);
+
+// ---------- Níveis de qualidade: cadeados e chaves ----------
+// Padrão: 720p30 pra todo mundo (economiza banda e processamento). Qualidades maiores têm cadeado 🔒
+// e são liberadas por uma chave gerada pelo administrador (cada chave vale pra uma conta).
+const RANK_OPCAO = { automatico: 1, alta: 2, balanceado: 0, economia: 0, personalizado: 0 };
+const TEXTO_OPCAO = {
+    automatico: 'Automático — 1080p30', alta: 'Alta — 1080p60', balanceado: 'Balanceado — 720p30',
+    economia: 'Economia — 480p15', personalizado: 'Personalizado...'
+};
+const TEXTO_PRESET = { '854x480': '480p', '1280x720': '720p', '1920x1080': '1080p', '2560x1440': '1440p', '3840x2160': '4K' };
+let qualidadeValida = 'balanceado'; // última escolha permitida (pra onde volta quando clicam numa trancada)
+
+const opcaoTrancada = (valor) => qualidadeConta !== null && (RANK_OPCAO[valor] || 0) > qualidadeConta.rank;
+const textoDoLimite = (l) => `${l.largura}×${l.altura} · ${l.fps} fps · ${String(l.bitrate).replace('.', ',')} Mbps`;
+
+function aplicarNivelQualidade() {
+    const sel = document.getElementById('select-qualidade');
+    for (const op of sel.options) {
+        const base = TEXTO_OPCAO[op.value];
+        if (base) op.textContent = (opcaoTrancada(op.value) ? '🔒 ' : '') + base;
+    }
+    const info = document.getElementById('info-nivel-qualidade');
+    const dicaCustom = document.getElementById('dica-personalizado-texto');
+    if (qualidadeConta) {
+        const l = qualidadeConta.limites;
+        let complemento = '';
+        if (qualidadeConta.admin) complemento = ' (administrador)';
+        else if (qualidadeConta.ate) complemento = ` · vale até ${new Date(qualidadeConta.ate).toLocaleDateString('pt-BR')}`;
+        info.textContent = `Sua qualidade: ${qualidadeConta.nome}${complemento}. ` +
+            (qualidadeConta.rank < 3 ? 'Para mais, ative uma chave.' : '');
+        dicaCustom.textContent = `Seu limite atual: ${textoDoLimite(l)}.` +
+            (qualidadeConta.rank < 3 ? ' Com uma chave você libera valores maiores.' : '') + ' Valores acima disso são ajustados sozinhos.';
+        // Resoluções prontas acima do limite ficam com cadeado.
+        for (const op of document.getElementById('custom-preset').options) {
+            if (!op.value) continue;
+            const [w, h] = op.value.split('x').map(Number);
+            const trancada = w > l.largura || h > l.altura;
+            op.disabled = trancada;
+            op.textContent = (TEXTO_PRESET[op.value] || op.value) + (trancada ? ' 🔒' : '');
+        }
+        const lim = limitesEfetivos();
+        document.getElementById('custom-largura').max = lim.largura.max;
+        document.getElementById('custom-altura').max = lim.altura.max;
+        document.getElementById('custom-fps').max = lim.fps.max;
+        document.getElementById('custom-bitrate').max = lim.bitrate.max;
+        // Se a escolha salva está trancada (ex.: era 1080p antes da chave existir), volta pro 720p30.
+        if (opcaoTrancada(sel.value)) {
+            sel.value = 'balanceado';
+            mostrarNotificacao('A qualidade padrão agora é 720p30. Para qualidades maiores, ative uma chave nas configurações de vídeo.', 'info');
+        }
+        qualidadeValida = sel.value;
+        atualizarPainelPersonalizado();
+        normalizarCamposPersonalizados(); // ajusta os campos aos limites e salva
+    } else {
+        info.textContent = '';
+    }
+}
+
+async function atualizarQualidade() {
+    try {
+        const d = await api('GET', '/qualidade');
+        if (d && d.qualidade) qualidadeConta = d.qualidade;
+    } catch (err) { /* servidor fora do ar: mantém o que já sabia */ }
+    aplicarNivelQualidade();
+}
+
+let qualidadePretendida = null; // a opção que a pessoa clicou e estava trancada
+function abrirModalChave(pretendida) {
+    qualidadePretendida = pretendida || null;
+    document.getElementById('chave-texto').value = '';
+    document.getElementById('chave-erro').textContent = '';
+    document.getElementById('modal-chave').style.display = 'flex';
+    document.getElementById('chave-texto').focus();
+}
+function fecharModalChave() { document.getElementById('modal-chave').style.display = 'none'; }
+async function ativarChave() {
+    const entrada = document.getElementById('chave-texto');
+    const erro = document.getElementById('chave-erro');
+    const botao = document.getElementById('chave-ativar');
+    if (!entrada.value.trim()) { erro.textContent = 'Digite a chave.'; return; }
+    botao.disabled = true;
+    erro.textContent = '';
+    try {
+        const d = await api('POST', '/qualidade/resgatar', { chave: entrada.value });
+        qualidadeConta = d.qualidade;
+        fecharModalChave();
+        aplicarNivelQualidade();
+        const sel = document.getElementById('select-qualidade');
+        if (qualidadePretendida && !opcaoTrancada(qualidadePretendida)) {
+            sel.value = qualidadePretendida;
+            qualidadeValida = sel.value;
+            atualizarPainelPersonalizado();
+            salvarPreferenciasVideo();
+        }
+        mostrarNotificacao(`Chave ativada! Sua qualidade agora é ${qualidadeConta.nome}.`, 'info');
+    } catch (err) {
+        erro.textContent = err.message;
+    }
+    botao.disabled = false;
+}
+document.getElementById('btn-ativar-chave').addEventListener('click', () => abrirModalChave(null));
+document.getElementById('chave-cancelar').addEventListener('click', fecharModalChave);
+document.getElementById('chave-ativar').addEventListener('click', ativarChave);
+document.getElementById('chave-texto').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') ativarChave();
+    else if (e.key === 'Escape') fecharModalChave();
+});
 
 // ---------- Transmitir tela ----------
 let transmitindoAgora = false;
@@ -1270,6 +1407,21 @@ const LIMITES_PERSONALIZADO = {
 };
 const PRESETS_RESOLUCAO = ['854x480', '1280x720', '1920x1080', '2560x1440', '3840x2160'];
 
+// O que a conta pode enviar (vem do servidor: 720p30 por padrão; chaves liberam mais).
+// null = ainda não sei (antes de entrar); aí nada é travado na tela, e a trava de verdade acontece ao transmitir.
+let qualidadeConta = null; // { nivel, rank, nome, limites: { largura, altura, fps, bitrate }, ate, admin }
+const QUALIDADE_PADRAO = { nivel: 'livre', rank: 0, nome: '720p30 (padrão)', limites: { largura: 1280, altura: 720, fps: 30, bitrate: 4 }, ate: null, admin: false };
+function limitesEfetivos() {
+    const l = qualidadeConta && qualidadeConta.limites;
+    const topo = (base, max) => (max ? { min: base.min, max: Math.min(base.max, max), padrao: Math.min(base.padrao, max) } : base);
+    return {
+        largura: topo(LIMITES_PERSONALIZADO.largura, l && l.largura),
+        altura: topo(LIMITES_PERSONALIZADO.altura, l && l.altura),
+        fps: topo(LIMITES_PERSONALIZADO.fps, l && l.fps),
+        bitrate: topo(LIMITES_PERSONALIZADO.bitrate, l && l.bitrate)
+    };
+}
+
 // Campo vazio ou inválido volta ao padrão; fora do intervalo é encaixado nele.
 function limitar(valor, { min, max, padrao }) {
     if (valor === '' || valor === null || valor === undefined) return padrao;
@@ -1282,11 +1434,12 @@ function paraPar(n) { return Math.round(n / 2) * 2; }
 
 function lerCamposPersonalizados() {
     const v = (id) => document.getElementById(id).value;
+    const lim = limitesEfetivos();
     return {
-        largura: paraPar(limitar(v('custom-largura'), LIMITES_PERSONALIZADO.largura)),
-        altura: paraPar(limitar(v('custom-altura'), LIMITES_PERSONALIZADO.altura)),
-        fps: Math.round(limitar(v('custom-fps'), LIMITES_PERSONALIZADO.fps)),
-        bitrate: Math.round(limitar(v('custom-bitrate'), LIMITES_PERSONALIZADO.bitrate) * 10) / 10
+        largura: paraPar(limitar(v('custom-largura'), lim.largura)),
+        altura: paraPar(limitar(v('custom-altura'), lim.altura)),
+        fps: Math.round(limitar(v('custom-fps'), lim.fps)),
+        bitrate: Math.round(limitar(v('custom-bitrate'), lim.bitrate) * 10) / 10
     };
 }
 
@@ -1324,18 +1477,26 @@ document.getElementById('custom-preset').addEventListener('change', () => {
 });
 sincronizarPresetResolucao();
 
+// O perfil que vai de fato pro envio. Passa SEMPRE pelos limites da conta (mesmo que alguém
+// tenha mexido nas configurações salvas): sem chave, no máximo 720p30.
 function lerPerfilQualidade() {
-    const escolha = document.getElementById('select-qualidade').value;
+    const conta = qualidadeConta || QUALIDADE_PADRAO;
+    let escolha = document.getElementById('select-qualidade').value;
+    if ((RANK_OPCAO[escolha] || 0) > conta.rank) escolha = 'balanceado';
+    let base;
     if (escolha === 'personalizado') {
         const c = lerCamposPersonalizados();
-        return {
-            resolution: { width: c.largura, height: c.altura },
-            maxFramerate: c.fps,
-            maxBitrate: Math.round(c.bitrate * 1_000_000),
-            simulcast: document.getElementById('custom-simulcast').checked
-        };
+        base = { resolution: { width: c.largura, height: c.altura }, maxFramerate: c.fps, maxBitrate: Math.round(c.bitrate * 1_000_000) };
+    } else {
+        base = PERFIS_QUALIDADE[escolha] || PERFIS_QUALIDADE.balanceado;
     }
-    return PERFIS_QUALIDADE[escolha] || PERFIS_QUALIDADE.automatico;
+    const l = conta.limites;
+    return {
+        resolution: { width: Math.min(base.resolution.width, l.largura), height: Math.min(base.resolution.height, l.altura) },
+        maxFramerate: Math.min(base.maxFramerate, l.fps),
+        maxBitrate: Math.min(base.maxBitrate, Math.round(l.bitrate * 1_000_000)),
+        simulcast: document.getElementById('custom-simulcast').checked
+    };
 }
 
 async function iniciarTransmissao() {
@@ -1348,6 +1509,7 @@ async function iniciarTransmissao() {
     await listarJanelasDoSistema();
     if (select.value !== fonteId) throw new Error('Essa janela não está mais aberta. Escolha de novo na lista.');
     await window.electronAPI.definirFonte(fonteId);
+    await atualizarQualidade(); // confere no servidor o que esta conta pode enviar
     const perfil = lerPerfilQualidade();
 
     // O LiveKit separa DUAS etapas, e cada configuração só vale na sua:
@@ -2338,6 +2500,8 @@ async function conectarPresenca() {
     sessaoIniciadaPara = identidade;
     const aceito = await garantirTermos();
     if (!aceito || sessaoIniciadaPara !== identidade) return; // saiu da conta na tela de termos
+    qualidadeConta = null;
+    atualizarQualidade();
     carregarMeusServidores();
     iniciarAmigos();
 }
@@ -2983,6 +3147,7 @@ function carregarPreferenciasVideo() {
     document.getElementById('custom-bitrate').value = c.bitrate;
     sincronizarPresetResolucao();
     atualizarPainelPersonalizado();
+    qualidadeValida = document.getElementById('select-qualidade').value;
     definirTamanhoVideo(tamanhoVideo.modo, tamanhoVideo.pct);
 }
 
@@ -3543,6 +3708,7 @@ function iniciarAmigos() {
     temporizadorAmigos = setInterval(carregarAmigos, 10000);
 }
 function pararAmigos() {
+    qualidadeConta = null;
     acessoAdmin = false; pararAcesso();
     if (temporizadorAmigos) { clearInterval(temporizadorAmigos); temporizadorAmigos = null; }
     amigosEstado = { codigo: '', amigos: [], recebidos: [], enviados: [] };
@@ -3665,7 +3831,9 @@ const ROTULOS_ACAO = {
     liberar: 'liberou', negar: 'negou o pedido de', 'remover-acesso': 'removeu o acesso de', suspender: 'suspendeu', banir: 'baniu',
     'desfazer-punicao': 'desfez a punição de', 'apagar-servidor': 'apagou um servidor de',
     'denuncia-ignorar': 'ignorou uma denúncia contra', 'denuncia-remover-mensagem': 'removeu uma mensagem de',
-    'denuncia-suspender': 'suspendeu (denúncia)', 'denuncia-banir': 'baniu (denúncia)'
+    'denuncia-suspender': 'suspendeu (denúncia)', 'denuncia-banir': 'baniu (denúncia)',
+    'gerar-chaves': 'gerou chaves de qualidade', 'ativar-chave': 'ativou uma chave de qualidade', 'apagar-chave': 'apagou uma chave não usada',
+    'revogar-qualidade': 'revogou a qualidade de'
 };
 
 function textoSeguro(t) { const d = document.createElement('div'); d.textContent = String(t == null ? '' : t); return d.innerHTML; }
@@ -3711,7 +3879,8 @@ async function carregarAcesso(avisar) {
             if (novos.length) mostrarNotificacao(`${novos[0].nome || 'Alguém'} pediu acesso ao Estrivisor. Veja em Configurações > Administração.`, 'info');
         }
         acessoPedidosVistos = ids;
-        if (modalConfig().style.display === 'flex' && document.getElementById('cfg-painel-acesso').classList.contains('ativo')) desenharAbaAdmin(d);
+        const digitando = abaAdmin === 'chaves' && document.getElementById('adm-conteudo').contains(document.activeElement); // não rouba o foco de quem está digitando
+        if (!digitando && modalConfig().style.display === 'flex' && document.getElementById('cfg-painel-acesso').classList.contains('ativo')) desenharAbaAdmin(d);
     } catch (err) {
         if (err.status === 403) { acessoAdmin = false; pararAcesso(); }
     }
@@ -3784,6 +3953,10 @@ async function desenharAbaAdmin(dadosAcesso) {
             const d = await api('GET', '/admin/denuncias');
             if (!d.denuncias.length) nova.appendChild(vazioAdmin('Nenhuma denúncia.'));
             [...d.denuncias].sort((a, b) => (a.estado === 'aberta' ? 0 : 1) - (b.estado === 'aberta' ? 0 : 1) || b.id - a.id).forEach((x) => nova.appendChild(cartaoDenuncia(x)));
+        } else if (minha === 'chaves') {
+            dica.textContent = 'Chaves liberam qualidades acima de 720p30. Cada chave vale para uma conta. O texto da chave só aparece uma vez, quando você gera: copie na hora.';
+            const d = await api('GET', '/admin/chaves');
+            desenharAbaChaves(nova, d);
         } else {
             dica.textContent = 'Tudo o que foi feito pelo painel, do mais novo para o mais antigo.';
             const d = await api('GET', '/admin/historico');
@@ -3797,6 +3970,128 @@ async function desenharAbaAdmin(dadosAcesso) {
     } catch (err) {
         if (minha === abaAdmin) { alvo.replaceChildren(vazioAdmin('Não consegui carregar: ' + err.message)); }
     }
+}
+
+// ---- Aba "Chaves" (gerar, listar e revogar chaves de qualidade) ----
+let chavesForm = { nivel: 'hd30', validade: '', qtd: '1', nota: '' };
+let chavesRecemGeradas = []; // [{ chave, nivel, ... }] só ficam na tela até a pessoa fechar o aviso
+const NOME_VALIDADE = (dias) => (dias ? `${dias} dia(s) após ativar` : 'permanente');
+
+function desenharAbaChaves(nova, d) {
+    const nomeNivel = (id) => (d.niveis.find((n) => n.id === id) || {}).nome || id;
+    // Formulário
+    const form = document.createElement('div');
+    form.className = 'chaves-form';
+    const selNivel = document.createElement('select');
+    ['hd30', 'hd60', 'max'].forEach((id) => { const o = document.createElement('option'); o.value = id; o.textContent = nomeNivel(id); selNivel.appendChild(o); });
+    selNivel.value = chavesForm.nivel;
+    const selVal = document.createElement('select');
+    [['', 'Permanente'], ['7', '7 dias'], ['30', '30 dias'], ['90', '90 dias']].forEach(([v, r]) => { const o = document.createElement('option'); o.value = v; o.textContent = r; selVal.appendChild(o); });
+    selVal.value = chavesForm.validade;
+    const selQtd = document.createElement('select');
+    ['1', '2', '5', '10'].forEach((v) => { const o = document.createElement('option'); o.value = v; o.textContent = v === '1' ? '1 chave' : v + ' chaves'; selQtd.appendChild(o); });
+    selQtd.value = chavesForm.qtd;
+    const nota = document.createElement('input');
+    nota.type = 'text'; nota.maxLength = 60; nota.placeholder = 'Para quem é? (opcional)'; nota.value = chavesForm.nota;
+    const gerar = document.createElement('button');
+    gerar.textContent = 'Gerar';
+    selNivel.onchange = () => { chavesForm.nivel = selNivel.value; };
+    selVal.onchange = () => { chavesForm.validade = selVal.value; };
+    selQtd.onchange = () => { chavesForm.qtd = selQtd.value; };
+    nota.oninput = () => { chavesForm.nota = nota.value; };
+    gerar.onclick = async () => {
+        gerar.disabled = true;
+        try {
+            const r = await api('POST', '/admin/chaves', {
+                nivel: chavesForm.nivel, validadeDias: chavesForm.validade ? Number(chavesForm.validade) : null,
+                quantidade: Number(chavesForm.qtd), nota: chavesForm.nota
+            });
+            chavesRecemGeradas = r.chaves;
+            chavesForm.nota = '';
+            desenharAbaAdmin();
+        } catch (err) { mostrarNotificacao('Não consegui gerar: ' + err.message); }
+        gerar.disabled = false;
+    };
+    form.append(selNivel, selVal, selQtd, nota, gerar);
+    nova.appendChild(form);
+
+    // Chaves recém-geradas (única vez em que o texto aparece)
+    if (chavesRecemGeradas.length) {
+        const box = document.createElement('div');
+        box.className = 'chaves-novas';
+        const titulo = document.createElement('div');
+        titulo.className = 'cfg-dica';
+        titulo.textContent = 'Copie agora: depois de fechar este aviso as chaves não aparecem mais.';
+        box.appendChild(titulo);
+        const copiar = async (texto) => {
+            try { await navigator.clipboard.writeText(texto); mostrarNotificacao('Copiado.', 'info'); }
+            catch (e) { mostrarNotificacao('Não consegui copiar sozinho. Selecione o texto e use Ctrl+C.'); }
+        };
+        chavesRecemGeradas.forEach((c) => {
+            const l = document.createElement('div');
+            l.className = 'linha-chave';
+            const cod = document.createElement('span');
+            cod.className = 'chave-codigo';
+            cod.textContent = c.chave;
+            const info = document.createElement('span');
+            info.className = 'cfg-dica';
+            info.textContent = `${nomeNivel(c.nivel)} · ${NOME_VALIDADE(c.validadeDias)}${c.nota ? ' · ' + c.nota : ''}`;
+            const b = document.createElement('button');
+            b.textContent = 'Copiar';
+            b.onclick = () => copiar(c.chave);
+            l.append(cod, info, b);
+            box.appendChild(l);
+        });
+        const linhaBt = document.createElement('div');
+        linhaBt.className = 'acesso-botoes';
+        if (chavesRecemGeradas.length > 1) {
+            const todas = document.createElement('button');
+            todas.textContent = 'Copiar todas';
+            todas.onclick = () => copiar(chavesRecemGeradas.map((c) => c.chave).join('\n'));
+            linhaBt.appendChild(todas);
+        }
+        const fechar = document.createElement('button');
+        fechar.textContent = 'Já copiei';
+        fechar.onclick = () => { chavesRecemGeradas = []; desenharAbaAdmin(); };
+        linhaBt.appendChild(fechar);
+        box.appendChild(linhaBt);
+        nova.appendChild(box);
+    }
+
+    // Quem tem qualidade liberada
+    const ativos = d.concedidos.filter((c) => !c.vencido);
+    const tit1 = document.createElement('div');
+    tit1.className = 'titulo-config';
+    tit1.textContent = 'Pessoas com qualidade liberada';
+    nova.appendChild(tit1);
+    if (!ativos.length) nova.appendChild(vazioAdmin('Ninguém ativou uma chave ainda.'));
+    ativos.forEach((c) => nova.appendChild(linhaAdmin({
+        usuario: c.usuario, titulo: c.nome || c.usuario, selos: [{ texto: nomeNivel(c.nivel), tom: 'bom' }],
+        sub: `ativou em ${dataHora(c.desde)} · ${c.ate ? 'vale até ' + dataHora(c.ate) : 'permanente'}`,
+        botoes: [{ texto: 'Revogar', perigo: true, acao: () => revogarQualidade(c) }]
+    })));
+
+    // Todas as chaves
+    const tit2 = document.createElement('div');
+    tit2.className = 'titulo-config';
+    tit2.textContent = 'Chaves geradas';
+    nova.appendChild(tit2);
+    if (!d.chaves.length) nova.appendChild(vazioAdmin('Nenhuma chave gerada.'));
+    d.chaves.forEach((c) => {
+        const usada = Boolean(c.usadaPor);
+        const selos = [usada ? (c.revogadaEm ? { texto: 'revogada', tom: 'ruim' } : { texto: 'usada' }) : { texto: 'disponível', tom: 'bom' }];
+        nova.appendChild(linhaAdmin({
+            titulo: `${nomeNivel(c.nivel)} · ${NOME_VALIDADE(c.validadeDias)}`, selos,
+            sub: `${c.nota ? c.nota + ' · ' : ''}criada em ${dataHora(c.criadaEm)}${usada ? ` · usada por ${c.usadaPorNome || c.usadaPor} em ${dataHora(c.usadaEm)}` : ''}`,
+            botoes: usada ? [] : [{ texto: 'Apagar', perigo: true, acao: () => agirAdmin('DELETE', '/admin/chaves/' + encodeURIComponent(c.id)) }]
+        }));
+    });
+}
+
+async function revogarQualidade(c) {
+    const ok = await pedirTexto({ titulo: `Revogar a qualidade de ${c.nome || 'esta pessoa'}?`, dica: 'Ela volta para 720p30. A chave que ela usou não pode ser usada de novo.', semCampo: true, rotuloOk: 'Revogar' });
+    if (!ok) return;
+    await agirAdmin('DELETE', '/admin/qualidade/' + encodeURIComponent(c.usuario));
 }
 
 function cartaoDenuncia(x) {

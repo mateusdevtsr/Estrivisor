@@ -592,6 +592,14 @@
         .acesso-linha .avatar-participante { width: 32px; height: 32px; flex: none; }
         .termos-texto { max-height: 46vh; }
         #modal-denuncia { z-index: 3150; }
+        #modal-chave { z-index: 3150; }
+        .chaves-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: rgba(255,255,255,0.04); border-radius: 8px; padding: 10px; margin-bottom: 4px; }
+        .chaves-form select, .chaves-form input { width: auto; flex: 0 1 auto; min-width: 0; }
+        .chaves-form input[type="text"] { flex: 1 1 160px; }
+        .chaves-novas { border: 1px solid var(--borda); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+        .chaves-novas .linha-chave { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .chave-codigo { font-family: Consolas, 'Courier New', monospace; letter-spacing: 1px; user-select: text; -webkit-user-select: text; font-size: 13px; }
+        #btn-ativar-chave { align-self: flex-start; background: #262b31; color: var(--texto); }
         #modal-denuncia select, #modal-denuncia textarea { width: 100%; box-sizing: border-box; font-family: inherit; resize: vertical; }
         #modal-denuncia #denuncia-enviar { white-space: nowrap; }
     </style>
@@ -743,10 +751,15 @@
                     <select id="select-qualidade">
                         <option value="automatico">Automático — 1080p30</option>
                         <option value="alta">Alta — 1080p60</option>
-                        <option value="balanceado">Balanceado — 720p30</option>
+                        <option value="balanceado" selected>Balanceado — 720p30</option>
                         <option value="economia">Economia — 480p15</option>
                         <option value="personalizado">Personalizado...</option>
                     </select>
+                    <div class="dica-config" id="info-nivel-qualidade">Sua qualidade: 720p30 (padrão).</div>
+                    <button id="btn-ativar-chave" class="btn-secundario" type="button" title="Tem uma chave do administrador? Ative aqui para liberar qualidades maiores.">🔑 Ativar chave de qualidade</button>
+                    <label class="opcao-discord" title="Envia várias versões da transmissão (em qualidades diferentes), e quem assiste com conexão ruim recebe uma mais leve. Gasta mais processamento de quem transmite, e o H264 passa a usar o processador em vez da placa de vídeo. Não dá pra trocar durante a transmissão.">
+                        <input type="checkbox" id="custom-simulcast"> <span>Simulcast (várias versões da transmissão)</span>
+                    </label>
                 <div id="painel-personalizado-voz">
                             <div class="grade-campos">
                                 <div class="campo campo-resolucao"><label>Resolução (largura × altura)</label>
@@ -766,9 +779,8 @@
                                 </div>
                                 <div class="campo"><label>FPS máx.</label><input type="number" id="custom-fps" value="60" min="1" max="60"></div>
                                 <div class="campo"><label>Bitrate (Mbps)</label><input type="number" id="custom-bitrate" value="6" min="0.1" max="50" step="0.1"></div>
-                                <div class="campo"><label><input type="checkbox" id="custom-simulcast" style="width:auto"> Simulcast</label></div>
                             </div>
-                            <div class="dica-personalizado">Limites: resolução de 160×90 até 3840×2160 · FPS de 1 a 60 · bitrate de 0,1 a 50 Mbps. Valores fora disso são ajustados sozinhos.</div>
+                            <div class="dica-personalizado" id="dica-personalizado-texto">Limites: resolução de 160×90 até 3840×2160 · FPS de 1 a 60 · bitrate de 0,1 a 50 Mbps. Valores fora disso são ajustados sozinhos.</div>
                         </div>
                     <div class="rotulo-config">Codec de vídeo</div>
                     <select id="select-codec" title="H264 usa a placa de vídeo (alivia o processador); VP8 usa o processador. Não dá pra trocar durante a transmissão.">
@@ -779,7 +791,10 @@
 
                 <div class="secao-config">
                     <div class="titulo-config">Discord</div>
-                    <label class="opcao-discord" title="Mostra no seu perfil do Discord o nome da janela que você está transmitindo. Desmarque se o título puder revelar algo que você não quer mostrar (por exemplo, a aba do navegador).">
+                    <label class="opcao-discord" title="Mostra no seu perfil do Discord que você está usando o Estrivisor (online, em canal de voz ou transmitindo). Desmarque para não aparecer nada.">
+                        <input type="checkbox" id="check-presenca-discord" checked> <span>Mostrar o Estrivisor no meu perfil do Discord</span>
+                    </label>
+                    <label class="opcao-discord" id="rotulo-mostrar-janela" title="Mostra no seu perfil do Discord o nome da janela que você está transmitindo. Desmarque se o título puder revelar algo que você não quer mostrar (por exemplo, a aba do navegador).">
                         <input type="checkbox" id="check-mostrar-janela" checked> <span>Mostrar a janela no Discord</span>
                     </label>
                 </div>
@@ -951,6 +966,7 @@
                     <button class="adm-aba" data-aba="pessoas">Pessoas</button>
                     <button class="adm-aba" data-aba="servidores">Servidores</button>
                     <button class="adm-aba" data-aba="denuncias">Denúncias <span class="adm-contador" id="adm-cont-denuncias" style="display:none;"></span></button>
+                    <button class="adm-aba" data-aba="chaves">Chaves</button>
                     <button class="adm-aba" data-aba="historico">Histórico</button>
                 </div>
                 <div class="cfg-dica" id="adm-dica" style="margin-bottom:12px;"></div>
@@ -995,6 +1011,19 @@
     </div>
 
     <!-- Denunciar mensagem ou pessoa -->
+    <div id="modal-chave" class="tela-login">
+        <div class="cartao-login">
+            <div class="titulo-modal">Ativar chave de qualidade</div>
+            <div class="dica-login" id="chave-dica">Digite a chave que o administrador te passou. Ela vale para a sua conta.</div>
+            <input type="text" id="chave-texto" maxlength="40" placeholder="ESTR-XXXX-XXXX-XXXX" autocomplete="off" spellcheck="false" style="text-transform:uppercase; letter-spacing:1px; text-align:center;">
+            <div class="dica-login" id="chave-erro" style="color:var(--sinal); min-height:16px;"></div>
+            <div class="botoes-modal">
+                <button id="chave-cancelar" class="btn-secundario" type="button">Cancelar</button>
+                <button id="chave-ativar" type="button">Ativar</button>
+            </div>
+        </div>
+    </div>
+
     <div id="modal-denuncia" class="tela-login">
         <div class="cartao-login">
             <div class="titulo-modal" id="denuncia-titulo">Denunciar</div>

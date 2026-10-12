@@ -525,9 +525,9 @@ responder('forcar-parar-transmissao', (evento, { sala, identidadeAlvo } = {}) =>
 responder('forcar-mutar-microfone', (evento, { sala, identidadeAlvo } = {}) => pedirModeracao(sala, 'mutar-microfone', identidadeAlvo));
 
 // ---------- Servidores, canais, convites e presença ----------
-// A tela pede por este canal único; só passam caminhos que começam com /servidores, /convites, /amigos, /dm, /admin, /termos ou /denuncias.
+// A tela pede por este canal único; só passam caminhos que começam com /servidores, /convites, /amigos, /dm, /admin, /termos, /denuncias ou /qualidade.
 const METODOS_API = ['GET', 'POST', 'PATCH', 'DELETE'];
-const CAMINHO_API = /^\/(servidores|convites|amigos|dm|admin|termos|denuncias)(\/[A-Za-z0-9._%\-]+)*(\?[A-Za-z0-9=&._\-]*)?$/;
+const CAMINHO_API = /^\/(servidores|convites|amigos|dm|admin|termos|denuncias|qualidade)(\/[A-Za-z0-9._%\-]+)*(\?[A-Za-z0-9=&._\-]*)?$/;
 
 responder('api-servidor', async (evento, { metodo, caminho, corpo } = {}) => {
   if (!METODOS_API.includes(metodo) || typeof caminho !== 'string' || !CAMINHO_API.test(caminho)) {

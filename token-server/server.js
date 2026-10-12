@@ -54,6 +54,7 @@ const { criarConversas, ErroConversa } = require('./conversas');
 const { criarAmigos, ErroAmigos } = require('./amigos');
 const { criarAcesso } = require('./acesso');
 const { criarModeracao, ErroModeracao } = require('./moderacao');
+const { criarChaves, ErroChave } = require('./chaves');
 
 const ARQUIVO_DADOS = process.env.DATA_FILE || '/data/servidores.json';
 const repo = criarRepositorio({ arquivo: ARQUIVO_DADOS });
@@ -69,6 +70,7 @@ const moderacao = criarModeracao({
   arquivoAuditoria: process.env.AUDITORIA_FILE || path.join(path.dirname(ARQUIVO_DADOS), 'auditoria.json'),
 });
 const amigos = criarAmigos({ arquivo: process.env.AMIGOS_FILE || path.join(path.dirname(ARQUIVO_DADOS), 'amigos.json') });
+const chaves = criarChaves({ arquivo: process.env.CHAVES_FILE || path.join(path.dirname(ARQUIVO_DADOS), 'chaves.json') });
 
 if (ACESSO_RESTRITO && acesso.semear([...sessoes.todos(), ...repo.todosUsuarios(), ...amigos.todos()])) {
   console.log('[acesso] primeira vez com acesso restrito: quem já usava o Estrivisor foi liberado. Veja com: node autorizar.js listar');
@@ -146,7 +148,7 @@ function identidadeDe(req, usuarioLegado, { semAceite = false } = {}) {
 }
 
 function responderErro(res, err) {
-  if (err instanceof ErroRegra || err instanceof ErroConversa || err instanceof ErroAmigos || err instanceof ErroModeracao) {
+  if (err instanceof ErroRegra || err instanceof ErroConversa || err instanceof ErroAmigos || err instanceof ErroModeracao || err instanceof ErroChave) {
     return res.status(err.status).json({ erro: err.message, codigo: err.codigo });
   }
   console.error('Erro interno:', err);
@@ -921,6 +923,75 @@ app.post('/admin/denuncias/:id/resolver', rota(async (req, res, usuario) => {
   res.json({ ok: true });
 }));
 
+// ---- Qualidade da transmissão (chaves) ----
+// Todo mundo transmite até 720p30. Uma chave gerada pelo administrador libera um nível maior na conta.
+const qualidadeDe = (usuario) => chaves.nivelDe(usuario, acesso.ehAdmin(usuario));
+
+// Freio contra tentativa de adivinhar chaves: 5 erros por pessoa a cada 15 minutos.
+const errosChave = new Map(); // usuario -> { n, desde }
+function chaveBloqueada(usuario) {
+  const e = errosChave.get(usuario);
+  if (!e) return false;
+  if (Date.now() - e.desde > 15 * 60 * 1000) { errosChave.delete(usuario); return false; }
+  return e.n >= 5;
+}
+function registrarErroChave(usuario) {
+  const e = errosChave.get(usuario);
+  if (!e || Date.now() - e.desde > 15 * 60 * 1000) errosChave.set(usuario, { n: 1, desde: Date.now() });
+  else e.n++;
+}
+
+app.get('/qualidade', rota((req, res, usuario, sessao) => {
+  exigirSessao(sessao);
+  res.json({ qualidade: qualidadeDe(usuario), niveis: chaves.listar().niveis });
+}));
+
+app.post('/qualidade/resgatar', rota((req, res, usuario, sessao) => {
+  exigirSessao(sessao);
+  if (chaveBloqueada(usuario)) {
+    return res.status(429).json({ erro: 'Muitas tentativas erradas. Tente de novo em alguns minutos.' });
+  }
+  const { chave } = req.body || {};
+  if (typeof chave !== 'string' || chave.length > 64) throw new ErroChave(404, 'Chave inválida ou já usada.');
+  try {
+    const r = chaves.resgatar(usuario, chave, acesso.ehAdmin(usuario));
+    auditar(usuario, 'ativar-chave', '', `chave ${r.chaveId} → ${r.nivel.nome}`);
+    res.json({ qualidade: r.nivel });
+  } catch (err) {
+    if (err instanceof ErroChave && err.status === 404) registrarErroChave(usuario);
+    throw err;
+  }
+}));
+
+app.get('/admin/chaves', rota((req, res, usuario) => {
+  exigirAdmin(usuario);
+  const l = chaves.listar();
+  res.json({ ...l, concedidos: l.concedidos.map((c) => ({ ...c, nome: nomeConhecido(c.usuario) })),
+    chaves: l.chaves.map((c) => ({ ...c, usadaPorNome: c.usadaPor ? nomeConhecido(c.usadaPor) : null })) });
+}));
+
+app.post('/admin/chaves', rota((req, res, usuario) => {
+  exigirAdmin(usuario);
+  const { nivel, validadeDias, quantidade, nota } = req.body || {};
+  const criadas = chaves.gerar({ nivel, validadeDias, quantidade, nota, por: usuario });
+  auditar(usuario, 'gerar-chaves', '', `${criadas.length}× ${nivel}${validadeDias ? ' · ' + validadeDias + ' dias' : ' · permanente'}${criadas[0].nota ? ' · ' + criadas[0].nota : ''}`);
+  res.status(201).json({ chaves: criadas });
+}));
+
+app.delete('/admin/chaves/:id', rota((req, res, usuario) => {
+  exigirAdmin(usuario);
+  chaves.apagar(req.params.id);
+  auditar(usuario, 'apagar-chave', '', req.params.id);
+  res.json({ ok: true });
+}));
+
+app.delete('/admin/qualidade/:alvo', rota((req, res, usuario) => {
+  exigirAdmin(usuario);
+  if (!chaves.revogar(req.params.alvo)) throw new ErroRegra(404, 'Essa pessoa não tem qualidade liberada por chave.');
+  auditar(usuario, 'revogar-qualidade', req.params.alvo, '');
+  res.json({ ok: true });
+}));
+
 app.get('/admin/historico', rota((req, res, usuario) => {
   exigirAdmin(usuario);
   res.json({ historico: moderacao.historico(200) });
@@ -935,7 +1006,7 @@ setInterval(() => {
 }, 60000).unref();
 
 module.exports = {
-  app, repo, sessoes, conversas, amigos, acesso, moderacao,
+  app, repo, sessoes, conversas, amigos, acesso, moderacao, chaves,
   _trocarRoomService: (novo) => { roomService = novo; },
   _trocarBuscaDiscord: (nova) => { buscarNoDiscord = nova; },
 };
