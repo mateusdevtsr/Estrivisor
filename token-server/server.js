@@ -177,20 +177,41 @@ app.get('/saude', (req, res) => res.json({ ok: true }));
 // ============================================================
 // Login
 // ============================================================
-// Freio simples contra enxurrada de logins (ex.: alguém criando contas "sem Discord" em massa).
-const limiteLogin = { inicio: 0, n: 0 };
-function loginLiberado() {
-  const agora = Date.now();
-  if (agora - limiteLogin.inicio > 60 * 1000) { limiteLogin.inicio = agora; limiteLogin.n = 0; }
-  limiteLogin.n++;
-  return limiteLogin.n <= 30;
+// Freios contra enxurrada de logins: um limite por IP (quem abusa só trava a si mesmo),
+// um por conta, e um teto geral bem mais alto que o antigo (30/min travava todo mundo junto).
+const JANELA_LOGIN_MS = 60 * 1000;
+const LIMITE_LOGIN_IP = 12;      // por minuto, por IP
+const LIMITE_LOGIN_CONTA = 10;   // por minuto, por conta
+const LIMITE_LOGIN_GERAL = 150;  // por minuto, no servidor todo
+const contadoresLogin = new Map();
+function contar(chave, limite) {
+  const t = Date.now();
+  let c = contadoresLogin.get(chave);
+  if (!c || t - c.inicio > JANELA_LOGIN_MS) { c = { inicio: t, n: 0 }; contadoresLogin.set(chave, c); }
+  c.n++;
+  return c.n <= limite;
 }
+setInterval(() => {
+  const t = Date.now();
+  for (const [k, c] of contadoresLogin) if (t - c.inicio > JANELA_LOGIN_MS) contadoresLogin.delete(k);
+}, JANELA_LOGIN_MS).unref();
+// O servidor só é alcançável pelo túnel da Cloudflare (que informa o IP real) ou pelo próprio notebook.
+function ipDe(req) {
+  const cf = String(req.headers['cf-connecting-ip'] || '').trim();
+  if (/^[0-9a-fA-F:.]{3,45}$/.test(cf)) return cf;
+  return String((req.socket && req.socket.remoteAddress) || 'desconhecido');
+}
+function loginLiberado(req) {
+  // O IP é contado primeiro: quem abusa não gasta o teto geral dos outros.
+  return contar('ip:' + ipDe(req), LIMITE_LOGIN_IP) && contar('geral', LIMITE_LOGIN_GERAL);
+}
+const contaLiberada = (usuario) => contar('conta:' + usuario, LIMITE_LOGIN_CONTA);
 
 const contaPublica = (usuario, tipo, perfil) => ({ usuario, tipo, nome: perfil.nome, avatar: perfil.avatar || null });
 
 app.post('/auth/discord', async (req, res) => {
   if (!chaveValida(req)) return res.status(401).json({ erro: 'Chave de convite inválida.' });
-  if (!loginLiberado()) return res.status(429).json({ erro: 'Muitos logins seguidos. Espere um minuto.' });
+  if (!loginLiberado(req)) return res.status(429).json({ erro: 'Muitos logins seguidos. Espere um minuto.' });
   if (!DISCORD_CLIENT_ID || !DISCORD_CLIENT_SECRET) {
     return res.status(503).json({ erro: 'O login com Discord ainda não foi configurado no servidor.' });
   }
@@ -206,6 +227,7 @@ app.post('/auth/discord', async (req, res) => {
       codigo, redirectUri, clientId: DISCORD_CLIENT_ID, clientSecret: DISCORD_CLIENT_SECRET, buscar: buscarNoDiscord,
     });
     const usuario = `discord:${perfil.id}`;
+    if (!contaLiberada(usuario)) return res.status(429).json({ erro: 'Muitos logins seguidos nessa conta. Espere um minuto.' });
     const sit = acesso.situacao(usuario);
     if (sit.estado === 'banido' || sit.estado === 'suspenso') {
       return res.status(403).json({ erro: mensagemDaSituacao(sit), codigo: 'punido' });
@@ -225,7 +247,7 @@ app.post('/auth/discord', async (req, res) => {
 // "Entrar sem Discord": o servidor cria um código aleatório pra pessoa (ninguém escolhe o próprio).
 app.post('/auth/local', (req, res) => {
   if (!chaveValida(req)) return res.status(401).json({ erro: 'Chave de convite inválida.' });
-  if (!loginLiberado()) return res.status(429).json({ erro: 'Muitos logins seguidos. Espere um minuto.' });
+  if (!loginLiberado(req)) return res.status(429).json({ erro: 'Muitos logins seguidos. Espere um minuto.' });
   if (ACESSO_RESTRITO) return res.status(403).json({ erro: 'Entrar sem Discord está desativado. Use o login com o Discord.', codigo: 'sem-acesso' });
   const nome = limparTexto((req.body || {}).nome, 40);
   if (!nome) return res.status(400).json({ erro: 'Digite um nome.' });
@@ -619,7 +641,9 @@ function exigirAmigo(usuario, outro) {
   if (!amigos.saoAmigos(usuario, outro)) throw new ErroRegra(403, 'Vocês não são amigos.');
 }
 function nomeDoAutor(req, sessao, usuario) {
-  return limparTexto((req.body || {}).nome, 40) || (sessao && sessao.perfil.nome) || usuario;
+  // Com login, o nome vem sempre da conta (o app não pode mandar outro nome e se passar por alguém).
+  if (sessao && sessao.perfil && sessao.perfil.nome) return sessao.perfil.nome;
+  return limparTexto((req.body || {}).nome, 40) || usuario;
 }
 function listarMensagens(chave, req) {
   const r = conversas.listar(chave, { depois: inteiro(req.query.depois), antes: inteiro(req.query.antes), limite: inteiro(req.query.limite) });

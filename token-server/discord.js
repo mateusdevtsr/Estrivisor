@@ -50,6 +50,7 @@ async function contaDoCodigo({ codigo, redirectUri, clientId, clientSecret, busc
       signal: AbortSignal.timeout(10000),
     });
   } catch (e) {
+    console.error('[discord] falha de rede:', (e && e.cause && e.cause.code) || (e && e.name) || 'erro', (e && e.message) || '');
     throw new ErroDiscord('Não consegui falar com o Discord. Tente de novo.');
   }
   if (!resposta.ok) throw new ErroDiscord('O Discord não confirmou o login (o código venceu ou já foi usado). Tente de novo.');
@@ -60,6 +61,7 @@ async function contaDoCodigo({ codigo, redirectUri, clientId, clientSecret, busc
   try {
     eu = await buscar(URL_EU, { headers: { Authorization: `Bearer ${tokenAcesso}` }, signal: AbortSignal.timeout(10000) });
   } catch (e) {
+    console.error('[discord] falha de rede:', (e && e.cause && e.cause.code) || (e && e.name) || 'erro', (e && e.message) || '');
     throw new ErroDiscord('Não consegui falar com o Discord. Tente de novo.');
   }
   if (!eu.ok) throw new ErroDiscord('O Discord não liberou os dados da conta. Tente de novo.');

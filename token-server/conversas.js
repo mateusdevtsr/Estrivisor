@@ -15,6 +15,13 @@ const MAX_MENSAGENS = 1000;   // por conversa
 const MAX_TEXTO = 2000;
 const GRAVAR_APOS_MS = 1500;  // junta várias mensagens seguidas numa gravação só
 
+// Tira caracteres de controle e os invisíveis que invertem/escondem texto (mantém as quebras de linha).
+const PERIGOSOS_MSG = /[\u0000-\u0009\u000b-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g;
+function limparMensagem(texto) {
+  if (typeof texto !== 'string') return '';
+  return texto.replace(/\r\n?/g, '\n').replace(PERIGOSOS_MSG, '').replace(/\n{4,}/g, '\n\n\n').slice(0, MAX_TEXTO);
+}
+
 class ErroConversa extends Error {
   constructor(status, mensagem) { super(mensagem); this.status = status; }
 }
@@ -57,7 +64,7 @@ function criarConversas({ arquivo = null, agora = () => Date.now(), log = consol
   const conversa = (chave) => dados.conversas[chave] || null;
 
   function enviar(chave, { usuario, nome, avatar, texto }) {
-    const t = typeof texto === 'string' ? texto.slice(0, MAX_TEXTO) : '';
+    const t = limparMensagem(texto);
     if (!t.trim()) throw new ErroConversa(400, 'Escreva alguma coisa.');
     const c = dados.conversas[chave] || (dados.conversas[chave] = { seq: 0, msgs: [] });
     c.seq++;
@@ -94,7 +101,7 @@ function criarConversas({ arquivo = null, agora = () => Date.now(), log = consol
     const msg = c && c.msgs.find((m) => m.seq === seq);
     if (!msg) throw new ErroConversa(404, 'Mensagem não encontrada.');
     if (msg.usuario !== usuario) throw new ErroConversa(403, 'Você só pode editar as suas mensagens.');
-    const t = typeof texto === 'string' ? texto.slice(0, MAX_TEXTO) : '';
+    const t = limparMensagem(texto);
     if (!t.trim()) throw new ErroConversa(400, 'Escreva alguma coisa.');
     msg.texto = t;
     msg.editadoEm = agora();

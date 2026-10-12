@@ -12,6 +12,8 @@ services:
       - ./server.env
     environment:
       DATA_FILE: /data/servidores.json
+      # O notebook não tem rota IPv6: o servidor tenta primeiro os endereços IPv4 (evita falhas ao falar com o Discord).
+      NODE_OPTIONS: --dns-result-order=ipv4first
     volumes:
       # Guarda servidores, canais, mensagens, sessões e o resto fora do container
       # (sobrevive a "docker compose up -d --build" e a reinícios).
