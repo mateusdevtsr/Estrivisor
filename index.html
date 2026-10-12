@@ -340,6 +340,8 @@
         #btn-atualizar-fontes { padding: 8px 10px; font-size: 14px; }
         .opcao-discord { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--texto); cursor: pointer; }
         .opcao-discord input { width: auto; }
+        .opcao-som { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--texto-fraco); white-space: nowrap; cursor: pointer; }
+        .opcao-som input { width: auto; }
         #btn-transmitir-voz { background: var(--sinal); color: #1a0505; }
         #btn-transmitir-voz:hover { background: #ff6b6b; }
         #btn-parar-voz { background: transparent; border: 1px solid var(--sinal); color: var(--sinal); display: none; }
@@ -703,6 +705,9 @@
                 <div class="barra-controles-voz">
                     <select id="select-fontes" disabled><option value="">Escolha o que transmitir...</option></select>
                     <button id="btn-atualizar-fontes" title="Atualizar a lista de janelas (use depois de abrir um jogo)">🔄</button>
+                    <label class="opcao-som" title="Envia junto TODO o som que estiver tocando no seu computador (não só o da janela escolhida): música, avisos, outros programas. Desmarque se quiser transmitir só a imagem.">
+                        <input type="checkbox" id="check-som-sistema" checked> <span>Som do computador</span>
+                    </label>
                     <div class="espacador"></div>
                     <button id="btn-transmitir-voz" disabled>Iniciar transmissão</button>
                     <button id="btn-parar-voz">Parar transmissão</button>

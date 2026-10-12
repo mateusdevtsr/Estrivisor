@@ -1330,6 +1330,7 @@ document.getElementById('select-qualidade').addEventListener('change', () => {
     salvarPreferenciasVideo();
 });
 document.getElementById('custom-simulcast').addEventListener('change', salvarPreferenciasVideo);
+document.getElementById('check-som-sistema').addEventListener('change', salvarPreferenciasVideo);
 
 // ---------- Níveis de qualidade: cadeados e chaves ----------
 // Padrão: 720p30 pra todo mundo (economiza banda e processamento). Qualidades maiores têm cadeado 🔒
@@ -1564,7 +1565,8 @@ async function iniciarTransmissao() {
     // (antes, nesse caso, o app transmitia a tela inteira sem avisar).
     await listarJanelasDoSistema();
     if (select.value !== fonteId) throw new Error('Essa janela não está mais aberta. Escolha de novo na lista.');
-    await window.electronAPI.definirFonte(fonteId);
+    const comSom = document.getElementById('check-som-sistema').checked;
+    await window.electronAPI.definirFonte(fonteId, comSom);
     await atualizarQualidade(); // confere no servidor o que esta conta pode enviar
     const perfil = lerPerfilQualidade();
 
@@ -1576,7 +1578,7 @@ async function iniciarTransmissao() {
     const publicacao = await roomVoz.localParticipant.setScreenShareEnabled(
         true,
         {
-            audio: true,
+            audio: comSom,
             resolution: {
                 width: perfil.resolution.width,
                 height: perfil.resolution.height,
@@ -3179,6 +3181,7 @@ function salvarPreferenciasVideo() {
         qualidade: document.getElementById('select-qualidade').value,
         largura: c.largura, altura: c.altura, fps: c.fps, bitrate: c.bitrate,
         simulcast: document.getElementById('custom-simulcast').checked,
+        som: document.getElementById('check-som-sistema').checked,
         tamanho: tamanhoVideo
     }));
 }
@@ -3193,6 +3196,7 @@ function carregarPreferenciasVideo() {
         document.getElementById('custom-fps').value = p.fps;
         document.getElementById('custom-bitrate').value = p.bitrate;
         document.getElementById('custom-simulcast').checked = p.simulcast === true;
+        document.getElementById('check-som-sistema').checked = p.som !== false;
         if (p.tamanho && typeof p.tamanho === 'object') tamanhoVideo = { modo: p.tamanho.modo, pct: p.tamanho.pct };
     }
     // Passa tudo pelos mesmos limites de sempre (valores ausentes ou estranhos viram o padrão).

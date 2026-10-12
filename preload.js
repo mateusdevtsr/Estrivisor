@@ -21,7 +21,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   gerarToken: (dados) => ipcRenderer.invoke('gerar-token-seguro', dados),
   obterUrlServidor: () => ipcRenderer.invoke('obter-url-servidor'),
   listarFontes: () => ipcRenderer.invoke('listar-fontes'),
-  definirFonte: (id) => ipcRenderer.invoke('definir-fonte', id),
+  definirFonte: (id, comSom) => ipcRenderer.invoke('definir-fonte', id, comSom),
 
   // Sala de espera / aprovação de entrada (só o dono do servidor)
   listarPendentes: (dados) => ipcRenderer.invoke('listar-pendentes', dados),

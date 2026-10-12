@@ -552,9 +552,11 @@ responder('api-servidor', async (evento, { metodo, caminho, corpo } = {}) => {
 // Guarda qual fonte (janela/tela) o usuário escolheu na lista, para responder ao pedido de
 // getDisplayMedia() feito pelo livekit-client.
 let fonteEscolhidaId = null;
+let fonteComSom = true; // "Som do computador" marcado (o padrão); desmarcado = só a imagem
 
-responder('definir-fonte', (evento, id) => {
+responder('definir-fonte', (evento, id, comSom) => {
   fonteEscolhidaId = typeof id === 'string' ? id : null;
+  fonteComSom = comSom !== false;
 });
 
 responder('obter-url-servidor', () => urlLivekitDoServidor || LIVEKIT_URL);
@@ -589,7 +591,8 @@ app.whenReady().then(() => {
       try { callback(null); } catch (e) { /* pedido já encerrado */ }
       return;
     }
-    callback({ video: fonte, audio: 'loopback' });
+    if (fonteComSom) callback({ video: fonte, audio: 'loopback' });
+    else callback({ video: fonte });
   });
 
   // Sem isso, o pedido de microfone (getUserMedia de áudio) é negado
