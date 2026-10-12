@@ -25,7 +25,7 @@ const EXIGIR_LOGIN = process.env.EXIGIR_LOGIN === '1';
 const ACESSO_RESTRITO = process.env.ACESSO_RESTRITO !== '0';
 // IDs do Discord dos administradores (separados por vírgula). Eles liberam e bloqueiam pessoas pelo app.
 // Versão dos termos de uso que o app mostra. Se você mudar os termos, aumente este número: todo mundo aceita de novo.
-const VERSAO_TERMOS = 1;
+const VERSAO_TERMOS = 2;
 // EXIGIR_ACEITE=1: quem não aceitou os termos não consegue usar o servidor (ligue depois que todos atualizarem o app).
 const EXIGIR_ACEITE = process.env.EXIGIR_ACEITE === '1';
 const ADMINS = (process.env.ADMIN_DISCORD_IDS || '').split(',').map((s) => s.trim()).filter(Boolean)

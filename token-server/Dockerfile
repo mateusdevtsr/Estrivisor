@@ -1,7 +1,9 @@
 FROM node:24-alpine
 WORKDIR /app
-COPY package.json .
-RUN npm install --omit=dev
+# package-lock.json fixa as versões exatas das dependências; "npm ci" instala exatamente elas
+# (e falha se o lock não bater com o package.json, em vez de baixar versões novas sem avisar).
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
 COPY *.js ./
 # Roda como o usuário "node" (sem poderes de administrador dentro do container).
 # A pasta de dados (./dados no notebook) precisa pertencer a esse usuário (uid 1000).
