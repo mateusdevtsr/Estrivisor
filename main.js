@@ -605,7 +605,11 @@ app.whenReady().then(() => {
     autoUpdater.on('checking-for-update', () => {
       console.log('[atualização] verificando se tem versão nova...');
     });
+    // O aviso de falha só aparece se a atualização foi ENCONTRADA e deu erro ao baixar/instalar.
+    // Sem internet ao abrir o app, o erro fica só no log (não é problema de quem está usando).
+    let atualizacaoEncontrada = false;
     autoUpdater.on('update-available', (info) => {
+      atualizacaoEncontrada = true;
       console.log('[atualização] versão nova encontrada:', info.version);
     });
     autoUpdater.on('update-not-available', () => {
@@ -633,8 +637,8 @@ app.whenReady().then(() => {
 
     autoUpdater.on('error', (err) => {
       console.error('[atualização] erro:', err);
-      // Erro não fica mais silencioso — mostra um aviso com link pra
-      // baixar manualmente, caso a atualização automática falhe.
+      if (!atualizacaoEncontrada) return; // erro de rede ao procurar: só log
+      // Havia versão nova e o download/instalação falhou: avisa com link pra baixar manualmente.
       dialog.showMessageBox({
         type: 'warning',
         title: 'Não foi possível atualizar automaticamente',
@@ -645,7 +649,9 @@ app.whenReady().then(() => {
       });
     });
 
-    autoUpdater.checkForUpdatesAndNotify();
+    // checkForUpdates (sem "AndNotify"): quem avisa é só a janela "Atualização pronta" acima,
+    // sem notificação duplicada do Windows.
+    autoUpdater.checkForUpdates().catch((e) => console.error('[atualização] falha ao verificar:', e && e.message));
   }
 });
 
