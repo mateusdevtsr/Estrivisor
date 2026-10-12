@@ -3806,7 +3806,7 @@ function pararAmigos() {
 // ============================================================
 // Termos de uso (aceite) e denúncias
 // ============================================================
-const VERSAO_TERMOS_APP = 1;   // tem que ser igual à VERSAO_TERMOS do servidor
+const VERSAO_TERMOS_APP = 2;   // tem que ser igual à VERSAO_TERMOS do servidor
 let termosPendentes = null;
 
 function garantirTermos() {
