@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Estrivisor</title>
+<meta name="description" content="Voz e tela compartilhada, só entre amigos. Aplicativo para Windows, por convite, para maiores de 18 anos.">
+<meta name="color-scheme" content="dark">
+<style>
+  :root {
+    --fundo: #17141b;
+    --superficie: #221d29;
+    --superficie-2: #2b2533;
+    --linha: #3a3244;
+    --texto: #f3eef6;
+    --fraco: #a79db3;
+    --sinal: #ff4d4d;
+    --falando: #5be37d;
+    --fonte: "Bahnschrift", "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--fundo); }
+  body {
+    margin: 0; color: var(--texto); background: var(--fundo);
+    font-family: var(--fonte); font-size: 17px; line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; }
+  :focus-visible { outline: 3px solid var(--texto); outline-offset: 3px; border-radius: 4px; }
+
+  .pagina { max-width: 1160px; margin: 0 auto; padding: 0 24px; }
+
+  /* ---------- Topo ---------- */
+  .topo { display: flex; align-items: center; justify-content: space-between; padding: 28px 0 0; }
+  .marca { font-size: 22px; font-weight: 700; letter-spacing: 0.01em; text-decoration: none; }
+  .marca i { font-style: normal; color: var(--sinal); }
+  .topo a.contato { color: var(--fraco); font-size: 15px; text-decoration: none; }
+  .topo a.contato:hover { color: var(--texto); }
+
+  /* ---------- Abertura ---------- */
+  .abertura { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: 56px; align-items: center; padding: 72px 0 88px; }
+  .abertura h1 {
+    margin: 0 0 20px; font-size: clamp(40px, 5.6vw, 68px); line-height: 1.02; font-weight: 700;
+    letter-spacing: -0.02em; font-stretch: 85%;
+  }
+  .abertura p.lead { margin: 0 0 36px; color: var(--fraco); font-size: 19px; max-width: 30em; }
+
+  .acesso { border-left: 3px solid var(--sinal); padding: 4px 0 4px 20px; max-width: 30em; }
+  .aceite { display: flex; gap: 12px; align-items: flex-start; margin: 0 0 18px; color: var(--fraco); font-size: 15px; line-height: 1.5; cursor: pointer; }
+  .aceite input { flex: none; width: 20px; height: 20px; margin: 2px 0 0; accent-color: var(--sinal); cursor: pointer; }
+  .aceite b { color: var(--texto); }
+  .aceite a { color: var(--texto); text-underline-offset: 3px; }
+  .baixar {
+    display: inline-block; background: var(--sinal); color: #1a0d0d; font: inherit; font-weight: 700; font-size: 18px;
+    padding: 14px 28px; border-radius: 8px; text-decoration: none; transition: transform .12s ease, filter .12s ease;
+  }
+  .baixar:hover { filter: brightness(1.08); transform: translateY(-1px); }
+  .baixar.travado { background: var(--superficie-2); color: var(--fraco); pointer-events: none; transform: none; }
+  .dica-download { margin: 12px 0 0; color: var(--fraco); font-size: 14px; }
+
+  /* ---------- Prévia do app ---------- */
+  .janela {
+    display: grid; grid-template-columns: 190px minmax(0, 1fr); background: var(--superficie); border: 1px solid var(--linha);
+    border-radius: 12px; overflow: hidden; box-shadow: 0 30px 80px -30px rgba(0,0,0,.7); min-height: 380px;
+  }
+  .j-lado { background: #1c1822; padding: 16px 14px; border-right: 1px solid var(--linha); display: flex; flex-direction: column; gap: 14px; }
+  .j-servidor { font-weight: 700; font-size: 15px; }
+  .j-canal { color: var(--fraco); font-size: 13px; }
+  .j-pessoas { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .j-pessoas li { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+  .av { position: relative; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; font-weight: 700; color: #1a1420; flex: none; }
+  .av.a { background: #ffb86b; } .av.b { background: #8ec5ff; } .av.c { background: #c7a4ff; }
+  .falando .av::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; border: 2px solid var(--falando); animation: pulso 1.6s ease-out infinite; }
+  @keyframes pulso { 0% { transform: scale(.88); opacity: 1; } 70%, 100% { transform: scale(1.18); opacity: 0; } }
+  .j-palco { display: flex; flex-direction: column; padding: 16px; gap: 12px; min-width: 0; }
+  .j-tela {
+    position: relative; flex: 1; min-height: 220px; border-radius: 8px; overflow: hidden; border: 1px solid var(--linha);
+    background:
+      linear-gradient(180deg, rgba(23,20,27,0) 40%, rgba(23,20,27,.85) 100%),
+      repeating-linear-gradient(90deg, rgba(255,255,255,.04) 0 1px, transparent 1px 36px),
+      repeating-linear-gradient(0deg, rgba(255,255,255,.04) 0 1px, transparent 1px 36px),
+      linear-gradient(135deg, #3d2c63 0%, #8a3b5e 55%, #e0704f 100%);
+  }
+  .j-tela .selo { position: absolute; top: 12px; left: 12px; background: rgba(23,20,27,.8); border-radius: 6px; padding: 4px 10px; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+  .j-tela .selo::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--sinal); }
+  .j-tela .alvo { position: absolute; left: 50%; top: 46%; width: 54px; height: 54px; margin: -27px 0 0 -27px; border: 2px solid rgba(255,255,255,.7); border-radius: 50%; }
+  .j-tela .alvo::before, .j-tela .alvo::after { content: ""; position: absolute; background: rgba(255,255,255,.7); }
+  .j-tela .alvo::before { left: 50%; top: -10px; bottom: -10px; width: 2px; margin-left: -1px; }
+  .j-tela .alvo::after { top: 50%; left: -10px; right: -10px; height: 2px; margin-top: -1px; }
+  .j-barra { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #1c1822; border: 1px solid var(--linha); border-radius: 8px; padding: 8px 12px; font-size: 13px; color: var(--fraco); }
+  .j-barra .eu { display: flex; align-items: center; gap: 10px; color: var(--texto); }
+  .ms { color: var(--falando); font-weight: 700; }
+
+  /* ---------- O que é ---------- */
+  .tres { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--linha); border-bottom: 1px solid var(--linha); }
+  .tres > div { padding: 32px 28px 34px 0; }
+  .tres > div + div { padding-left: 28px; border-left: 1px solid var(--linha); }
+  .tres h2 { margin: 0 0 8px; font-size: 21px; line-height: 1.2; }
+  .tres p { margin: 0; color: var(--fraco); font-size: 16px; }
+
+  /* ---------- Como entrar ---------- */
+  .entrar { padding: 80px 0 40px; display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); gap: 56px; }
+  .entrar h2 { margin: 0; font-size: clamp(28px, 3.4vw, 40px); line-height: 1.1; letter-spacing: -0.01em; font-stretch: 88%; }
+  .entrar .nota { margin: 14px 0 0; color: var(--fraco); font-size: 16px; max-width: 22em; }
+  .passos { list-style: none; counter-reset: p; margin: 0; padding: 0; }
+  .passos li { counter-increment: p; position: relative; padding: 0 0 26px 56px; color: var(--fraco); }
+  .passos li::before {
+    content: counter(p); position: absolute; left: 0; top: 0; width: 36px; height: 36px; border-radius: 50%;
+    display: grid; place-items: center; font-weight: 700; color: var(--texto); border: 1px solid var(--linha); background: var(--superficie);
+  }
+  .passos li:not(:last-child)::after { content: ""; position: absolute; left: 17px; top: 42px; bottom: 6px; width: 1px; background: var(--linha); }
+  .passos b { display: block; color: var(--texto); font-size: 18px; margin-bottom: 2px; }
+
+  /* ---------- Rodapé ---------- */
+  footer { border-top: 1px solid var(--linha); margin-top: 48px; padding: 28px 0 56px; color: var(--fraco); font-size: 14px; display: flex; flex-wrap: wrap; gap: 8px 28px; justify-content: space-between; }
+  footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
+  footer a { text-underline-offset: 3px; }
+
+  /* ---------- Telas menores ---------- */
+  @media (max-width: 940px) {
+    .abertura { grid-template-columns: 1fr; gap: 44px; padding: 48px 0 56px; }
+    .entrar { grid-template-columns: 1fr; gap: 28px; padding-top: 56px; }
+  }
+  @media (max-width: 720px) {
+    body { font-size: 16px; }
+    .pagina { padding: 0 18px; }
+    .tres { grid-template-columns: 1fr; }
+    .tres > div, .tres > div + div { padding: 24px 0; border-left: 0; }
+    .tres > div + div { border-top: 1px solid var(--linha); }
+    .janela { grid-template-columns: 1fr; }
+    .j-lado { border-right: 0; border-bottom: 1px solid var(--linha); }
+    .j-pessoas { flex-direction: row; flex-wrap: wrap; gap: 14px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .falando .av::after { animation: none; opacity: .8; }
+    .baixar { transition: none; }
+  }
+</style>
+</head>
+<body>
+<div class="pagina">
+  <header class="topo">
+    <a class="marca" href="./">Estri<i>visor</i></a>
+    <a class="contato" href="mailto:estrivisor@gmail.com">estrivisor@gmail.com</a>
+  </header>
+
+  <main>
+    <section class="abertura">
+      <div>
+        <h1>Voz e tela compartilhada, só entre amigos.</h1>
+        <p class="lead">Um aplicativo para Windows com salas de voz, chat e transmissão de tela. Funciona por convite e é só para maiores de 18 anos.</p>
+
+        <div class="acesso">
+          <label class="aceite">
+            <input type="checkbox" id="aceite">
+            <span>Tenho <b>18 anos ou mais</b> e li e aceito os <a href="termos.html">Termos de uso</a> e a <a href="privacidade.html">Política de privacidade</a>.</span>
+          </label>
+          <a class="baixar travado" id="baixar" href="#" aria-disabled="true">Baixar para Windows</a>
+          <p class="dica-download" id="dica-download" aria-live="polite">Marque a caixa para liberar o download.</p>
+          <noscript><p class="dica-download">Sem JavaScript o botão não libera. Baixe pela <a href="https://github.com/mateusdevtsr/Estrivisor/releases/latest">página de versões</a>.</p></noscript>
+        </div>
+      </div>
+
+      <div class="janela" role="img" aria-label="Prévia do aplicativo: uma sala de voz com três pessoas, uma delas falando, e uma tela compartilhada.">
+        <div class="j-lado" aria-hidden="true">
+          <div>
+            <div class="j-servidor">Sala do grupo</div>
+            <div class="j-canal">Canal de voz: Geral</div>
+          </div>
+          <ul class="j-pessoas">
+            <li class="falando"><span class="av a">A</span>Ana</li>
+            <li><span class="av b">B</span>Beto</li>
+            <li><span class="av c">C</span>Caio</li>
+          </ul>
+        </div>
+        <div class="j-palco" aria-hidden="true">
+          <div class="j-tela"><span class="selo">Beto está transmitindo</span><span class="alvo"></span></div>
+          <div class="j-barra">
+            <span class="eu"><span class="av a" style="width:24px;height:24px;font-size:11px">A</span>Ana</span>
+            <span>Conexão: <span class="ms">42 ms</span></span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="tres" aria-label="O que o Estrivisor faz">
+      <div>
+        <h2>Voz limpa</h2>
+        <p>Cancelamento de eco, supressão de ruído e escolha de microfone e fone, como numa chamada de verdade.</p>
+      </div>
+      <div>
+        <h2>Tela ao vivo</h2>
+        <p>Mostre a tela inteira ou só uma janela para quem está na sala, com o som do que você está jogando.</p>
+      </div>
+      <div>
+        <h2>Só quem você conhece</h2>
+        <p>Cada pessoa entra por convite e é liberada pelo administrador. Não é um lugar aberto.</p>
+      </div>
+    </section>
+
+    <section class="entrar" id="como-entrar">
+      <div>
+        <h2>Como entrar</h2>
+        <p class="nota">O primeiro acesso leva uns minutos, porque alguém precisa liberar você.</p>
+      </div>
+      <ol class="passos">
+        <li><b>Baixe e instale.</b>Se o Windows mostrar "O Windows protegeu o computador", clique em Mais informações e depois em Executar assim mesmo. O aviso aparece porque o aplicativo ainda não tem assinatura digital.</li>
+        <li><b>Entre com o Discord.</b>O Estrivisor usa só o seu nome e a sua foto do Discord, nunca a sua senha.</li>
+        <li><b>Peça a liberação.</b>Na primeira vez aparece "acesso ainda não liberado". Avise quem te convidou para o administrador liberar e entre de novo.</li>
+        <li><b>Aceite os termos no aplicativo.</b>Leia até o fim e confirme que tem 18 anos ou mais. Depois é só entrar numa sala.</li>
+      </ol>
+    </section>
+  </main>
+
+  <footer>
+    <span>Estrivisor é um projeto independente, sem ligação com o Discord.</span>
+    <nav>
+      <a href="termos.html">Termos de uso</a>
+      <a href="privacidade.html">Política de privacidade</a>
+      <a href="mailto:estrivisor@gmail.com">Contato</a>
+    </nav>
+  </footer>
+</div>
+
+<script>
+  var URL_EXE = 'https://github.com/mateusdevtsr/Estrivisor/releases/latest/download/Estrivisor-Setup.exe';
+  var caixa = document.getElementById('aceite');
+  var botao = document.getElementById('baixar');
+  var dica = document.getElementById('dica-download');
+  caixa.addEventListener('change', function () {
+    var ok = caixa.checked;
+    botao.classList.toggle('travado', !ok);
+    botao.setAttribute('aria-disabled', String(!ok));
+    botao.href = ok ? URL_EXE : '#';
+    dica.textContent = ok ? 'Para Windows 10 e 11. Instala em um clique e se atualiza sozinho.' : 'Marque a caixa para liberar o download.';
+  });
+</script>
+</body>
+</html>
