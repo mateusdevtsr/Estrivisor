@@ -161,7 +161,15 @@ function criarChaves({ arquivo = null, agora = () => Date.now(), log = console }
     };
   }
 
-  return { nivelDe, gerar, resgatar, revogar, apagar, listar };
+  // Apagar a conta tira o nível da pessoa (a chave usada continua marcada como usada).
+  function apagarDe(usuario) {
+    if (!dados.concedidos[usuario]) return false;
+    delete dados.concedidos[usuario];
+    gravar();
+    return true;
+  }
+
+  return { nivelDe, gerar, resgatar, revogar, apagar, listar, apagarDe };
 }
 
 module.exports = { criarChaves, ErroChave, NIVEIS, NIVEIS_DE_CHAVE, normalizar };

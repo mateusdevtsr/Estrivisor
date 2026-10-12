@@ -92,7 +92,10 @@ function criarModeracao({ arquivoDenuncias = null, arquivoAuditoria = null, agor
   }
   const historico = (limite = 200) => aud.dados.itens.slice(-limite).reverse();
 
-  return { MOTIVOS, denunciar, listarDenuncias, denuncia, abertas, resolverDenuncia, registrar, historico };
+  // As denúncias que a pessoa ENVIOU (pra exportar). Denúncias contra ela não aparecem.
+  const denunciasDe = (usuario) => den.dados.itens.filter((x) => x.de === usuario).map((x) => ({ ts: x.ts, motivo: x.motivo, detalhe: x.detalhe, estado: x.estado }));
+
+  return { denunciasDe, MOTIVOS, denunciar, listarDenuncias, denuncia, abertas, resolverDenuncia, registrar, historico };
 }
 
 module.exports = { criarModeracao, ErroModeracao, MOTIVOS };

@@ -440,6 +440,69 @@ app.post('/rooms/:sala/mutar-microfone', rota((req, res, usuario) =>
   mutarFaixasDe(req, res, usuario, [FAIXA.MICROFONE], 'Falha ao mutar o microfone.'), quemMandouLegado));
 
 // ============================================================
+// Meus dados (LGPD): exportar e apagar a própria conta
+// ============================================================
+app.get('/conta/dados', rota((req, res, usuario, sessao) => {
+  exigirSessao(sessao);
+  const meus = repo.servidoresDe(usuario);
+  const nomeConversa = (chave) => {
+    if (chave.startsWith('c:')) {
+      const [, sid, cid] = chave.split(':');
+      const srv = meus.find((x) => x.id === sid) || repo.servidorPorId(sid);
+      const canal = srv && srv.canais.find((c) => c.id === cid);
+      return srv ? `Canal #${canal ? canal.nome : cid} do servidor "${srv.nome}"` : 'Canal de um servidor que não existe mais';
+    }
+    const outro = chave.slice(2).split('|').find((u) => u !== usuario);
+    return 'Conversa privada com ' + (outro ? amigos.pessoa(outro).nome : '?');
+  };
+  const lista = amigos.listar(usuario);
+  res.json({
+    geradoEm: Date.now(),
+    conta: { usuario, tipo: sessao.tipo, nome: sessao.perfil.nome, avatar: sessao.perfil.avatar || null },
+    servidores: meus.map((x) => {
+      const eu = x.membros.find((m) => m.usuario === usuario);
+      return { nome: x.nome, papel: x.dono === usuario ? 'dono' : 'membro', entrouEm: eu ? eu.entrouEm : null, canais: x.canais.map((c) => ({ nome: c.nome, tipo: c.tipo })) };
+    }),
+    mensagensEnviadas: conversas.exportarDe(usuario).map((c) => ({ onde: nomeConversa(c.chave), mensagens: c.mensagens })),
+    amigos: lista.amigos.map((a) => ({ nome: a.nome })),
+    pedidosDeAmizade: { recebidos: lista.recebidos.map((a) => ({ nome: a.nome })), enviados: lista.enviados.map((a) => ({ nome: a.nome })) },
+    qualidadeDaTransmissao: (() => { const n = chaves.nivelDe(usuario, acesso.ehAdmin(usuario)); return { nivel: n.nome, ate: n.ate }; })(),
+    acesso: acesso.dadosDe(usuario),
+    denunciasQueEnviei: moderacao.denunciasDe(usuario),
+    avisos: [
+      'Mensagens de outras pessoas não estão neste arquivo, só as que você escreveu.',
+      'Registros de moderação (punições e denúncias) podem ser mantidos para a segurança dos outros usuários.',
+      'O áudio, a voz e a tela transmitidos passam pelo servidor de voz em tempo real e não são gravados.',
+    ],
+  });
+}, { semAceite: true }));
+
+// Apaga a conta de verdade: sai dos servidores, apaga as mensagens, amizades, acesso e sessões.
+// Quem é dono de servidor precisa antes transferir ou apagar (senão sobraria um servidor sem dono).
+app.delete('/conta/dados', rota(async (req, res, usuario, sessao) => {
+  exigirSessao(sessao);
+  if ((req.body || {}).confirmacao !== 'APAGAR') throw new ErroRegra(400, 'Confirme digitando APAGAR.');
+  const meus = repo.servidoresDe(usuario);
+  if (meus.some((x) => x.dono === usuario)) {
+    throw new ErroRegra(409, 'Você é dono de um servidor. Transfira-o para outra pessoa ou apague-o antes de apagar a sua conta.');
+  }
+  for (const srv of meus) {
+    try {
+      const { salas } = repo.sair(srv.id, usuario);
+      await desconectar(salas, usuario);
+    } catch (e) { /* já tinha saído */ }
+  }
+  tirarPresencaDeTodos(usuario);
+  const mensagens = conversas.apagarDe(usuario);
+  amigos.apagarDe(usuario);
+  chaves.apagarDe(usuario);
+  acesso.apagarDe(usuario);
+  moderacao.registrar({ por: usuario, acao: 'apagou-a-propria-conta', detalhe: `${mensagens} mensagens apagadas` });
+  sessoes.revogarDe(usuario); // por último: a resposta ainda sai, a sessão já era
+  res.json({ ok: true, mensagensApagadas: mensagens });
+}, { semAceite: true }));
+
+// ============================================================
 // Servidores (cada pessoa pode ter 1; salas "sXXXXXXXXXX__canal")
 // ============================================================
 // Tira pessoas (ou todo mundo, se usuario for null) das salas de voz no LiveKit.

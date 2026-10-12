@@ -141,7 +141,28 @@ function criarConversas({ arquivo = null, agora = () => Date.now(), log = consol
     if (mudou) marcarSujo();
   }
 
-  return { enviar, listar, editar, apagar, contexto, ultimaSeq, apagarConversa, apagarPrefixo, gravarAgora };
+  // Tudo que a pessoa escreveu, por conversa (pra exportar os dados dela).
+  function exportarDe(usuario) {
+    const saida = [];
+    for (const [chave, c] of Object.entries(dados.conversas)) {
+      const minhas = c.msgs.filter((m) => m.usuario === usuario).map((m) => ({ ts: m.ts, texto: m.texto, editadoEm: m.editadoEm || null }));
+      if (minhas.length) saida.push({ chave, mensagens: minhas });
+    }
+    return saida;
+  }
+  // Apaga as mensagens da pessoa em todas as conversas (as dos outros ficam). Devolve quantas.
+  function apagarDe(usuario) {
+    let n = 0;
+    for (const c of Object.values(dados.conversas)) {
+      const antes = c.msgs.length;
+      c.msgs = c.msgs.filter((m) => m.usuario !== usuario);
+      n += antes - c.msgs.length;
+    }
+    if (n) marcarSujo();
+    return n;
+  }
+
+  return { enviar, listar, editar, apagar, contexto, ultimaSeq, apagarConversa, apagarPrefixo, exportarDe, apagarDe, gravarAgora };
 }
 
 module.exports = { criarConversas, ErroConversa, MAX_MENSAGENS, MAX_TEXTO };

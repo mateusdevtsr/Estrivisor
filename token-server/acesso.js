@@ -169,7 +169,29 @@ function criarAcesso({ arquivo = null, restrito = true, admins = [], agora = () 
     };
   }
 
+  // Dados de acesso da própria pessoa (pra exportar) e apagar. Punições NÃO são apagadas
+  // (apagar a conta não pode servir pra escapar de um banimento).
+  function dadosDe(usuario) {
+    ler();
+    const a = dados.autorizados[usuario] || null;
+    return {
+      liberadoDesde: a ? a.desde : null,
+      aceiteDosTermos: dados.aceites[usuario] || null,
+      ultimaVezVisto: dados.vistos[usuario] || null,
+      punicaoRegistrada: dados.punicoes[usuario] ? { tipo: dados.punicoes[usuario].tipo, ate: dados.punicoes[usuario].ate, motivo: dados.punicoes[usuario].motivo, ts: dados.punicoes[usuario].ts } : null,
+    };
+  }
+  function apagarDe(usuario) {
+    ler();
+    delete dados.autorizados[usuario];
+    delete dados.pedidos[usuario];
+    delete dados.aceites[usuario];
+    delete dados.vistos[usuario];
+    gravar();
+  }
+
   return {
+    dadosDe, apagarDe,
     restrito, arquivoExistia, semear, permitido, situacao, ehAdmin, registrarPedido, autorizar, autorizarPorId, negar, revogar, listar,
     punicao, punir, desfazerPunicao, aceitar, aceiteDe, aceitou, marcarVisto, ultimaVez,
   };

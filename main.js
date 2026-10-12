@@ -538,7 +538,7 @@ responder('forcar-mutar-microfone', (evento, { sala, identidadeAlvo } = {}) => p
 // ---------- Servidores, canais, convites e presença ----------
 // A tela pede por este canal único; só passam caminhos que começam com /servidores, /convites, /amigos, /dm, /admin, /termos, /denuncias ou /qualidade.
 const METODOS_API = ['GET', 'POST', 'PATCH', 'DELETE'];
-const CAMINHO_API = /^\/(servidores|convites|amigos|dm|admin|termos|denuncias|qualidade)(\/[A-Za-z0-9._%\-]+)*(\?[A-Za-z0-9=&._\-]*)?$/;
+const CAMINHO_API = /^\/(servidores|convites|amigos|dm|admin|termos|denuncias|qualidade|conta)(\/[A-Za-z0-9._%\-]+)*(\?[A-Za-z0-9=&._\-]*)?$/;
 
 responder('api-servidor', async (evento, { metodo, caminho, corpo } = {}) => {
   if (!METODOS_API.includes(metodo) || typeof caminho !== 'string' || !CAMINHO_API.test(caminho)) {
@@ -546,6 +546,29 @@ responder('api-servidor', async (evento, { metodo, caminho, corpo } = {}) => {
   }
   if (!sessao.chave) return { ok: false, status: 401, erro: 'Entre com a sua conta primeiro.', codigo: 'login' };
   return chamarServidor(caminho, { metodo, corpo: metodo === 'GET' ? undefined : corpo });
+});
+
+// ---------- Meus dados (exportar / apagar a conta) ----------
+responder('exportar-meus-dados', async () => {
+  if (!sessao.chave) return { ok: false, erro: 'Entre com a sua conta primeiro.' };
+  const r = await chamarServidor('/conta/dados', { tempo: 20000 });
+  if (!r.ok) return { ok: false, erro: r.erro };
+  const alvo = await dialog.showSaveDialog(janelaPrincipal || undefined, {
+    title: 'Salvar meus dados',
+    defaultPath: path.join(app.getPath('documents'), 'estrivisor-meus-dados.json'),
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+  });
+  if (alvo.canceled || !alvo.filePath) return { ok: false, cancelado: true };
+  try { fs.writeFileSync(alvo.filePath, JSON.stringify(r.dados, null, 2), 'utf8'); }
+  catch (e) { return { ok: false, erro: 'Não consegui salvar o arquivo nesse lugar.' }; }
+  return { ok: true, arquivo: alvo.filePath };
+});
+
+responder('apagar-minha-conta', async () => {
+  if (!sessao.chave) return { ok: false, erro: 'Entre com a sua conta primeiro.' };
+  const r = await chamarServidor('/conta/dados', { metodo: 'DELETE', corpo: { confirmacao: 'APAGAR' }, tempo: 30000 });
+  if (r.ok) apagarSessao(); // o servidor já encerrou as sessões; limpa a daqui também
+  return r.ok ? { ok: true, mensagensApagadas: r.dados.mensagensApagadas } : { ok: false, erro: r.erro };
 });
 
 // ---------- Transmissão de tela ----------

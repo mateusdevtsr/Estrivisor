@@ -3518,6 +3518,7 @@ function preencherContaConfig() {
     aplicarAvatar(document.getElementById('cfg-avatar'), obterIdentidadeUsuario() || '', nome, avatarUsuarioAtual || null);
     document.getElementById('cfg-conta-tipo').textContent = contaAtual ? 'Conta do Estrivisor (entrou com o Discord)' : 'Sem conta — modo local';
     document.getElementById('cfg-sair-conta').style.display = contaAtual ? '' : 'none';
+    document.getElementById('cfg-grupo-dados').style.display = contaAtual ? '' : 'none';
     document.getElementById('cfg-codigo-amigo').textContent = amigosEstado.codigo || '—';
 }
 function preencherControlesAudio() {
@@ -3553,6 +3554,32 @@ document.addEventListener('keydown', (e) => {
 });
 
 document.getElementById('cfg-sair-conta').addEventListener('click', () => { fecharConfig(); document.getElementById('btn-login-sair-conta').click(); });
+
+document.getElementById('cfg-exportar-dados').addEventListener('click', async () => {
+    try {
+        const r = await window.electronAPI.exportarMeusDados();
+        if (r.ok) mostrarNotificacao('Arquivo salvo em: ' + r.arquivo);
+        else if (!r.cancelado) mostrarNotificacao('Não consegui exportar: ' + (r.erro || 'erro desconhecido'));
+    } catch (e) { mostrarNotificacao('Não consegui exportar os seus dados.'); }
+});
+
+document.getElementById('cfg-apagar-conta').addEventListener('click', async () => {
+    const r = await pedirTexto({
+        titulo: 'Apagar a minha conta?',
+        dica: 'Isso apaga as suas mensagens, tira você dos servidores e remove as suas amizades. Não dá para desfazer. Para entrar de novo, o administrador precisa liberar o seu acesso outra vez. Digite APAGAR para confirmar.',
+        max: 10, rotuloOk: 'Apagar tudo',
+    });
+    if (!r) return;
+    if (r.texto.trim().toUpperCase() !== 'APAGAR') { mostrarNotificacao('Não apaguei: você precisa digitar APAGAR.'); return; }
+    try {
+        const res = await window.electronAPI.apagarMinhaConta();
+        if (!res.ok) { mostrarNotificacao('Não consegui apagar a conta: ' + (res.erro || 'erro desconhecido')); return; }
+    } catch (e) { mostrarNotificacao('Não consegui apagar a conta.'); return; }
+    fecharConfig();
+    await encerrarContaNoApp();
+    mostrarTelaLogin('entrar');
+    mostrarNotificacao('Sua conta foi apagada.');
+});
 
 // ---------- Eventos dos controles de voz ----------
 document.getElementById('cfg-testar-mic').addEventListener('click', alternarTesteMicrofone);

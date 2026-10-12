@@ -98,6 +98,13 @@ function criarSessoes({ arquivo = null, agora = () => Date.now(), log = console 
     if (dados.sessoes.length !== antes) salvar();
   }
 
+  // Encerra TODAS as sessões da pessoa (todos os PCs).
+  function revogarDe(usuario) {
+    const antes = dados.sessoes.length;
+    dados.sessoes = dados.sessoes.filter((s) => s.usuario !== usuario);
+    if (dados.sessoes.length !== antes) salvar();
+  }
+
   // Quem já tem sessão (usado só pra liberar o pessoal que já usava, quando o acesso passa a ser restrito).
   function todos() {
     const mapa = new Map();
@@ -105,7 +112,7 @@ function criarSessoes({ arquivo = null, agora = () => Date.now(), log = console 
     return [...mapa.values()];
   }
 
-  return { criar, validar, revogar, todos };
+  return { criar, validar, revogar, revogarDe, todos };
 }
 
 module.exports = { criarSessoes, VALIDADE_MS };

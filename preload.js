@@ -6,6 +6,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   versaoApp: () => ipcRenderer.invoke('obter-versao'),
   abrirLink: (url) => ipcRenderer.invoke('abrir-link', url),
+  exportarMeusDados: () => ipcRenderer.invoke('exportar-meus-dados'),
+  apagarMinhaConta: () => ipcRenderer.invoke('apagar-minha-conta'),
 
   // Conta / login
   contaAtual: () => ipcRenderer.invoke('conta-atual'),

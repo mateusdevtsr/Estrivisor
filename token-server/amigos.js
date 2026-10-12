@@ -130,7 +130,19 @@ function criarAmigos({ arquivo = null, agora = () => Date.now(), log = console, 
 
   const todos = () => Object.keys(dados.usuarios).map((u) => ({ usuario: u, nome: dados.usuarios[u].nome }));
 
-  return { todos, registrar, existe, meuCodigo, porCodigo, saoAmigos, amigosDe, pedir, aceitar, recusar, remover, listar, pessoa, gravarAgora };
+  // Apaga a pessoa da lista de amigos: amizades, pedidos e o cadastro dela. Devolve quantas amizades tinha.
+  function apagarDe(usuario) {
+    const antes = dados.amizades.length;
+    dados.amizades = dados.amizades.filter((p) => !p.split('|').includes(usuario));
+    dados.pedidos = dados.pedidos.filter((p) => p.de !== usuario && p.para !== usuario);
+    const tinha = Boolean(dados.usuarios[usuario]);
+    delete dados.usuarios[usuario];
+    const n = antes - dados.amizades.length;
+    if (n || tinha) marcarSujo();
+    return n;
+  }
+
+  return { apagarDe, todos, registrar, existe, meuCodigo, porCodigo, saoAmigos, amigosDe, pedir, aceitar, recusar, remover, listar, pessoa, gravarAgora };
 }
 
 module.exports = { criarAmigos, ErroAmigos, codigoDe, normalizarCodigo };
