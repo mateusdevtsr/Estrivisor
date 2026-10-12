@@ -5,6 +5,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 // passa por aqui: ela fica só no processo principal.
 contextBridge.exposeInMainWorld('electronAPI', {
   versaoApp: () => ipcRenderer.invoke('obter-versao'),
+  abrirLink: (url) => ipcRenderer.invoke('abrir-link', url),
 
   // Conta / login
   contaAtual: () => ipcRenderer.invoke('conta-atual'),

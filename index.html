@@ -319,11 +319,15 @@
         .mensagem-chat .cabecalho-mensagem { display: flex; gap: 8px; align-items: baseline; }
         .mensagem-chat .autor-mensagem { font-weight: 600; font-size: 13.5px; }
         .mensagem-chat .hora-mensagem { font-size: 11px; color: var(--texto-fraco); }
-        .mensagem-chat .texto-mensagem { font-size: 14px; line-height: 1.5; word-break: break-word; }
+        .mensagem-chat .texto-mensagem { font-size: 14px; line-height: 1.5; word-break: break-word; white-space: pre-wrap; }
         .rotulo-sistema { text-align: center; font-size: 12px; color: var(--texto-fraco); padding: 8px 0; }
 
         .campo-mensagem-wrap { padding: 14px 18px; flex-shrink: 0; }
-        .campo-mensagem-wrap input { padding: 12px 14px; border-radius: 10px; background: #1b1e23; }
+        .campo-mensagem-wrap input, .campo-mensagem-wrap textarea { padding: 12px 14px; border-radius: 10px; background: #1b1e23; }
+        .campo-mensagem-wrap textarea { resize: none; overflow-y: auto; max-height: 160px; line-height: 1.4; display: block; box-sizing: border-box; }
+        .campo-mensagem-wrap textarea:focus { border-color: var(--sinal); }
+        .link-mensagem { color: #5eb1ff; text-decoration: underline; cursor: pointer; }
+        #modal-texto-area { resize: vertical; min-height: 90px; max-height: 260px; }
 
         /* ---- Área de voz ---- */
         .area-voz { flex: 1; display: none; flex-direction: column; min-width: 0; min-height: 0; }
@@ -690,7 +694,7 @@
             <div class="area-texto" id="area-texto">
                 <div class="mensagens-chat" id="mensagens-chat"></div>
                 <div class="campo-mensagem-wrap">
-                    <input type="text" id="input-mensagem" placeholder="Enviar mensagem...">
+                    <textarea id="input-mensagem" rows="1" maxlength="2000" placeholder="Enviar mensagem..."></textarea>
                 </div>
             </div>
 
@@ -871,7 +875,7 @@
             </div>
             <div class="amigos-chat" id="amigos-chat">
                 <div class="mensagens-chat" id="amigos-mensagens"></div>
-                <div class="campo-mensagem-wrap"><input type="text" id="amigos-input-mensagem" placeholder="Enviar mensagem..." maxlength="2000"></div>
+                <div class="campo-mensagem-wrap"><textarea id="amigos-input-mensagem" rows="1" maxlength="2000" placeholder="Enviar mensagem..."></textarea></div>
             </div>
         </section>
     </div>
@@ -1047,8 +1051,9 @@
     <div id="modal-texto" class="tela-login">
         <div class="cartao-login">
             <div class="titulo-modal" id="modal-texto-titulo">Título</div>
-            <div id="modal-texto-dica" class="dica-login" style="display:none;"></div>
+            <div id="modal-texto-dica" class="dica-login" style="display:none; white-space: pre-wrap; overflow-wrap: anywhere;"></div>
             <input type="text" id="modal-texto-input" maxlength="40">
+            <textarea id="modal-texto-area" maxlength="2000" style="display:none;"></textarea>
             <label id="modal-texto-check-linha" class="opcao-modal" style="display:none;">
                 <input type="checkbox" id="modal-texto-check" style="width:auto"> <span id="modal-texto-check-rotulo"></span>
             </label>

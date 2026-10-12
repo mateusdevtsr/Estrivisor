@@ -338,6 +338,17 @@ async function chamarServidor(caminho, { metodo = 'GET', corpo, semSessao = fals
 
 responder('obter-versao', () => app.getVersion());
 
+// Abre um link de mensagem no navegador padrão. Só http(s), sem usuário/senha na URL.
+// (A confirmação com o endereço completo é mostrada na tela antes de chegar aqui.)
+responder('abrir-link', (evento, url) => {
+  if (typeof url !== 'string' || url.length > 2000) return { ok: false };
+  let u;
+  try { u = new URL(url); } catch (e) { return { ok: false }; }
+  if ((u.protocol !== 'https:' && u.protocol !== 'http:') || u.username || u.password) return { ok: false };
+  shell.openExternal(u.href);
+  return { ok: true };
+});
+
 responder('conta-atual', () => {
   if (!sessao.chave) return { conta: null };
   // Confere com o servidor em segundo plano: atualiza nome/foto ou descobre que a sessão venceu.

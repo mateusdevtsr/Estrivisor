@@ -499,26 +499,66 @@ function renderizarListaCanais() {
     atualizarSubMembrosVoz();
 }
 
+// ---------- Links nas mensagens ----------
+// O texto continua sendo inserido como texto puro (nunca como HTML). Só viram link os endereços
+// http(s); ao clicar, o app mostra o endereço COMPLETO e pede confirmação antes de abrir o navegador.
+const REGEX_LINK = /https?:\/\/[^\s<>"']+/gi;
+function preencherTextoComLinks(el, texto) {
+    el.textContent = '';
+    let ultimo = 0;
+    for (const achado of texto.matchAll(REGEX_LINK)) {
+        let url = achado[0].replace(/[.,;:!?)\]]+$/, ''); // pontuação do fim da frase não faz parte do link
+        let valido = false;
+        try { const u = new URL(url); valido = (u.protocol === 'https:' || u.protocol === 'http:') && !u.username && !u.password; } catch (e) { /* não é link */ }
+        if (!valido) continue;
+        if (achado.index > ultimo) el.appendChild(document.createTextNode(texto.slice(ultimo, achado.index)));
+        const a = document.createElement('span');
+        a.className = 'link-mensagem';
+        a.textContent = url;
+        a.title = 'Abrir link';
+        a.addEventListener('click', () => confirmarAbrirLink(url));
+        el.appendChild(a);
+        ultimo = achado.index + url.length;
+    }
+    if (ultimo < texto.length) el.appendChild(document.createTextNode(texto.slice(ultimo)));
+}
+async function confirmarAbrirLink(url) {
+    let destino = url;
+    try { destino = new URL(url).href; } catch (e) { return; }
+    const r = await pedirTexto({
+        titulo: 'Abrir link no navegador?',
+        dica: 'Destino: ' + destino + '\n\nSó abra se você confia em quem mandou. O Estrivisor não confere o conteúdo do link.',
+        semCampo: true, rotuloOk: 'Abrir',
+    });
+    if (!r) return;
+    try { await window.electronAPI.abrirLink(destino); } catch (e) { mostrarNotificacao('Não consegui abrir o link.'); }
+}
+
 // ---------- Caixa de texto própria ----------
 // O Electron não tem prompt() (dá erro), então usamos uma janelinha da própria tela.
 let resolverModalTexto = null;
 let modalSemCampo = false;
+let modalMultilinha = false;
 
 // "semCampo" transforma a caixa numa confirmação (sem digitar nada), com o botão "rotuloOk".
-function pedirTexto({ titulo, dica = '', valor = '', max = 40, rotuloCheckbox = '', semCampo = false, rotuloOk = 'OK' }) {
+function pedirTexto({ titulo, dica = '', valor = '', max = 40, rotuloCheckbox = '', semCampo = false, rotuloOk = 'OK', multilinha = false }) {
     return new Promise((resolve) => {
         if (resolverModalTexto) resolverModalTexto(null); // se já havia uma aberta, cancela
         resolverModalTexto = resolve;
         modalSemCampo = semCampo;
+        modalMultilinha = multilinha && !semCampo;
         document.getElementById('modal-texto-ok').textContent = rotuloOk;
         document.getElementById('modal-texto-titulo').textContent = titulo;
         const dicaEl = document.getElementById('modal-texto-dica');
         dicaEl.textContent = dica;
         dicaEl.style.display = dica ? 'block' : 'none';
-        const input = document.getElementById('modal-texto-input');
+        const campoUnico = document.getElementById('modal-texto-input');
+        const campoArea = document.getElementById('modal-texto-area');
+        const input = modalMultilinha ? campoArea : campoUnico;
+        campoUnico.style.display = (semCampo || modalMultilinha) ? 'none' : '';
+        campoArea.style.display = modalMultilinha ? '' : 'none';
         input.maxLength = max;
         input.value = valor;
-        input.style.display = semCampo ? 'none' : '';
         document.getElementById('modal-texto-check-linha').style.display = rotuloCheckbox ? 'flex' : 'none';
         document.getElementById('modal-texto-check-rotulo').textContent = rotuloCheckbox;
         document.getElementById('modal-texto-check').checked = false;
@@ -539,9 +579,16 @@ function fecharModalTexto(resultado) {
 
 function confirmarModalTexto() {
     if (modalSemCampo) return fecharModalTexto({ texto: '', marcado: false });
-    const texto = document.getElementById('modal-texto-input').value
-        .replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
-    if (!texto) return mostrarNotificacao('Digite um nome.');
+    let texto;
+    if (modalMultilinha) {
+        // Mensagem: mantém as quebras de linha, tira só caracteres de controle.
+        texto = document.getElementById('modal-texto-area').value
+            .replace(/\r\n?/g, '\n').replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, '').trim();
+    } else {
+        texto = document.getElementById('modal-texto-input').value
+            .replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+    }
+    if (!texto) return mostrarNotificacao(modalMultilinha ? 'Escreva alguma coisa.' : 'Digite um nome.');
     fecharModalTexto({ texto, marcado: document.getElementById('modal-texto-check').checked });
 }
 
@@ -549,6 +596,10 @@ document.getElementById('modal-texto-ok').addEventListener('click', confirmarMod
 document.getElementById('modal-texto-cancelar').addEventListener('click', () => fecharModalTexto(null));
 document.getElementById('modal-texto-input').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') confirmarModalTexto();
+    if (e.key === 'Escape') fecharModalTexto(null);
+});
+document.getElementById('modal-texto-area').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); confirmarModalTexto(); } // Shift+Enter quebra a linha
     if (e.key === 'Escape') fecharModalTexto(null);
 });
 document.getElementById('modal-texto').addEventListener('click', (e) => {
@@ -679,7 +730,7 @@ function criarChat({ container, input, aoSemAcesso }) {
             </div>`;
         el.querySelector('.autor-mensagem').textContent = String(m.nome || '?').slice(0, 40) + (ehEu ? ' (você)' : '');
         const textoEl = el.querySelector('.texto-mensagem');
-        textoEl.textContent = String(m.texto || '').slice(0, 2000);
+        preencherTextoComLinks(textoEl, String(m.texto || '').slice(0, 2000));
         if (m.editadoEm) { const ed = document.createElement('span'); ed.className = 'editada'; ed.textContent = '(editada)'; textoEl.appendChild(ed); }
         aplicarAvatar(el.querySelector('.avatar-mensagem'), m.usuario, m.nome || '?', urlAvatarSegura(m.avatar));
 
@@ -802,16 +853,21 @@ function criarChat({ container, input, aoSemAcesso }) {
         enviando = true;
         try {
             const r = await api('POST', cfg.caminho, { texto, nome: obterNomeUsuario() });
-            input.value = '';
+            input.value = ''; input.style.height = 'auto';
             anexar([r.mensagem], true);
         } catch (err) {
             mostrarNotificacao('A mensagem não foi enviada: ' + (err && err.message ? err.message : 'erro desconhecido'));
         } finally { enviando = false; }
     }
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) enviar(); });
+    const ajustarAltura = () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 160) + 'px'; };
+    input.addEventListener('input', ajustarAltura);
+    input.addEventListener('keydown', (e) => {
+        // Como no Discord: Enter envia, Shift+Enter quebra a linha.
+        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); enviar(); }
+    });
 
     async function editar(m) {
-        const r = await pedirTexto({ titulo: 'Editar mensagem', valor: m.texto, max: 2000 });
+        const r = await pedirTexto({ titulo: 'Editar mensagem', dica: 'Enter confirma; Shift+Enter quebra a linha.', valor: m.texto, max: 2000, multilinha: true });
         if (!r || !r.texto.trim() || r.texto === m.texto) return;
         try {
             const d = await api('PATCH', `${cfg.caminho}/${m.seq}`, { texto: r.texto });
