@@ -314,7 +314,7 @@ function sessaoExpirou(mensagem) {
 
 // Único lugar que fala com o servidor do Estrivisor.
 async function chamarServidor(caminho, { metodo = 'GET', corpo, semSessao = false, tempo = 10000 } = {}) {
-  const headers = { 'x-invite-key': INVITE_KEY };
+  const headers = { 'x-invite-key': INVITE_KEY, 'x-app-versao': app.getVersion() };
   if (corpo !== undefined) headers['Content-Type'] = 'application/json';
   const chaveUsada = semSessao ? null : sessao.chave;
   if (chaveUsada) headers.Authorization = `Bearer ${chaveUsada}`;

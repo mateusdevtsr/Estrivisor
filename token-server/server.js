@@ -87,6 +87,28 @@ function chaveValida(req) {
   return req.get('x-invite-key') === INVITE_KEY;
 }
 
+// Versão mínima do app (opcional): defina APP_VERSAO_MINIMA=3.9.0 no server.env pra recusar versões
+// mais antigas. Sem a variável, nada muda. O app manda a própria versão no cabeçalho x-app-versao.
+const APP_VERSAO_MINIMA = String(process.env.APP_VERSAO_MINIMA || '').trim();
+function versaoComoNumeros(v) {
+  const m = /^(\d{1,4})\.(\d{1,4})\.(\d{1,4})/.exec(String(v || '').trim());
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+function versaoAntiga(enviada, minima) {
+  const a = versaoComoNumeros(enviada), b = versaoComoNumeros(minima);
+  if (!b) return false;       // variável mal escrita: não bloqueia ninguém
+  if (!a) return true;        // app antigo demais pra mandar a versão
+  for (let i = 0; i < 3; i++) { if (a[i] !== b[i]) return a[i] < b[i]; }
+  return false;
+}
+app.use((req, res, next) => {
+  if (!APP_VERSAO_MINIMA || req.path === '/saude') return next();
+  if (versaoAntiga(req.get('x-app-versao'), APP_VERSAO_MINIMA)) {
+    return res.status(426).json({ erro: `Esta versão do Estrivisor é antiga demais. Atualize para a ${APP_VERSAO_MINIMA} ou mais nova (baixe de estrivisor.com.br).`, codigo: 'atualizar' });
+  }
+  next();
+});
+
 // ============================================================
 // Quem está pedindo
 // ============================================================
@@ -279,6 +301,7 @@ app.post('/auth/sair', (req, res) => {
 const VALIDADE_TOKEN_LIVEKIT = '15m';
 
 async function criarToken(usuario, sala, nome, avatar) {
+  restricoesDeVoz.delete(`${sala}|${usuario}`); // entrou de novo: volta ao normal
   const at = new AccessToken(API_KEY, API_SECRET, {
     identity: usuario,
     name: nome || usuario,
@@ -406,6 +429,8 @@ function faixaEhDe(faixa, ...tipos) {
   return tipos.some((t) => faixa.source === t.numero || String(faixa.source).toUpperCase() === t.nome);
 }
 
+const restricoesDeVoz = new Map(); // "sala|pessoa" -> faixas (números) que o dono proibiu de publicar
+
 // Muta (à força, pelo servidor) as faixas de um tipo de outra pessoa.
 async function mutarFaixasDe(req, res, usuario, tipos, mensagemErro) {
   const sala = req.params.sala;
@@ -418,7 +443,26 @@ async function mutarFaixasDe(req, res, usuario, tipos, mensagemErro) {
     for (const faixa of faixas) {
       await roomService.mutePublishedTrack(sala, identidadeAlvo, faixa.sid, true);
     }
-    res.json({ ok: true, faixasPausadas: faixas.length });
+    // Só mutar não segura: a pessoa liga de novo na hora. Por isso o servidor também TIRA a permissão
+    // de publicar esse tipo de faixa nesta sala. Ela volta ao normal se sair e entrar de novo no canal.
+    let permissaoRetirada = true;
+    try {
+      const todas = [1, FAIXA.MICROFONE.numero, FAIXA.TELA.numero, FAIXA.AUDIO_DA_TELA.numero]; // 1 = câmera
+      // Acumula o que já foi retirado desta pessoa nesta sala (parar a tela e depois mutar o microfone
+      // não pode devolver a permissão da tela). Zera quando ela entra de novo (novo token).
+      const chave = `${sala}|${identidadeAlvo}`;
+      const retirar = restricoesDeVoz.get(chave) || new Set();
+      tipos.forEach((t) => retirar.add(t.numero));
+      restricoesDeVoz.set(chave, retirar);
+      await roomService.updateParticipant(sala, identidadeAlvo, undefined, {
+        canSubscribe: true, canPublish: true, canPublishData: true,
+        canPublishSources: todas.filter((n) => !retirar.has(n)),
+      });
+    } catch (e) {
+      permissaoRetirada = false;
+      console.error('Não consegui retirar a permissão de publicar (a faixa foi mutada):', e && e.message);
+    }
+    res.json({ ok: true, faixasPausadas: faixas.length, permissaoRetirada });
   } catch (err) {
     // Pessoa que já saiu da sala (ou sala vazia): não há o que parar, então conta como resolvido.
     if (err && (err.status === 404 || err.code === 'not_found' || /not found|does not exist/i.test(String(err.message || '')))) {
