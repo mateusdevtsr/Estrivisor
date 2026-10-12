@@ -285,6 +285,23 @@ function criarRepositorio({ arquivo = null, agora = () => Date.now(), log = cons
     });
   }
 
+  // ---- Administração do Estrivisor (não passa pela regra "só o dono") ----
+  function listarTodos() {
+    return dados.servidores.map((s) => {
+      const dono = s.membros.find((m) => m.usuario === s.dono);
+      return { id: s.id, nome: s.nome, dono: s.dono, donoNome: dono ? dono.nome : '', membros: s.membros.length, canais: s.canais.length, criadoEm: s.criadoEm };
+    }).sort((a, b) => b.criadoEm - a.criadoEm);
+  }
+  function apagarComoAdmin(id) {
+    return transacao(() => {
+      const servidor = dados.servidores.find((s) => s.id === id);
+      if (!servidor) throw new ErroRegra(404, 'Servidor não encontrado.');
+      const salas = servidor.canais.map((c) => salaDoCanal(servidor.id, c.id));
+      dados.servidores = dados.servidores.filter((s) => s.id !== servidor.id);
+      return { salas, nome: servidor.nome, dono: servidor.dono };
+    });
+  }
+
   function sair(id, usuario) {
     exigirUsuario(usuario);
     return transacao(() => {
@@ -466,11 +483,13 @@ function criarRepositorio({ arquivo = null, agora = () => Date.now(), log = cons
   }
 
   return {
+    listarTodos, apagarComoAdmin,
     listarMeus, obter, criarServidor, atualizarServidor, apagarServidor, sair, expulsar, transferir,
     criarCanal, editarCanal, apagarCanal,
     criarConvite, listarConvites, revogarConvite, usarConvite,
     verificarAcessoSala, donoDaSala,
     // usados pela presença
+    todosUsuarios: () => dados.servidores.flatMap((s) => s.membros.map((m) => ({ usuario: m.usuario, nome: m.nome }))),
     servidorPorId, servidoresDe: (usuario) => dados.servidores.filter((s) => ehMembro(s, usuario)),
   };
 }

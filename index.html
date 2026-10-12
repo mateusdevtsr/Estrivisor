@@ -33,7 +33,7 @@
         }
         button:hover:not(:disabled) { background: #31373e; }
         button:disabled { opacity: 0.4; cursor: not-allowed; }
-        input, select {
+        input, select, textarea {
             padding: 9px 11px; border-radius: 6px; border: 1px solid var(--borda);
             background: #0e1013; color: var(--texto); font-size: 13px; outline: none;
             font-family: inherit; width: 100%;
@@ -138,6 +138,106 @@
         .item-canal:hover .btn-excluir-canal { opacity: 0.55; }
         .item-canal .btn-excluir-canal:hover { opacity: 1; }
 
+
+        /* ---------- Configurações do usuário (tela cheia) ---------- */
+        .tela-config { position: fixed; inset: 0; z-index: 3000; display: none; background: var(--bg); }
+        .cfg-nav { width: 240px; flex-shrink: 0; background: var(--painel); border-right: 1px solid var(--borda); padding: 28px 12px; display: flex; flex-direction: column; gap: 3px; overflow-y: auto; }
+        .cfg-nav-titulo { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; color: var(--texto-fraco); padding: 0 10px 10px; }
+        .cfg-item { background: none; text-align: left; padding: 9px 10px; font-weight: 500; color: var(--texto-fraco); }
+        .cfg-item:hover:not(:disabled) { background: rgba(255,255,255,0.05); color: var(--texto); }
+        .cfg-item.ativo { background: rgba(255,77,77,0.14); color: var(--texto); }
+        .cfg-nav-sep { height: 1px; background: var(--borda); margin: 10px 8px; }
+        .cfg-conteudo { flex: 1; overflow-y: auto; padding: 36px 48px 60px; position: relative; }
+        .cfg-painel { display: none; max-width: 600px; flex-direction: column; gap: 4px; }
+        .cfg-painel.ativo { display: flex; }
+        .cfg-painel h2 { font-size: 20px; margin: 0 0 14px; }
+        .cfg-x { position: absolute; top: 18px; right: 22px; width: 38px; height: 38px; border-radius: 50%; padding: 0; font-size: 16px; background: none; border: 1px solid var(--borda); color: var(--texto-fraco); }
+        .cfg-grupo { display: flex; flex-direction: column; gap: 8px; padding: 16px 0; border-bottom: 1px solid var(--borda); }
+        .cfg-grupo:last-of-type { border-bottom: none; }
+        .cfg-grupo-titulo { font-size: 11px; font-weight: 700; color: var(--texto-fraco); letter-spacing: 0.05em; text-transform: uppercase; }
+        .cfg-rotulo { font-size: 12px; color: var(--texto-fraco); margin-top: 4px; }
+        .cfg-dica { font-size: 12px; line-height: 1.5; color: var(--texto-fraco); }
+        .cfg-check { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; padding: 6px 0; }
+        .cfg-check input { width: auto; margin-top: 3px; }
+        .cfg-check b { display: block; font-size: 13.5px; font-weight: 600; }
+        .cfg-check span span { display: block; font-size: 12px; color: var(--texto-fraco); line-height: 1.4; margin-top: 2px; }
+        .cfg-medidor { height: 10px; background: #0e1013; border: 1px solid var(--borda); border-radius: 6px; overflow: hidden; }
+        .cfg-medidor > div { height: 100%; width: 0; background: linear-gradient(90deg, #3bd671, #ffb020 70%, #ff4d4d); transition: width 0.06s linear; }
+        .cfg-conta { display: flex; align-items: center; gap: 14px; background: var(--painel); border: 1px solid var(--borda); border-radius: 10px; padding: 16px; }
+        .cfg-conta .avatar-participante { width: 56px; height: 56px; font-size: 22px; }
+        .cfg-conta-nome { font-size: 17px; font-weight: 700; }
+        .cfg-linha-botoes { display: flex; gap: 8px; flex-wrap: wrap; }
+        .cfg-btn-perigo { background: rgba(255,77,77,0.14); color: #ff8a8a; }
+        @media (max-width: 760px) { .cfg-nav { width: 170px; } .cfg-conteudo { padding: 28px 18px 50px; } }
+
+        /* ---------- Painel de voz no estilo do Discord ---------- */
+        .grupo-icone { display: flex; align-items: center; flex-shrink: 0; }
+        .grupo-icone .icone-rodape { border-radius: 6px 0 0 6px; }
+        .seta-rodape { background: none; padding: 5px 3px; font-size: 11px; color: var(--texto-fraco); border-radius: 0 6px 6px 0; line-height: 1; }
+        .seta-rodape:hover:not(:disabled) { background: rgba(255,255,255,0.08); color: var(--texto); }
+        .linha-topo-status-voz { gap: 8px; }
+        .btn-conexao { background: rgba(255,255,255,0.06); padding: 6px; border-radius: 8px; line-height: 0; flex-shrink: 0; color: #8a919a; }
+        .btn-conexao .arco { opacity: 0.25; }
+        .btn-conexao[data-nivel="otima"] { color: #3bd671; }
+        .btn-conexao[data-nivel="otima"] .arco { opacity: 1; }
+        .btn-conexao[data-nivel="boa"] { color: #3bd671; }
+        .btn-conexao[data-nivel="boa"] .a1, .btn-conexao[data-nivel="boa"] .a2 { opacity: 1; }
+        .btn-conexao[data-nivel="regular"] { color: #ffb020; }
+        .btn-conexao[data-nivel="regular"] .a1 { opacity: 1; }
+        .btn-conexao[data-nivel="ruim"] { color: #ff4d4d; }
+        .status-voz-persistente .texto-canal-servidor { flex: 1; }
+        .sub-canal { font-size: 11.5px; color: var(--texto-fraco); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .sep-sub { margin: 0 5px; opacity: 0.6; }
+        .popover-conexao {
+            position: fixed; z-index: 1150; width: 250px; display: none; flex-direction: column; gap: 6px;
+            background: var(--painel); border: 1px solid var(--borda); border-radius: 10px; padding: 12px 14px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.55);
+        }
+        .pop-titulo { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; color: var(--texto-fraco); text-transform: uppercase; margin-bottom: 2px; }
+        .pop-linha { display: flex; justify-content: space-between; font-size: 13px; }
+        .pop-linha span { color: var(--texto-fraco); }
+        .pop-dica { font-size: 11.5px; line-height: 1.45; color: var(--texto-fraco); margin-top: 4px; }
+
+        /* ---------- Amigos e mensagens diretas ---------- */
+        .tela-amigos { position: fixed; left: 68px; top: 0; right: 0; bottom: 0; z-index: 1200; background: var(--bg); display: none; }
+        .amigos-lateral { width: 300px; flex-shrink: 0; background: var(--painel); border-right: 1px solid var(--borda); display: flex; flex-direction: column; min-height: 0; }
+        .amigos-topo { padding: 16px 14px 10px; display: flex; flex-direction: column; gap: 10px; }
+        .amigos-titulo { font-size: 15px; font-weight: 700; display: flex; align-items: center; justify-content: space-between; }
+        .amigos-abas { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+        .amigos-abas button { background: #262b31; color: var(--texto-fraco); padding: 7px 2px; font-size: 12px; position: relative; }
+        .amigos-abas button.ativo { background: var(--sinal); color: #1a0505; }
+        .amigos-abas .pt { margin-left: 4px; background: var(--sinal); color: #1a0505; border-radius: 8px; padding: 0 5px; font-size: 10.5px; }
+        .amigos-abas button.ativo .pt { background: #1a0505; color: var(--sinal); }
+        .amigos-lista { flex: 1; overflow-y: auto; padding: 4px 8px 12px; display: flex; flex-direction: column; gap: 2px; }
+        .amigo-linha { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 8px; cursor: pointer; position: relative; }
+        .amigo-linha:hover, .amigo-linha.ativo { background: rgba(255,255,255,0.06); }
+        .amigo-linha .avatar-wrap { position: relative; flex-shrink: 0; }
+        .amigo-linha .avatar-participante { width: 34px; height: 34px; font-size: 13px; }
+        .amigo-linha .ponto-status { position: absolute; right: -2px; bottom: -2px; width: 11px; height: 11px; border-radius: 50%; background: #5a6068; border: 2px solid var(--painel); }
+        .amigo-linha .ponto-status.on { background: #3bd671; }
+        .amigo-linha .ponto-status.voz { background: var(--acento); }
+        .amigo-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+        .amigo-nome { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .amigo-sub { font-size: 11.5px; color: var(--texto-fraco); }
+        .amigo-acoes { display: none; gap: 4px; }
+        .amigo-linha .amigo-acoes.sempre { display: flex; }
+        .amigo-linha:hover .amigo-acoes { display: flex; }
+        .amigo-acoes button { padding: 4px 7px; font-size: 12px; background: #262b31; }
+        .amigo-linha .badge-nl { margin-left: 0; }
+        .amigos-vazio { padding: 24px 14px; font-size: 12.5px; color: var(--texto-fraco); text-align: center; line-height: 1.5; }
+        .amigos-meucodigo { margin: 0 14px 12px; padding: 10px 12px; background: #0e1013; border: 1px solid var(--borda); border-radius: 8px; font-size: 12px; color: var(--texto-fraco); display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+        .amigos-meucodigo code { font-size: 14px; font-weight: 700; color: var(--texto); letter-spacing: 0.05em; }
+        .amigos-meucodigo button { padding: 4px 9px; font-size: 12px; }
+        .amigos-adicionar { padding: 8px 14px; display: flex; flex-direction: column; gap: 8px; }
+        .amigos-adicionar .linha-add { display: flex; gap: 6px; }
+        .amigos-adicionar button { white-space: nowrap; }
+        .amigos-adicionar .resultado { font-size: 12px; line-height: 1.45; }
+        .amigos-adicionar .resultado.erro { color: #ff8a8a; }
+        .amigos-adicionar .resultado.ok { color: #3bd671; }
+        .amigos-principal { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+        .amigos-cab { padding: 14px 18px; border-bottom: 1px solid var(--borda); font-weight: 700; font-size: 15px; display: flex; align-items: center; gap: 10px; }
+        .amigos-cab .fechar-amigos { margin-left: auto; background: none; border: 1px solid var(--borda); color: var(--texto-fraco); width: 32px; height: 32px; padding: 0; border-radius: 50%; }
+        .amigos-chat { flex: 1; display: none; flex-direction: column; min-height: 0; }
         .tela-login {
             position: fixed; inset: 0; z-index: 3000; display: none;
             align-items: center; justify-content: center;
@@ -175,8 +275,6 @@
         .ponto-ao-vivo-mini { width: 8px; height: 8px; border-radius: 50%; background: #3bd671; box-shadow: 0 0 6px #3bd671; flex-shrink: 0; }
         .texto-canal-servidor { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
         .texto-canal-servidor div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        #texto-canal-voz { font-size: 13.5px; font-weight: 600; color: var(--texto); }
-        #texto-servidor-voz { font-size: 11.5px; color: var(--texto-fraco); }
         .fileira-icones-voz { display: none; gap: 6px; }
         .fileira-icones-voz.visivel { display: flex; }
         .fileira-icones-voz button { flex: 1; padding: 8px 0; font-size: 15px; }
@@ -438,6 +536,64 @@
         #modal-texto { z-index: 3100; }
 
         ::-webkit-scrollbar { width: 9px; } ::-webkit-scrollbar-thumb { background: #2a2f35; border-radius: 5px; }
+        /* ---------- Chat de texto (mensagens salvas) ---------- */
+        .mensagens-chat { gap: 0; padding: 12px 18px 8px; }
+        .mensagem-chat { position: relative; max-width: none; padding: 4px 8px; margin: 0 -8px; border-radius: 6px; margin-top: 10px; }
+        .mensagem-chat.agrupada { margin-top: 0; }
+        .mensagem-chat.agrupada .avatar-mensagem { visibility: hidden; height: 0; }
+        .mensagem-chat.agrupada .cabecalho-mensagem { display: none; }
+        .mensagem-chat:hover { background: rgba(255,255,255,0.03); }
+        .mensagem-chat .corpo-mensagem { flex: 1; min-width: 0; }
+        .mensagem-chat .editada { font-size: 10.5px; color: var(--texto-fraco); margin-left: 4px; }
+        .acoes-mensagem { position: absolute; top: -12px; right: 8px; display: none; gap: 2px; background: var(--painel); border: 1px solid var(--borda); border-radius: 6px; padding: 2px; }
+        .mensagem-chat:hover .acoes-mensagem { display: flex; }
+        .acoes-mensagem button { background: none; padding: 3px 6px; font-size: 12.5px; }
+        .separador-dia { display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--texto-fraco); margin: 16px 0 6px; }
+        .separador-dia::before, .separador-dia::after { content: ''; flex: 1; height: 1px; background: var(--borda); }
+        .item-canal.nao-lido { color: var(--texto); font-weight: 700; }
+        .badge-nl { margin-left: auto; min-width: 18px; padding: 1px 6px; border-radius: 9px; background: var(--sinal); color: #1a0505; font-size: 11px; font-weight: 800; text-align: center; }
+        .btn-servidor .badge-servidor { position: absolute; right: -2px; bottom: -2px; min-width: 18px; padding: 1px 5px; border-radius: 9px; background: var(--sinal); color: #1a0505; font-size: 11px; font-weight: 800; border: 2px solid var(--painel); pointer-events: none; }
+
+    
+        /* ---- Painel de acesso (administrador) ---- */
+        .cfg-badge-acesso { background: var(--perigo, #e5484d); color: #fff; border-radius: 10px; font-size: 11px; font-weight: 700; padding: 1px 7px; margin-left: 6px; }
+        .acesso-lista { display: flex; flex-direction: column; gap: 8px; }
+        .acesso-vazio { color: var(--texto-fraco); font-size: 13px; padding: 4px 0; }
+        .acesso-linha { display: flex; align-items: center; gap: 10px; background: rgba(255,255,255,0.04); border-radius: 8px; padding: 8px 10px; }
+        .acesso-linha img { width: 32px; height: 32px; border-radius: 50%; flex: none; background: #333; }
+        .acesso-info { flex: 1; min-width: 0; }
+        .acesso-info b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .acesso-info span { color: var(--texto-fraco); font-size: 12px; }
+        .acesso-linha button { padding: 6px 12px; }
+
+        /* ---- Administração: abas, cartões de denúncia, termos ---- */
+        .adm-abas { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+        .adm-aba { background: rgba(255,255,255,0.05); color: var(--texto-fraco); padding: 7px 12px; border-radius: 8px; font-weight: 600; font-size: 13px; }
+        .adm-aba:hover { color: var(--texto); }
+        .adm-aba.ativa { background: rgba(255,77,77,0.18); color: var(--texto); }
+        .adm-contador { background: var(--perigo, #e5484d); color: #fff; border-radius: 10px; font-size: 11px; font-weight: 700; padding: 1px 6px; margin-left: 4px; }
+        .acesso-linha { flex-wrap: wrap; }
+        .acesso-linha .acesso-botoes { display: flex; gap: 6px; flex-wrap: wrap; }
+        .selo { display: inline-block; font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 6px; margin-left: 6px; vertical-align: middle; background: rgba(255,255,255,0.1); color: var(--texto-fraco); }
+        .selo.ruim { background: rgba(229,72,77,0.2); color: #ff8b8e; }
+        .selo.bom { background: rgba(70,180,110,0.2); color: #7fd89f; }
+        .denuncia-card { background: rgba(255,255,255,0.04); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+        .denuncia-card.resolvida { opacity: 0.6; }
+        .denuncia-ctx { background: rgba(0,0,0,0.25); border-radius: 8px; padding: 8px 10px; font-size: 12.5px; display: flex; flex-direction: column; gap: 3px; max-height: 190px; overflow: auto; }
+        .denuncia-ctx .alvo { background: rgba(229,72,77,0.18); border-radius: 4px; padding: 1px 4px; }
+        .denuncia-ctx b { color: var(--texto); }
+        .termos-cartao { max-width: 640px; }
+        .termos-texto { max-height: 52vh; overflow: auto; font-size: 13px; line-height: 1.5; color: var(--texto-fraco); display: flex; flex-direction: column; gap: 8px; padding-right: 6px; }
+        .termos-texto b { color: var(--texto); }
+        .termos-texto ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 7px; }
+        #tela-termos { z-index: 3600; }
+        .termos-texto { scrollbar-width: thin; }
+        .termos-texto::-webkit-scrollbar { width: 8px; } .termos-texto::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.25); border-radius: 4px; }
+        .acesso-linha .avatar-participante { width: 32px; height: 32px; flex: none; }
+        .termos-texto { max-height: 46vh; }
+        #modal-denuncia { z-index: 3150; }
+        #modal-denuncia select, #modal-denuncia textarea { width: 100%; box-sizing: border-box; font-family: inherit; resize: vertical; }
+        #modal-denuncia #denuncia-enviar { white-space: nowrap; }
     </style>
 </head>
 <body>
@@ -461,29 +617,21 @@
                 </div>
             </div>
             <div class="painel-usuario">
-                <div class="cartao-usuario" id="cartao-usuario">
-                    <span class="avatar-participante" id="avatar-usuario-exibido"></span>
-                    <span class="info-usuario-rodape">
-                        <span id="nome-usuario-exibido" class="nome-usuario-exibido">—</span>
-                        <span id="status-usuario-rodape" class="status-usuario-rodape" style="display:none;">🔊 Em voz</span>
-                    </span>
-                    <button id="btn-microfone-rodape" class="icone-rodape" title="Entre num canal de voz pra usar o microfone" disabled>🎤</button>
-                    <button id="btn-editar-nome" class="icone-rodape" title="Trocar nome">✏️</button>
-                </div>
                 <div class="status-voz-persistente" id="status-voz-persistente" style="display:none;">
                     <div class="linha-topo-status-voz">
-                        <div class="rotulo-voz-conectada" id="rotulo-voz-conectada">Voz conectada</div>
-                        <div class="icones-status-voz">
-                            <button id="btn-surdo-rodape" title="Silenciar áudio recebido">🔊</button>
-                            <button id="btn-sair-voz" title="Sair do canal de voz">📞</button>
-                        </div>
-                    </div>
-                    <div class="linha-canal-servidor">
-                        <span class="ponto-ao-vivo-mini"></span>
+                        <button id="btn-conexao" class="btn-conexao" data-nivel="desconhecida" title="Qualidade da conexão de voz">
+                            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                                <path class="arco a3" d="M2.5 9.5a13.4 13.4 0 0 1 19 0"/>
+                                <path class="arco a2" d="M5.5 12.5a9.2 9.2 0 0 1 13 0"/>
+                                <path class="arco a1" d="M8.5 15.5a5 5 0 0 1 7 0"/>
+                                <circle cx="12" cy="19" r="1.6" fill="currentColor" stroke="none"/>
+                            </svg>
+                        </button>
                         <div class="texto-canal-servidor">
-                            <div id="texto-canal-voz">—</div>
-                            <div id="texto-servidor-voz">—</div>
+                            <div class="rotulo-voz-conectada" id="rotulo-voz-conectada">Voz conectada</div>
+                            <div class="sub-canal"><span id="texto-canal-voz">—</span><span class="sep-sub">|</span><span id="texto-servidor-voz">—</span></div>
                         </div>
+                        <button id="btn-sair-voz" class="icone-rodape" title="Sair do canal de voz">📞</button>
                     </div>
                 </div>
                 <div class="fileira-icones-voz" id="fileira-icones-voz">
@@ -497,6 +645,23 @@
                     <button data-som="buzina">📯 Buzina</button>
                     <button data-som="aplausos">👏 Aplausos</button>
                     <button data-som="alarme">🚨 Alarme</button>
+                </div>
+
+                <div class="cartao-usuario" id="cartao-usuario">
+                    <span class="avatar-participante" id="avatar-usuario-exibido"></span>
+                    <span class="info-usuario-rodape">
+                        <span id="nome-usuario-exibido" class="nome-usuario-exibido">—</span>
+                        <span id="status-usuario-rodape" class="status-usuario-rodape" style="display:none;">🔊 Em voz</span>
+                    </span>
+                    <span class="grupo-icone">
+                        <button id="btn-microfone-rodape" class="icone-rodape" title="Entre num canal de voz pra usar o microfone" disabled>🎤</button>
+                        <button id="btn-mic-seta" class="seta-rodape" title="Escolher microfone e ajustes de voz">˅</button>
+                    </span>
+                    <span class="grupo-icone">
+                        <button id="btn-surdo-rodape" class="icone-rodape" title="Silenciar áudio recebido">🔊</button>
+                        <button id="btn-fone-seta" class="seta-rodape" title="Escolher a saída de áudio">˅</button>
+                    </span>
+                    <button id="btn-config-usuario" class="icone-rodape" title="Configurações do usuário (Ctrl+,)">⚙️</button>
                 </div>
 
             </div>
@@ -546,8 +711,6 @@
         <div class="coluna-membros">
             <div class="abas-direita">
                 <button class="aba-direita ativa" data-aba="membros">👥 Membros</button>
-                <button class="aba-direita" data-aba="video">🎛️ Vídeo</button>
-                <button class="aba-direita" data-aba="visual">🎨 Visual</button>
             </div>
 
             <div class="conteudo-aba" id="aba-membros">
@@ -649,7 +812,208 @@
         </div>
     </div>
 
+    <div id="popover-conexao" class="popover-conexao">
+        <div class="pop-titulo">Conexão de voz</div>
+        <div class="pop-linha"><span>Latência</span><b id="pop-latencia">—</b></div>
+        <div class="pop-linha"><span>Qualidade</span><b id="pop-qualidade">—</b></div>
+        <div class="pop-linha"><span>Perda de pacotes</span><b id="pop-perda">—</b></div>
+        <div class="pop-linha"><span>Oscilação (jitter)</span><b id="pop-jitter">—</b></div>
+        <div class="pop-dica" id="pop-dica"></div>
+    </div>
+
     <div id="container-notificacoes"></div>
+
+    <!-- Amigos e mensagens diretas -->
+    <div id="tela-amigos" class="tela-amigos">
+        <aside class="amigos-lateral">
+            <div class="amigos-topo">
+                <div class="amigos-titulo"><span>👥 Amigos</span></div>
+                <div class="amigos-abas" id="amigos-abas">
+                    <button data-aba="amigos" class="ativo">Amigos</button>
+                    <button data-aba="pendentes">Pendentes<span class="pt" id="amigos-pt" style="display:none;"></span></button>
+                    <button data-aba="adicionar">Adicionar</button>
+                </div>
+            </div>
+            <div class="amigos-meucodigo">
+                <span>Seu código<br><code id="amigos-codigo">—</code></span>
+                <button id="amigos-copiar" class="btn-secundario" style="background:#262b31;color:var(--texto);">Copiar</button>
+            </div>
+            <div id="amigos-adicionar" class="amigos-adicionar" style="display:none;">
+                <div class="dica-config">Digite o código de amigo da pessoa (ele aparece em Configurações → Minha conta, ou aqui em cima).</div>
+                <div class="linha-add">
+                    <input type="text" id="amigos-input-codigo" placeholder="XXXX-XXXX" maxlength="9" autocomplete="off">
+                    <button id="amigos-enviar-pedido">Enviar pedido</button>
+                </div>
+                <div id="amigos-resultado" class="resultado"></div>
+            </div>
+            <div id="amigos-lista" class="amigos-lista"></div>
+        </aside>
+        <section class="amigos-principal">
+            <div class="amigos-cab"><span id="amigos-cab-titulo">Mensagens diretas</span><button id="amigos-fechar" class="fechar-amigos" title="Fechar (Esc)">✕</button></div>
+            <div class="area-vazia" id="amigos-vazio" style="display:flex;">
+                <div class="icone">💬</div>
+                <div>Escolha um amigo pra conversar.</div>
+            </div>
+            <div class="amigos-chat" id="amigos-chat">
+                <div class="mensagens-chat" id="amigos-mensagens"></div>
+                <div class="campo-mensagem-wrap"><input type="text" id="amigos-input-mensagem" placeholder="Enviar mensagem..." maxlength="2000"></div>
+            </div>
+        </section>
+    </div>
+
+    <!-- Configurações do usuário -->
+    <div id="modal-config" class="tela-config">
+        <nav class="cfg-nav">
+            <div class="cfg-nav-titulo">CONFIGURAÇÕES DO USUÁRIO</div>
+            <button class="cfg-item ativo" data-cfg="conta">👤 Minha conta</button>
+            <button class="cfg-item" data-cfg="voz">🎙️ Voz e áudio</button>
+            <button class="cfg-item" data-cfg="video">🖥️ Vídeo e transmissão</button>
+            <button class="cfg-item" data-cfg="aparencia">🎨 Aparência</button>
+            <button class="cfg-item" data-cfg="discord">🎮 Discord</button>
+            <button class="cfg-item" data-cfg="acesso" id="cfg-item-acesso" style="display:none;">🛡️ Administração <span id="cfg-badge-acesso" class="cfg-badge-acesso" style="display:none;"></span></button>
+            <div class="cfg-nav-sep"></div>
+            <button class="cfg-item" data-cfg="sobre">ℹ️ Sobre</button>
+        </nav>
+        <div class="cfg-conteudo">
+            <button id="cfg-fechar" class="cfg-x" title="Fechar (Esc)">✕</button>
+
+            <section class="cfg-painel ativo" id="cfg-painel-conta">
+                <h2>Minha conta</h2>
+                <div class="cfg-conta">
+                    <span class="avatar-participante" id="cfg-avatar"></span>
+                    <div>
+                        <div class="cfg-conta-nome" id="cfg-nome">—</div>
+                        <div class="cfg-dica" id="cfg-conta-tipo"></div>
+                    </div>
+                </div>
+                <div class="cfg-grupo">
+                    <div class="cfg-grupo-titulo">Seu código de amigo</div>
+                    <div class="cfg-linha-botoes"><code id="cfg-codigo-amigo" style="font-size:16px;font-weight:700;letter-spacing:.05em;align-self:center;">—</code><button id="cfg-copiar-codigo">Copiar</button></div>
+                    <div class="cfg-dica">Passe esse código pra um amigo adicionar você (botão 👥 no canto da barra de servidores → Adicionar).</div>
+                </div>
+                <div class="cfg-grupo">
+                    <div class="cfg-linha-botoes">
+                        <button id="cfg-sair-conta" class="cfg-btn-perigo">Sair da conta</button>
+                    </div>
+                </div>
+            </section>
+
+            <section class="cfg-painel" id="cfg-painel-voz">
+                <h2>Voz e áudio</h2>
+                <div class="cfg-grupo">
+                    <div class="cfg-grupo-titulo">Dispositivos</div>
+                    <div class="cfg-rotulo">Microfone</div>
+                    <select id="cfg-select-entrada"></select>
+                    <div class="cfg-rotulo">Saída de áudio (fone ou caixa de som)</div>
+                    <select id="cfg-select-saida"></select>
+                </div>
+                <div class="cfg-grupo">
+                    <div class="cfg-grupo-titulo">Testar microfone</div>
+                    <div class="cfg-linha-botoes"><button id="cfg-testar-mic">🎧 Testar microfone</button></div>
+                    <div class="cfg-medidor"><div id="cfg-medidor-barra"></div></div>
+                    <div class="cfg-dica">O teste toca a sua voz de volta. Use fone de ouvido para não gerar microfonia. A barra mostra o nível do que o microfone está captando.</div>
+                </div>
+                <div class="cfg-grupo">
+                    <div class="cfg-grupo-titulo">Processamento da voz</div>
+                    <label class="cfg-check"><input type="checkbox" id="cfg-eco"><span><b>Cancelamento de eco</b><span>Evita que a voz dos outros volte pelo seu microfone. Recomendado ligado.</span></span></label>
+                    <label class="cfg-check"><input type="checkbox" id="cfg-ruido"><span><b>Supressão de ruído</b><span>Reduz ruído constante de fundo (ventilador, chiado). Desligue se a sua voz ficar abafada.</span></span></label>
+                    <label class="cfg-check"><input type="checkbox" id="cfg-ganho"><span><b>Controle de volume automático</b><span>Nivela o volume da sua voz. Desligue se usa um microfone bom e já regulado.</span></span></label>
+                </div>
+                <div class="cfg-grupo">
+                    <div class="cfg-grupo-titulo">Qualidade da voz</div>
+                    <select id="cfg-qualidade-voz">
+                        <option value="normal">Normal — 32 kbps (economiza internet)</option>
+                        <option value="alta">Alta — 64 kbps (recomendado)</option>
+                        <option value="muito_alta">Muito alta — 96 kbps</option>
+                    </select>
+                    <label class="cfg-check"><input type="checkbox" id="cfg-dtx"><span><b>Economizar internet no silêncio</b><span>Para de enviar áudio enquanto você está calado.</span></span></label>
+                    <label class="cfg-check"><input type="checkbox" id="cfg-red"><span><b>Proteção contra perda de pacotes</b><span>Mantém a voz mais limpa em Wi‑Fi ou internet instável, gastando um pouco mais de banda.</span></span></label>
+                    <div class="cfg-dica">As mudanças valem na hora, inclusive durante uma chamada.</div>
+                </div>
+            </section>
+
+            <section class="cfg-painel" id="cfg-painel-video">
+                <h2>Vídeo e transmissão</h2>
+            </section>
+
+            <section class="cfg-painel" id="cfg-painel-aparencia">
+                <h2>Aparência</h2>
+            </section>
+
+            <section class="cfg-painel" id="cfg-painel-discord">
+                <h2>Discord</h2>
+            </section>
+
+            <section class="cfg-painel" id="cfg-painel-acesso">
+                <h2>Administração</h2>
+                <div class="adm-abas" id="adm-abas">
+                    <button class="adm-aba ativa" data-aba="pedidos">Pedidos <span class="adm-contador" id="adm-cont-pedidos" style="display:none;"></span></button>
+                    <button class="adm-aba" data-aba="pessoas">Pessoas</button>
+                    <button class="adm-aba" data-aba="servidores">Servidores</button>
+                    <button class="adm-aba" data-aba="denuncias">Denúncias <span class="adm-contador" id="adm-cont-denuncias" style="display:none;"></span></button>
+                    <button class="adm-aba" data-aba="historico">Histórico</button>
+                </div>
+                <div class="cfg-dica" id="adm-dica" style="margin-bottom:12px;"></div>
+                <div id="adm-conteudo" class="acesso-lista"></div>
+            </section>
+
+            <section class="cfg-painel" id="cfg-painel-sobre">
+                <h2>Sobre</h2>
+                <div class="cfg-grupo">
+                    <div><b>Estrivisor</b> <span class="cfg-dica" id="cfg-versao"></span></div>
+                    <div class="cfg-dica">Voz, chat e transmissão de tela entre amigos.</div>
+                    <div class="cfg-dica">Atalho: <b>Ctrl + ,</b> abre estas configurações. <b>Esc</b> fecha.</div>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <!-- Aceite dos termos de uso (aparece no primeiro login e quando os termos mudam) -->
+    <div id="tela-termos" class="tela-login">
+        <div class="cartao-login cartao-largo termos-cartao">
+            <div class="titulo-modal">Termos de uso do Estrivisor</div>
+            <div class="termos-texto" id="termos-texto">
+                <p><b>Leia com atenção. O Estrivisor é um espaço privado e só continua assim se todos seguirem estas regras.</b></p>
+                <ol>
+                    <li><b>Só para maiores de 18 anos.</b> Se você tem menos de 18, saia agora.</li>
+                    <li><b>Acesso por convite.</b> O administrador pode suspender, banir ou remover qualquer pessoa, a qualquer momento, com ou sem aviso, e apagar qualquer servidor.</li>
+                    <li><b>É proibido:</b> praticar ou combinar crimes; qualquer conteúdo sexual envolvendo crianças ou adolescentes (será denunciado às autoridades, sem aviso); assédio, ameaça e discurso de ódio; golpes, fraude e invasão de contas; expor dados de outras pessoas sem consentimento; transmitir obras protegidas sem autorização; tentar burlar o controle de acesso ou sobrecarregar o serviço.</li>
+                    <li><b>Você responde por tudo o que escreve, fala e transmite.</b> O dono de um servidor responde também pelo que acontece nele.</li>
+                    <li><b>Denúncias.</b> Qualquer um pode denunciar mensagens e pessoas pelo botão 🚩. O administrador pode ler o trecho denunciado.</li>
+                    <li><b>Seus dados.</b> Guardamos seu ID, nome e foto do Discord, suas mensagens (canais e conversas diretas), servidores e amigos, o registro deste aceite e ações de moderação. Voz e transmissão de tela não são gravadas. Nada é vendido. Dados podem ser entregues à Justiça por ordem judicial. Para pedir exclusão ou tirar dúvidas: <b>estrivisor@gmail.com</b>.</li>
+                    <li><b>Sem garantias.</b> O serviço é oferecido como está e pode mudar, ficar fora do ar ou acabar a qualquer momento.</li>
+                </ol>
+                <p class="cfg-dica" id="termos-versao"></p>
+            </div>
+            <div class="cfg-dica" id="termos-aviso">⬇ Role o texto até o fim para poder aceitar.</div>
+            <label class="opcao-modal"><input type="checkbox" id="termos-check" style="width:auto"> <span><b>Declaro que tenho 18 anos ou mais</b> e aceito estes termos.</span></label>
+            <div class="botoes-modal">
+                <button id="termos-sair" class="btn-secundario">Sair</button>
+                <button id="termos-aceitar" disabled>Aceitar e continuar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Denunciar mensagem ou pessoa -->
+    <div id="modal-denuncia" class="tela-login">
+        <div class="cartao-login">
+            <div class="titulo-modal" id="denuncia-titulo">Denunciar</div>
+            <div class="dica-login" id="denuncia-dica"></div>
+            <select id="denuncia-motivo">
+                <option value="assedio">Assédio, ameaça ou discurso de ódio</option>
+                <option value="sexual-menores">Conteúdo sexual envolvendo menores</option>
+                <option value="golpe">Golpe, fraude ou invasão</option>
+                <option value="pirataria">Pirataria / direitos autorais</option>
+                <option value="ilegal">Outra atividade ilegal</option>
+                <option value="outro">Outro motivo</option>
+            </select>
+            <textarea id="denuncia-detalhe" maxlength="500" rows="3" placeholder="Conte o que aconteceu (opcional)"></textarea>
+            <div class="botoes-modal">
+                <button id="denuncia-cancelar" class="btn-secundario">Cancelar</button>
+                <button id="denuncia-enviar">Enviar denúncia</button>
+            </div>
+        </div>
+    </div>
 
     <div id="modal-texto" class="tela-login">
         <div class="cartao-login">

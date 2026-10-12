@@ -207,15 +207,14 @@ document.getElementById('input-login-nome').addEventListener('keydown', (e) => {
     if (e.key === 'Escape') esconderTelaLogin();
 });
 document.getElementById('btn-login-fechar').addEventListener('click', esconderTelaLogin);
-document.getElementById('btn-editar-nome').addEventListener('click', () => {
-    if (contaAtual) mostrarTelaLogin('perfil');
-});
 
 // Volta o app ao estado "sem conta" (saiu da conta ou a sessão venceu).
 async function encerrarContaNoApp() {
     await sairCanalVoz();
     sairDoTextoAtual();
     pararPing();
+    fecharAmigos();
+    pararAmigos();
     fecharAjustes();
     fecharTelaInicio();
     servidorAtual = SERVIDOR_VAZIO;
@@ -252,10 +251,11 @@ document.getElementById('btn-login-sair-conta').addEventListener('click', async 
 });
 
 // O servidor avisou que a sessão venceu (ou foi encerrada em outro lugar).
-window.electronAPI.aoExpirarSessao(async () => {
+window.electronAPI.aoExpirarSessao(async (mensagem) => {
     await encerrarContaNoApp();
     mostrarTelaLogin('entrar');
-    mostrarNotificacao('Sua sessão expirou. Entre de novo.');
+    erroLogin(mensagem || '');
+    mostrarNotificacao(mensagem || 'Sua sessão expirou. Entre de novo.');
 });
 
 // Decide quem a pessoa é ao abrir o app: conta salva ou tela de login.
@@ -286,6 +286,8 @@ async function api(metodo, caminho, corpo) {
     if (!r.ok) {
         const erro = new Error(r.erro || 'Erro ao falar com o servidor.');
         erro.status = r.status;
+        erro.codigo = r.codigo;
+        if (r.codigo === 'aceite') exigirTermosAgora();
         throw erro;
     }
     return r.dados;
@@ -305,8 +307,6 @@ function nomeServidorAntigo() {
 // Estado de conexão: um Room pro canal de TEXTO aberto, outro
 // pro canal de VOZ em que a pessoa entrou — são independentes.
 // ============================================================
-let roomTexto = null;
-let canalTextoAtual = null;
 
 let roomVoz = null;
 let canalVozAtual = null;
@@ -466,8 +466,10 @@ function renderizarListaCanais() {
 
     servidorAtual.canais.filter(c => c.tipo === 'texto').forEach(canal => {
         const item = document.createElement('div');
-        item.className = 'item-canal' + (canalTextoAtual && canalTextoAtual.id === canal.id ? ' ativo' : '');
-        item.innerHTML = `<span class="icone-canal">#</span><span>${escaparHtml(canal.nome)}</span>`;
+        const abertoAgora = canalTextoAtual && canalTextoAtual.id === canal.id;
+        const pendentesLeitura = abertoAgora && chatCanal.ativo() ? 0 : naoLidas(chaveCanalTexto(servidorAtual.id, canal.id));
+        item.className = 'item-canal' + (abertoAgora ? ' ativo' : '') + (pendentesLeitura ? ' nao-lido' : '');
+        item.innerHTML = `<span class="icone-canal">#</span><span>${escaparHtml(canal.nome)}</span>${pendentesLeitura ? `<span class="badge-nl">${pendentesLeitura > 99 ? '99+' : pendentesLeitura}</span>` : ''}`;
         item.addEventListener('click', () => entrarCanalTexto(canal));
         adicionarControlesDeCanal(item, canal);
         listaTexto.appendChild(item);
@@ -590,125 +592,288 @@ document.getElementById('btn-add-texto').addEventListener('click', () => criarCa
 document.getElementById('btn-add-voz').addEventListener('click', () => criarCanal('voz'));
 
 // ============================================================
-// Canal de TEXTO
+// Canal de TEXTO — mensagens salvas no servidor
 // ============================================================
-let tentativaTexto = 0;      // muda a cada troca de canal: conexões atrasadas de um canal antigo são descartadas
-let enviandoMensagem = false;
+// O histórico fica guardado no servidor do Estrivisor (no seu notebook), então aparece ao
+// abrir o canal, chega mesmo com outro canal aberto (contador de não lidas) e não usa o LiveKit.
+// O app pergunta "o que veio depois da mensagem N?" a cada ~1,5 s enquanto o canal está aberto.
+const CHAVE_LIDAS = 'estrivisor_lidas';
+let lidasMapa = {};
+try { lidasMapa = JSON.parse(localStorage.getItem(CHAVE_LIDAS) || '{}') || {}; } catch (e) { lidasMapa = {}; }
+let ultimasConhecidas = {}; // chave da conversa -> número da última mensagem (vem dos pings)
+let assinaturaBadges = '';
+
+const chaveCanalTexto = (servidorId, canalId) => `c:${servidorId}:${canalId}`;
+const chaveDmLocal = (usuario) => `d:${usuario}`;
+function salvarLidas() { try { localStorage.setItem(CHAVE_LIDAS, JSON.stringify(lidasMapa)); } catch (e) {} }
+function marcarLida(chave, seq) {
+    if (!(seq > (lidasMapa[chave] || 0))) return;
+    lidasMapa[chave] = seq;
+    salvarLidas();
+    atualizarBadges();
+}
+// Guarda os "últimos números" que o servidor informou. Na primeira vez que vê uma conversa,
+// considera tudo como lido (senão o histórico antigo viraria uma enxurrada de não lidas).
+function registrarUltimas(mapa) {
+    let mudouLidas = false;
+    Object.keys(mapa || {}).forEach((chave) => {
+        const v = Number(mapa[chave]) || 0;
+        ultimasConhecidas[chave] = v;
+        if (lidasMapa[chave] === undefined) { lidasMapa[chave] = v; mudouLidas = true; }
+    });
+    if (mudouLidas) salvarLidas();
+}
+const naoLidas = (chave) => Math.max(0, (ultimasConhecidas[chave] || 0) - (lidasMapa[chave] || 0));
+function naoLidasDoServidor(servidor) {
+    return (servidor.canais || []).filter((c) => c.tipo === 'texto').reduce((t, c) => t + naoLidas(chaveCanalTexto(servidor.id, c.id)), 0);
+}
+function totalDmNaoLidas() {
+    return (amigosEstado.amigos || []).reduce((t, a) => t + naoLidas(chaveDmLocal(a.usuario)), 0);
+}
+// Redesenha as listas só quando algum contador mudou (os pings chegam a cada 10 s).
+function atualizarBadges() {
+    const partes = meusServidores.map((s) => s.id + ':' + naoLidasDoServidor(s) + ':' +
+        (s.canais || []).filter((c) => c.tipo === 'texto').map((c) => naoLidas(chaveCanalTexto(s.id, c.id))).join(','));
+    const assinatura = partes.join('|') + '#' + totalDmNaoLidas() + '#' + (amigosEstado.recebidos || []).length;
+    if (assinatura === assinaturaBadges) return;
+    assinaturaBadges = assinatura;
+    renderizarListaCanais();
+    renderizarBarraServidores();
+    if (amigosAbertos()) renderizarAmigos();
+}
+
+// ---------- Controlador de chat (serve pros canais e pras mensagens diretas) ----------
+function criarChat({ container, input, aoSemAcesso }) {
+    let cfg = null;              // { caminho, chaveLida, podeModerar }
+    let msgs = [];
+    let temMais = false;
+    let ativo = false, carregou = false, enviando = false, carregandoAntigas = false;
+    let token = 0, timer = null, ciclos = 0;
+
+    const maxSeq = () => (msgs.length ? msgs[msgs.length - 1].seq : 0);
+    const noFundo = () => container.scrollHeight - container.scrollTop - container.clientHeight < 90;
+    const descerAoFim = () => { container.scrollTop = container.scrollHeight; };
+    const aVista = () => ativo && !document.hidden && document.hasFocus() && container.offsetParent !== null;
+    const marcarVisto = () => { if (cfg && msgs.length && aVista()) marcarLida(cfg.chaveLida, maxSeq()); };
+
+    const mesmoDia = (a, b) => new Date(a).toDateString() === new Date(b).toDateString();
+    function rotuloDia(ts) {
+        const d = new Date(ts), hoje = new Date(), ontem = new Date(Date.now() - 86400000);
+        if (d.toDateString() === hoje.toDateString()) return 'Hoje';
+        if (d.toDateString() === ontem.toDateString()) return 'Ontem';
+        return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
+    }
+
+    function elementoMensagem(m, anterior) {
+        const agrupada = anterior && anterior.usuario === m.usuario && mesmoDia(anterior.ts, m.ts) && m.ts - anterior.ts < 5 * 60 * 1000;
+        const el = document.createElement('div');
+        el.className = 'mensagem-chat' + (agrupada ? ' agrupada' : '');
+        el.dataset.seq = String(m.seq);
+        const hora = new Date(m.ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        const ehEu = m.usuario === obterIdentidadeUsuario();
+        el.innerHTML = `
+            <div class="avatar-mensagem"></div>
+            <div class="corpo-mensagem">
+                <div class="cabecalho-mensagem"><span class="autor-mensagem"></span><span class="hora-mensagem">${hora}</span></div>
+                <div class="texto-mensagem"></div>
+            </div>`;
+        el.querySelector('.autor-mensagem').textContent = String(m.nome || '?').slice(0, 40) + (ehEu ? ' (você)' : '');
+        const textoEl = el.querySelector('.texto-mensagem');
+        textoEl.textContent = String(m.texto || '').slice(0, 2000);
+        if (m.editadoEm) { const ed = document.createElement('span'); ed.className = 'editada'; ed.textContent = '(editada)'; textoEl.appendChild(ed); }
+        aplicarAvatar(el.querySelector('.avatar-mensagem'), m.usuario, m.nome || '?', urlAvatarSegura(m.avatar));
+
+        const podeApagar = ehEu || (cfg && cfg.podeModerar());
+        if (!ehEu || podeApagar) {
+            const acoes = document.createElement('div');
+            acoes.className = 'acoes-mensagem';
+            if (!ehEu) {
+                const b = document.createElement('button'); b.textContent = '🚩'; b.title = 'Denunciar';
+                b.addEventListener('click', () => denunciarMensagem(m, cfg && cfg.caminho));
+                acoes.appendChild(b);
+            }
+            if (ehEu) {
+                const b = document.createElement('button'); b.textContent = '✏️'; b.title = 'Editar';
+                b.addEventListener('click', () => editar(m));
+                acoes.appendChild(b);
+            }
+            if (podeApagar) {
+                const b = document.createElement('button'); b.textContent = '🗑️'; b.title = 'Apagar';
+                b.addEventListener('click', () => apagar(m));
+                acoes.appendChild(b);
+            }
+            el.appendChild(acoes);
+        }
+        return el;
+    }
+    function separadorDia(ts) {
+        const d = document.createElement('div');
+        d.className = 'separador-dia';
+        d.textContent = rotuloDia(ts);
+        return d;
+    }
+    function desenharTudo() {
+        container.innerHTML = '';
+        if (temMais) { const r = document.createElement('div'); r.className = 'rotulo-sistema'; r.textContent = 'Role pra cima pra ver mensagens mais antigas.'; container.appendChild(r); }
+        else if (!msgs.length) { const r = document.createElement('div'); r.className = 'rotulo-sistema'; r.textContent = 'Nenhuma mensagem ainda. Diga oi! 👋'; container.appendChild(r); }
+        let ant = null;
+        msgs.forEach((m) => {
+            if (!ant || !mesmoDia(ant.ts, m.ts)) container.appendChild(separadorDia(m.ts));
+            container.appendChild(elementoMensagem(m, ant && mesmoDia(ant.ts, m.ts) ? ant : null));
+            ant = m;
+        });
+    }
+    function anexar(novas, propria) {
+        const fundo = noFundo();
+        let mudou = false;
+        novas.forEach((m) => {
+            if (m.seq <= maxSeq()) return; // já tinha
+            const ant = msgs.length ? msgs[msgs.length - 1] : null;
+            if (!msgs.length) container.innerHTML = '';
+            if (!ant || !mesmoDia(ant.ts, m.ts)) container.appendChild(separadorDia(m.ts));
+            container.appendChild(elementoMensagem(m, ant && mesmoDia(ant.ts, m.ts) ? ant : null));
+            msgs.push(m);
+            mudou = true;
+        });
+        if (!mudou) return;
+        if (propria || fundo) descerAoFim();
+        if (propria && cfg) marcarLida(cfg.chaveLida, maxSeq()); else marcarVisto();
+    }
+
+    async function carregarInicial(meu) {
+        const r = await api('GET', `${cfg.caminho}?limite=50`);
+        if (meu !== token) return;
+        msgs = r.mensagens; temMais = r.temMais; carregou = true;
+        desenharTudo(); descerAoFim(); marcarVisto();
+    }
+    async function sincronizar(meu) {
+        // De tempos em tempos confere as últimas 50: pega mensagens editadas ou apagadas por outras pessoas.
+        const r = await api('GET', `${cfg.caminho}?limite=50`);
+        if (meu !== token) return;
+        const minimo = r.mensagens.length ? r.mensagens[0].seq : r.ultimaSeq + 1;
+        const lista = msgs.filter((m) => m.seq < minimo).concat(r.mensagens);
+        const assin = (l) => l.map((m) => m.seq + ':' + (m.editadoEm || 0)).join(',');
+        if (assin(lista) === assin(msgs)) return;
+        const fundo = noFundo();
+        msgs = lista;
+        desenharTudo();
+        if (fundo) descerAoFim();
+        marcarVisto();
+    }
+    async function ciclo() {
+        const meu = token;
+        if (!ativo || !cfg) return;
+        try {
+            if (!carregou) await carregarInicial(meu);
+            else {
+                const r = await api('GET', `${cfg.caminho}?depois=${maxSeq()}`);
+                if (meu !== token) return;
+                if (r.mensagens.length) anexar(r.mensagens, false);
+                ciclos++;
+                if (ciclos % 6 === 0) await sincronizar(meu);
+            }
+        } catch (err) {
+            if (meu === token && (err.status === 403 || err.status === 404) && aoSemAcesso) { aoSemAcesso(err); return; }
+            if (meu === token && !carregou) { container.innerHTML = '<div class="rotulo-sistema">Não consegui carregar as mensagens. Tentando de novo...</div>'; }
+        }
+        if (meu === token && ativo) timer = setTimeout(ciclo, document.hidden ? 8000 : 1500);
+    }
+
+    async function carregarAntigas() {
+        if (carregandoAntigas || !temMais || !msgs.length) return;
+        carregandoAntigas = true;
+        const meu = token;
+        try {
+            const r = await api('GET', `${cfg.caminho}?antes=${msgs[0].seq}&limite=50`);
+            if (meu !== token) return;
+            const alturaAntes = container.scrollHeight;
+            msgs = r.mensagens.concat(msgs); temMais = r.temMais;
+            desenharTudo();
+            container.scrollTop = container.scrollHeight - alturaAntes;
+        } catch (e) { /* tenta de novo na próxima rolagem */ }
+        carregandoAntigas = false;
+    }
+    container.addEventListener('scroll', () => { if (ativo && container.scrollTop < 60) carregarAntigas(); });
+
+    async function enviar() {
+        if (!ativo || !cfg || enviando) return;
+        const texto = input.value.trim().slice(0, 2000);
+        if (!texto) return;
+        enviando = true;
+        try {
+            const r = await api('POST', cfg.caminho, { texto, nome: obterNomeUsuario() });
+            input.value = '';
+            anexar([r.mensagem], true);
+        } catch (err) {
+            mostrarNotificacao('A mensagem não foi enviada: ' + (err && err.message ? err.message : 'erro desconhecido'));
+        } finally { enviando = false; }
+    }
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) enviar(); });
+
+    async function editar(m) {
+        const r = await pedirTexto({ titulo: 'Editar mensagem', valor: m.texto, max: 2000 });
+        if (!r || !r.texto.trim() || r.texto === m.texto) return;
+        try {
+            const d = await api('PATCH', `${cfg.caminho}/${m.seq}`, { texto: r.texto });
+            const i = msgs.findIndex((x) => x.seq === m.seq);
+            if (i >= 0) { msgs[i] = d.mensagem; const fundo = noFundo(); desenharTudo(); if (fundo) descerAoFim(); }
+        } catch (err) { mostrarNotificacao('Não consegui editar: ' + err.message); }
+    }
+    async function apagar(m) {
+        const r = await pedirTexto({ titulo: 'Apagar mensagem?', dica: 'Ela some pra todo mundo.', semCampo: true, rotuloOk: 'Apagar' });
+        if (!r) return;
+        try {
+            await api('DELETE', `${cfg.caminho}/${m.seq}`);
+            msgs = msgs.filter((x) => x.seq !== m.seq);
+            const fundo = noFundo(); desenharTudo(); if (fundo) descerAoFim();
+        } catch (err) { mostrarNotificacao('Não consegui apagar: ' + err.message); }
+    }
+
+    function abrir(novaCfg) {
+        fechar();
+        cfg = novaCfg; ativo = true; carregou = false; msgs = []; temMais = false; ciclos = 0;
+        token++;
+        input.value = '';
+        container.innerHTML = '<div class="rotulo-sistema">Carregando mensagens...</div>';
+        ciclo();
+    }
+    function fechar() {
+        ativo = false; token++;
+        if (timer) { clearTimeout(timer); timer = null; }
+        cfg = null; msgs = [];
+    }
+    return { abrir, fechar, marcarVisto, ativo: () => ativo };
+}
+
+let canalTextoAtual = null;
+const chatCanal = criarChat({
+    container: document.getElementById('mensagens-chat'),
+    input: document.getElementById('input-mensagem'),
+    aoSemAcesso: () => { if (servidorAtual.id) perdeuAcesso(servidorAtual.id); }
+});
 
 function estadoConectado() {
     return (LivekitClient.ConnectionState && LivekitClient.ConnectionState.Connected) || 'connected';
 }
 
-async function entrarCanalTexto(canal) {
-    const usuario = obterNomeUsuario();
-    if (!usuario) return mostrarNotificacao('Aguarde o perfil carregar ou defina seu nome primeiro.');
-
+function entrarCanalTexto(canal) {
+    if (!obterNomeUsuario()) return mostrarNotificacao('Aguarde o perfil carregar ou defina seu nome primeiro.');
+    const servidorId = servidorAtual.id;
     sairDoTextoAtual();
-    const minhaTentativa = tentativaTexto;
-
     canalTextoAtual = canal;
     document.getElementById('cabecalho-canal').innerHTML = `<span class="icone-canal">#</span> <span>${escaparHtml(canal.nome)}</span>`;
     document.getElementById('area-vazia').style.display = 'none';
     document.getElementById('area-voz').style.display = 'none';
     document.getElementById('area-texto').style.display = 'flex';
-    document.getElementById('mensagens-chat').innerHTML = '<div class="rotulo-sistema">Conectando ao canal...</div>';
+    document.getElementById('input-mensagem').placeholder = `Enviar mensagem em #${canal.nome}`;
+    chatCanal.abrir({
+        caminho: `/servidores/${servidorId}/canais/${canal.id}/mensagens`,
+        chaveLida: chaveCanalTexto(servidorId, canal.id),
+        podeModerar: () => servidorAtual.id === servidorId && servidorAtual.souDono === true
+    });
     renderizarListaCanais();
-
-    try {
-        const token = await pedirToken(nomeSalaCanal(canal));
-        const url = await window.electronAPI.obterUrlServidor();
-        if (minhaTentativa !== tentativaTexto) return; // trocou de canal enquanto conectava
-
-        const sala = new LivekitClient.Room();
-        roomTexto = sala;
-        sala.on(LivekitClient.RoomEvent.DataReceived, (payload, participante) => {
-            if (sala !== roomTexto || !participante) return; // só mensagens de quem está na sala
-            try {
-                const msg = JSON.parse(new TextDecoder().decode(payload));
-                // Nome e foto vêm do participante (o servidor definiu no token de cada um),
-                // não do conteúdo da mensagem — assim ninguém assina com o nome de outra pessoa.
-                adicionarMensagemChat(participante.name || participante.identity, msg && msg.texto, false, avatarDoParticipante(participante));
-            } catch (e) { /* ignora payload inválido */ }
-        });
-        sala.on(LivekitClient.RoomEvent.Disconnected, () => {
-            if (sala !== roomTexto) return; // saída normal (trocou de canal, saiu do servidor...)
-            roomTexto = null;
-            adicionarRotuloSistema('A conexão com este canal caiu. Clique no canal de novo pra reconectar.');
-        });
-
-        await sala.connect(url, token);
-        if (minhaTentativa !== tentativaTexto) { try { sala.disconnect(); } catch (e) {} return; }
-        document.getElementById('mensagens-chat').innerHTML = '';
-        adicionarRotuloSistema(`Você entrou em #${canal.nome}. Mensagens não ficam salvas — somem quando todo mundo sai.`);
-    } catch (err) {
-        if (minhaTentativa !== tentativaTexto) return; // erro de um canal que já foi trocado
-        if (roomTexto) { const antiga = roomTexto; roomTexto = null; try { antiga.disconnect(); } catch (e) {} }
-        console.error(err);
-        mostrarNotificacao('Erro ao entrar no canal de texto: ' + err.message);
-        document.getElementById('mensagens-chat').innerHTML = '<div class="rotulo-sistema">Não foi possível conectar.</div>';
-    }
+    document.getElementById('input-mensagem').focus();
 }
-
-function adicionarRotuloSistema(texto) {
-    const div = document.createElement('div');
-    div.className = 'rotulo-sistema';
-    div.textContent = texto;
-    document.getElementById('mensagens-chat').appendChild(div);
-    rolarChatParaBaixo();
-}
-
-function adicionarMensagemChat(autor, texto, souEu, avatarUrl) {
-    // Vem de outra pessoa: garante tipo e tamanho antes de usar.
-    autor = String(autor || '?').slice(0, 40);
-    texto = String(texto === undefined || texto === null ? '' : texto).slice(0, 2000);
-
-    const container = document.getElementById('mensagens-chat');
-    const msg = document.createElement('div');
-    msg.className = 'mensagem-chat';
-    const hora = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-    msg.innerHTML = `
-        <div class="avatar-mensagem"></div>
-        <div class="corpo-mensagem">
-            <div class="cabecalho-mensagem"><span class="autor-mensagem">${escaparHtml(autor)}${souEu ? ' (você)' : ''}</span><span class="hora-mensagem">${hora}</span></div>
-            <div class="texto-mensagem"></div>
-        </div>`;
-    aplicarAvatar(msg.querySelector('.avatar-mensagem'), autor, autor, avatarUrl);
-    msg.querySelector('.texto-mensagem').textContent = texto; // textContent evita injeção de HTML
-    container.appendChild(msg);
-    rolarChatParaBaixo();
-}
-
-function rolarChatParaBaixo() {
-    const container = document.getElementById('mensagens-chat');
-    container.scrollTop = container.scrollHeight;
-}
-
-// A mensagem só aparece como enviada depois que o envio deu certo (antes aparecia mesmo sem conexão).
-document.getElementById('input-mensagem').addEventListener('keydown', async (e) => {
-    if (e.key !== 'Enter' || enviandoMensagem) return;
-    const input = e.target;
-    const texto = input.value.trim().slice(0, 2000);
-    if (!texto) return;
-
-    const sala = roomTexto;
-    if (!sala || sala.state !== estadoConectado()) {
-        return mostrarNotificacao('Sem conexão com o canal de texto. Clique no canal de novo.');
-    }
-    const usuario = obterNomeUsuario();
-    // "autor" e "avatar" seguem junto só pra quem ainda está na versão antiga do app;
-    // a versão nova usa o nome do participante.
-    const payload = new TextEncoder().encode(JSON.stringify({ autor: usuario, texto, avatar: avatarUsuarioAtual || undefined }));
-    enviandoMensagem = true;
-    try {
-        await sala.localParticipant.publishData(payload, { reliable: true });
-        adicionarMensagemChat(usuario, texto, true, avatarUsuarioAtual);
-        input.value = '';
-    } catch (err) {
-        mostrarNotificacao('A mensagem não foi enviada: ' + (err && err.message ? err.message : 'erro desconhecido'));
-    } finally {
-        enviandoMensagem = false;
-    }
-});
 
 // ============================================================
 // Canal de VOZ
@@ -776,7 +941,12 @@ async function entrarCanalVoz(canal) {
 
         avisoConexaoVoz = 'conectando';
         atualizarStatusVozPersistente();
-        const sala = new LivekitClient.Room({ adaptiveStream: true, dynacast: true });
+        const sala = new LivekitClient.Room({
+            adaptiveStream: true, dynacast: true,
+            audioCaptureDefaults: opcoesCapturaMicrofone(),
+            publishDefaults: opcoesPublicacaoAudio(),
+            audioOutput: prefsAudio.saidaId ? { deviceId: prefsAudio.saidaId } : undefined
+        });
         roomVoz = sala;
         registrarEventosDaVoz(sala);
 
@@ -1348,7 +1518,7 @@ async function alternarMicrofone(btn) {
     if (!vozConectada()) return;
     try {
         microfoneAtivo = !microfoneAtivo;
-        await roomVoz.localParticipant.setMicrophoneEnabled(microfoneAtivo);
+        await roomVoz.localParticipant.setMicrophoneEnabled(microfoneAtivo, microfoneAtivo ? opcoesCapturaMicrofone() : undefined, microfoneAtivo ? opcoesPublicacaoAudio() : undefined);
         if (btn) {
             btn.textContent = microfoneAtivo ? '🎤 Desativar microfone' : '🎤 Ativar microfone';
             btn.classList.toggle('ativo', microfoneAtivo);
@@ -1433,6 +1603,7 @@ document.getElementById('btn-surdo-rodape').addEventListener('click', () => {
     surdoAtivo = !surdoAtivo;
     const btn = document.getElementById('btn-surdo-rodape');
     btn.textContent = surdoAtivo ? '🔇' : '🔊';
+    btn.classList.toggle('mudo', surdoAtivo);
     btn.title = surdoAtivo ? 'Reativar áudio recebido' : 'Silenciar áudio recebido';
     elementosAudioPorIdentidade.forEach((_, identity) => aplicarAudioDePessoa(identity));
 });
@@ -1565,18 +1736,24 @@ function atualizarStatusVozPersistente() {
 async function alternarTesteMicrofone() {
     if (microfoneTesteAtivo) return pararTesteMicrofone();
     try {
-        streamTesteMic = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const c = opcoesCapturaMicrofone();
+        streamTesteMic = await navigator.mediaDevices.getUserMedia({ audio: c });
         audioTesteMic = document.createElement('audio');
         audioTesteMic.srcObject = streamTesteMic;
         audioTesteMic.autoplay = true;
+        if (prefsAudio.saidaId && audioTesteMic.setSinkId) { try { await audioTesteMic.setSinkId(prefsAudio.saidaId); } catch (e) {} }
         document.body.appendChild(audioTesteMic);
         microfoneTesteAtivo = true;
+        iniciarMedidorMicrofone(streamTesteMic);
     } catch (err) { mostrarNotificacao('Erro ao testar microfone: ' + err.message); }
+    atualizarBotaoTesteConfig();
 }
 function pararTesteMicrofone() {
     if (streamTesteMic) streamTesteMic.getTracks().forEach(t => t.stop());
     if (audioTesteMic) audioTesteMic.remove();
     streamTesteMic = null; audioTesteMic = null; microfoneTesteAtivo = false;
+    pararMedidorMicrofone();
+    atualizarBotaoTesteConfig();
 }
 
 // ---------- Grade de vídeo (tiles) ----------
@@ -1796,6 +1973,7 @@ function abrirMenuContexto(identity, nome, ehVoce, x, y, estaTransmitindo) {
         if (souAnfitriaoVoz && estaTransmitindo) {
             itens.push({ id: 'parar', rotulo: '⏹ Parar a transmissão', perigo: true, acao: () => pararTransmissaoDe(identity, nome) });
         }
+        itens.push({ separador: true }, itemAmizade(identity), itemDenunciar(identity, nome));
         return { cabecalho: `${nome} · voz a ${volume}%${silenciado ? ' (silenciada)' : ''}`, itens };
     });
 }
@@ -2113,6 +2291,7 @@ async function fazerPing() {
             // Só diz que está no canal depois de conectar de verdade (não durante a espera ou após uma falha).
             canalVoz: vozConectada() && canalVozAtual ? canalVozAtual.id : null
         });
+        registrarUltimasServidor(id, d.ultimas);
         if (id !== servidorAtual.id) return; // trocou de servidor no meio
         aplicarOnline(d.online);
         if (d.versao !== servidorAtual.versao) await recarregarServidorAtual();
@@ -2123,6 +2302,19 @@ async function fazerPing() {
         pingEmAndamento = false;
         if (pingPendente) { pingPendente = false; fazerPing(); }
     }
+    pingarOutrosServidores();
+}
+
+// Mantém você online em TODOS os servidores dos quais participa (não só no que está aberto).
+function pingarOutrosServidores() {
+    (meusServidores || []).forEach((s) => {
+        if (!s || !s.id || s.id === servidorAtual.id) return;
+        api('POST', `/servidores/${s.id}/presenca`, {
+            nome: nomeUsuarioAtual,
+            avatar: avatarUsuarioAtual || undefined,
+            canalVoz: vozConectada() && canalVozAtual ? canalVozAtual.id : null
+        }).then((d) => registrarUltimasServidor(s.id, d && d.ultimas)).catch(() => {});
+    });
 }
 
 function iniciarPing() {
@@ -2140,27 +2332,25 @@ function broadcastarStatusPresenca() { fazerPing(); }
 
 // Chamado quando o perfil fica pronto: carrega os servidores da pessoa.
 let sessaoIniciadaPara = null;
-function conectarPresenca() {
+async function conectarPresenca() {
     const identidade = obterIdentidadeUsuario();
     if (!identidade || sessaoIniciadaPara === identidade) return;
     sessaoIniciadaPara = identidade;
+    const aceito = await garantirTermos();
+    if (!aceito || sessaoIniciadaPara !== identidade) return; // saiu da conta na tela de termos
     carregarMeusServidores();
+    iniciarAmigos();
 }
 
 // ---------- Escolher / carregar servidores ----------
 function sairDoTextoAtual() {
-    tentativaTexto++; // uma conexão de texto ainda em andamento é descartada
-    const sala = roomTexto;
-    roomTexto = null; // antes do disconnect: o aviso de "conexão caiu" não aparece numa saída normal
-    if (sala) { try { sala.disconnect(); } catch (e) {} }
+    chatCanal.fechar();
     canalTextoAtual = null;
 }
 
 function definirServidorAtual(servidor) {
     const antigo = servidorAtual.id;
-    if (antigo && antigo !== servidor.id) {
-        api('POST', `/servidores/${antigo}/presenca/sair`).catch(() => {}); // some da lista de online de lá
-    }
+    // Trocar de servidor NÃO tira você do online do anterior: o app segue avisando presença em todos.
     servidorAtual = { ...servidor, chave: servidor.id };
     try { localStorage.setItem(CHAVE_SERVIDOR_ATUAL, servidor.id); } catch (e) {}
     presencaParticipantes.clear();
@@ -2205,6 +2395,7 @@ async function carregarMeusServidores(preferirId) {
 
 // Troca para outro servidor (sai da voz e do texto atuais, porque as salas são de cada servidor).
 async function selecionarServidor(id) {
+    if (amigosAbertos()) fecharAmigos();
     if (id === servidorAtual.id) return;
     const alvo = meusServidores.find((s) => s.id === id);
     if (!alvo) return;
@@ -2285,14 +2476,27 @@ function preencherIconeServidor(el, servidor) {
 function renderizarBarraServidores() {
     const barra = document.getElementById('barra-servidores');
     barra.innerHTML = '';
+    const btnAmigos = document.createElement('button');
+    btnAmigos.className = 'btn-servidor' + (amigosAbertos() ? ' ativo' : '');
+    btnAmigos.title = 'Amigos e mensagens diretas';
+    btnAmigos.innerHTML = '<span class="icone-servidor" style="background:#262b31;font-size:20px;">👥</span>';
+    const nAmigos = totalDmNaoLidas() + (amigosEstado.recebidos || []).length;
+    if (nAmigos) { const b = document.createElement('span'); b.className = 'badge-servidor'; b.textContent = nAmigos > 99 ? '99+' : String(nAmigos); btnAmigos.appendChild(b); }
+    btnAmigos.addEventListener('click', () => (amigosAbertos() ? fecharAmigos() : abrirAmigos()));
+    barra.appendChild(btnAmigos);
+    const sepAmigos = document.createElement('div');
+    sepAmigos.className = 'separador-servidores';
+    barra.appendChild(sepAmigos);
     meusServidores.forEach((s) => {
         const botao = document.createElement('button');
-        botao.className = 'btn-servidor' + (s.id === servidorAtual.id ? ' ativo' : '');
+        botao.className = 'btn-servidor' + (s.id === servidorAtual.id && !amigosAbertos() ? ' ativo' : '');
         botao.title = s.nome;
         const icone = document.createElement('span');
         icone.className = 'icone-servidor';
         preencherIconeServidor(icone, s);
         botao.appendChild(icone);
+        const nl = naoLidasDoServidor(s);
+        if (nl) { const b = document.createElement('span'); b.className = 'badge-servidor'; b.textContent = nl > 99 ? '99+' : String(nl); botao.appendChild(b); }
         botao.addEventListener('click', () => selecionarServidor(s.id));
         barra.appendChild(botao);
     });
@@ -2638,6 +2842,11 @@ function atualizarListaOnline() {
                 ${canal ? `<span class="legenda-canal-voz">🔊 ${escaparHtml(canal.nome)}</span>` : ''}
             </span>`;
         aplicarAvatar(item.querySelector('.avatar-participante'), identity, info.nome, info.avatar);
+        if (identity !== obterIdentidadeUsuario()) {
+            item.style.cursor = 'pointer';
+            item.addEventListener('click', (e) => abrirMenuPessoa(e.clientX, e.clientY, identity, info.nome));
+            item.addEventListener('contextmenu', (e) => { e.preventDefault(); abrirMenuPessoa(e.clientX, e.clientY, identity, info.nome); });
+        }
         lista.appendChild(item);
     });
 }
@@ -2928,8 +3137,955 @@ document.getElementById('slider-fundo-desfoque').addEventListener('input', (even
 ['dragover', 'drop'].forEach((tipo) => document.addEventListener(tipo, (e) => e.preventDefault()));
 
 // ============================================================
+// Configurações do usuário (tela cheia, categorias na lateral)
+// ============================================================
+// Reaproveita os blocos de Vídeo, Visual e Discord que antes ficavam na coluna da direita:
+// os elementos são MOVIDOS pra cá (mesmos ids e mesmos eventos), então nada deixa de funcionar.
+(function moverSecoesParaConfig() {
+    const destino = (id) => document.getElementById(id);
+    const video = document.querySelectorAll('#aba-video > .secao-config');
+    if (video[0]) destino('cfg-painel-video').appendChild(video[0]); // tamanho na tela
+    if (video[1]) destino('cfg-painel-video').appendChild(video[1]); // qualidade do que envia
+    if (video[2]) destino('cfg-painel-discord').appendChild(video[2]); // Discord
+    document.querySelectorAll('#aba-visual > .secao-config').forEach((el) => destino('cfg-painel-aparencia').appendChild(el));
+})();
+
+// ---------- Preferências de áudio (guardadas só neste PC) ----------
+const CHAVE_PREFS_AUDIO = 'estrivisor_audio';
+const BITRATE_VOZ = { normal: 32000, alta: 64000, muito_alta: 96000 };
+const PREFS_AUDIO_PADRAO = { microfoneId: '', saidaId: '', eco: true, ruido: true, ganho: true, qualidade: 'alta', dtx: true, red: true };
+let prefsAudio = { ...PREFS_AUDIO_PADRAO };
+
+function carregarPreferenciasAudio() {
+    let p = null;
+    try { p = JSON.parse(localStorage.getItem(CHAVE_PREFS_AUDIO) || 'null'); } catch (e) { /* corrompido: usa o padrão */ }
+    if (!p || typeof p !== 'object') return;
+    const bool = (v, padrao) => (typeof v === 'boolean' ? v : padrao);
+    prefsAudio = {
+        microfoneId: typeof p.microfoneId === 'string' ? p.microfoneId.slice(0, 300) : '',
+        saidaId: typeof p.saidaId === 'string' ? p.saidaId.slice(0, 300) : '',
+        eco: bool(p.eco, true), ruido: bool(p.ruido, true), ganho: bool(p.ganho, true),
+        qualidade: BITRATE_VOZ[p.qualidade] ? p.qualidade : 'alta',
+        dtx: bool(p.dtx, true), red: bool(p.red, true)
+    };
+}
+function salvarPreferenciasAudio() {
+    try { localStorage.setItem(CHAVE_PREFS_AUDIO, JSON.stringify(prefsAudio)); } catch (e) {}
+}
+// Como o microfone é captado (valem pra chamada e pro teste).
+function opcoesCapturaMicrofone() {
+    const o = { echoCancellation: prefsAudio.eco, noiseSuppression: prefsAudio.ruido, autoGainControl: prefsAudio.ganho, channelCount: 1 };
+    if (prefsAudio.microfoneId) o.deviceId = prefsAudio.microfoneId;
+    return o;
+}
+// Como a voz é enviada (qualidade e proteções).
+function opcoesPublicacaoAudio() {
+    return { dtx: prefsAudio.dtx, red: prefsAudio.red, audioPreset: { maxBitrate: BITRATE_VOZ[prefsAudio.qualidade] || BITRATE_VOZ.alta } };
+}
+
+// Aplica uma mudança de áudio durante a chamada (se estiver numa).
+async function reaplicarAudioNaChamada(saidaMudou) {
+    if (!vozConectada()) return;
+    try {
+        if (saidaMudou) await roomVoz.switchActiveDevice('audiooutput', prefsAudio.saidaId || 'default');
+        if (!saidaMudou && microfoneAtivo) {
+            const lp = roomVoz.localParticipant;
+            await lp.setMicrophoneEnabled(false);
+            await lp.setMicrophoneEnabled(true, opcoesCapturaMicrofone(), opcoesPublicacaoAudio());
+        }
+    } catch (err) { mostrarNotificacao('Não consegui aplicar a mudança de áudio: ' + err.message); }
+    atualizarBotaoMicrofone();
+}
+
+// ---------- Medidor de nível do microfone ----------
+let ctxMedidor = null, fonteMedidor = null, quadroMedidor = 0;
+function iniciarMedidorMicrofone(stream) {
+    pararMedidorMicrofone();
+    const barra = document.getElementById('cfg-medidor-barra');
+    if (!barra) return;
+    try {
+        ctxMedidor = new (window.AudioContext || window.webkitAudioContext)();
+        fonteMedidor = ctxMedidor.createMediaStreamSource(stream);
+        const analisador = ctxMedidor.createAnalyser();
+        analisador.fftSize = 512;
+        fonteMedidor.connect(analisador);
+        const dados = new Uint8Array(analisador.fftSize);
+        const quadro = () => {
+            analisador.getByteTimeDomainData(dados);
+            let pico = 0;
+            for (let i = 0; i < dados.length; i++) pico = Math.max(pico, Math.abs(dados[i] - 128));
+            barra.style.width = Math.min(100, Math.round((pico / 128) * 140)) + '%';
+            quadroMedidor = requestAnimationFrame(quadro);
+        };
+        quadro();
+    } catch (e) { /* sem medidor: o teste continua funcionando */ }
+}
+function pararMedidorMicrofone() {
+    if (quadroMedidor) cancelAnimationFrame(quadroMedidor);
+    quadroMedidor = 0;
+    try { if (fonteMedidor) fonteMedidor.disconnect(); } catch (e) {}
+    try { if (ctxMedidor) ctxMedidor.close(); } catch (e) {}
+    fonteMedidor = null; ctxMedidor = null;
+    const barra = document.getElementById('cfg-medidor-barra');
+    if (barra) barra.style.width = '0';
+}
+function atualizarBotaoTesteConfig() {
+    const b = document.getElementById('cfg-testar-mic');
+    if (b) b.textContent = microfoneTesteAtivo ? '⏹ Parar teste' : '🎧 Testar microfone';
+}
+
+// ---------- Lista de dispositivos ----------
+async function preencherDispositivosAudio() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+    let lista = [];
+    try {
+        lista = await navigator.mediaDevices.enumerateDevices();
+        // Sem permissão os nomes vêm vazios: pede uma vez (e solta o microfone logo em seguida).
+        if (lista.some((d) => d.kind === 'audioinput' && !d.label)) {
+            try {
+                const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+                s.getTracks().forEach((t) => t.stop());
+                lista = await navigator.mediaDevices.enumerateDevices();
+            } catch (e) { /* sem permissão: segue com nomes genéricos */ }
+        }
+    } catch (e) { return; }
+    const preencher = (selectId, tipo, atual, rotuloPadrao) => {
+        const sel = document.getElementById(selectId);
+        sel.textContent = '';
+        const padrao = document.createElement('option');
+        padrao.value = ''; padrao.textContent = rotuloPadrao;
+        sel.appendChild(padrao);
+        let n = 0;
+        lista.filter((d) => d.kind === tipo && d.deviceId !== 'default' && d.deviceId !== 'communications').forEach((d) => {
+            n++;
+            const o = document.createElement('option');
+            o.value = d.deviceId;
+            o.textContent = d.label || `${tipo === 'audioinput' ? 'Microfone' : 'Saída'} ${n}`;
+            sel.appendChild(o);
+        });
+        // Dispositivo salvo que não existe mais (fone desconectado): volta pro padrão.
+        sel.value = [...sel.options].some((o) => o.value === atual) ? atual : '';
+    };
+    preencher('cfg-select-entrada', 'audioinput', prefsAudio.microfoneId, 'Padrão do sistema');
+    preencher('cfg-select-saida', 'audiooutput', prefsAudio.saidaId, 'Padrão do sistema');
+}
+if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+    navigator.mediaDevices.addEventListener('devicechange', () => { if (configAberta()) preencherDispositivosAudio(); });
+}
+
+// ---------- Abrir / fechar / navegar ----------
+const modalConfig = () => document.getElementById('modal-config');
+function configAberta() { return modalConfig().style.display === 'flex'; }
+
+function irParaSecaoConfig(nome) {
+    document.querySelectorAll('.cfg-item').forEach((b) => b.classList.toggle('ativo', b.dataset.cfg === nome));
+    document.querySelectorAll('.cfg-painel').forEach((p) => p.classList.toggle('ativo', p.id === 'cfg-painel-' + nome));
+    if (nome === 'voz') preencherDispositivosAudio();
+    if (nome === 'acesso') { abaAdmin = 'pedidos'; irParaAbaAdmin('pedidos'); carregarAcesso(false); }
+    if (nome !== 'voz' && microfoneTesteAtivo) pararTesteMicrofone();
+    try { localStorage.setItem('estrivisor_config_secao', nome); } catch (e) {}
+    modalConfig().querySelector('.cfg-conteudo').scrollTop = 0;
+}
+
+function preencherContaConfig() {
+    const nome = nomeUsuarioAtual || '—';
+    document.getElementById('cfg-nome').textContent = nome;
+    aplicarAvatar(document.getElementById('cfg-avatar'), obterIdentidadeUsuario() || '', nome, avatarUsuarioAtual || null);
+    document.getElementById('cfg-conta-tipo').textContent = contaAtual ? 'Conta do Estrivisor (entrou com o Discord)' : 'Sem conta — modo local';
+    document.getElementById('cfg-sair-conta').style.display = contaAtual ? '' : 'none';
+    document.getElementById('cfg-codigo-amigo').textContent = amigosEstado.codigo || '—';
+}
+function preencherControlesAudio() {
+    document.getElementById('cfg-eco').checked = prefsAudio.eco;
+    document.getElementById('cfg-ruido').checked = prefsAudio.ruido;
+    document.getElementById('cfg-ganho').checked = prefsAudio.ganho;
+    document.getElementById('cfg-qualidade-voz').value = prefsAudio.qualidade;
+    document.getElementById('cfg-dtx').checked = prefsAudio.dtx;
+    document.getElementById('cfg-red').checked = prefsAudio.red;
+}
+
+function abrirConfig(secao) {
+    preencherContaConfig();
+    preencherControlesAudio();
+    let ultima = 'conta';
+    try { ultima = localStorage.getItem('estrivisor_config_secao') || 'conta'; } catch (e) {}
+    const valida = ['conta', 'voz', 'video', 'aparencia', 'discord', 'sobre'];
+    irParaSecaoConfig(valida.includes(secao) ? secao : (valida.includes(ultima) ? ultima : 'conta'));
+    modalConfig().style.display = 'flex';
+    window.electronAPI.versaoApp().then((v) => { document.getElementById('cfg-versao').textContent = 'versão ' + v; }).catch(() => {});
+}
+function fecharConfig() {
+    if (microfoneTesteAtivo) pararTesteMicrofone();
+    modalConfig().style.display = 'none';
+}
+
+document.getElementById('btn-config-usuario').addEventListener('click', () => abrirConfig());
+document.getElementById('cfg-fechar').addEventListener('click', fecharConfig);
+document.querySelectorAll('.cfg-item').forEach((b) => b.addEventListener('click', () => irParaSecaoConfig(b.dataset.cfg)));
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && configAberta() && document.getElementById('modal-texto').style.display !== 'flex') fecharConfig();
+    if ((e.ctrlKey || e.metaKey) && e.key === ',') { e.preventDefault(); configAberta() ? fecharConfig() : abrirConfig(); }
+});
+
+document.getElementById('cfg-sair-conta').addEventListener('click', () => { fecharConfig(); document.getElementById('btn-login-sair-conta').click(); });
+
+// ---------- Eventos dos controles de voz ----------
+document.getElementById('cfg-testar-mic').addEventListener('click', alternarTesteMicrofone);
+document.getElementById('cfg-select-entrada').addEventListener('change', async (e) => {
+    prefsAudio.microfoneId = e.target.value; salvarPreferenciasAudio();
+    if (microfoneTesteAtivo) { pararTesteMicrofone(); await alternarTesteMicrofone(); }
+    reaplicarAudioNaChamada(false);
+});
+document.getElementById('cfg-select-saida').addEventListener('change', (e) => {
+    prefsAudio.saidaId = e.target.value; salvarPreferenciasAudio();
+    if (audioTesteMic && audioTesteMic.setSinkId) audioTesteMic.setSinkId(prefsAudio.saidaId || '').catch(() => {});
+    reaplicarAudioNaChamada(true);
+});
+[['cfg-eco', 'eco'], ['cfg-ruido', 'ruido'], ['cfg-ganho', 'ganho'], ['cfg-dtx', 'dtx'], ['cfg-red', 'red']].forEach(([id, chave]) => {
+    document.getElementById(id).addEventListener('change', async (e) => {
+        prefsAudio[chave] = e.target.checked; salvarPreferenciasAudio();
+        if (microfoneTesteAtivo) { pararTesteMicrofone(); await alternarTesteMicrofone(); }
+        reaplicarAudioNaChamada(false);
+    });
+});
+document.getElementById('cfg-qualidade-voz').addEventListener('change', (e) => {
+    prefsAudio.qualidade = BITRATE_VOZ[e.target.value] ? e.target.value : 'alta'; salvarPreferenciasAudio();
+    reaplicarAudioNaChamada(false);
+});
+
+// ---------- Menus do microfone e do fone (setinhas no cartão do usuário) ----------
+async function listarDispositivosAudio(tipo) {
+    try {
+        const lista = await navigator.mediaDevices.enumerateDevices();
+        return lista.filter((d) => d.kind === tipo && d.deviceId !== 'default' && d.deviceId !== 'communications');
+    } catch (e) { return []; }
+}
+function escolherDispositivoAudio(entrada, id) {
+    if (entrada) prefsAudio.microfoneId = id; else prefsAudio.saidaId = id;
+    salvarPreferenciasAudio();
+    reaplicarAudioNaChamada(!entrada);
+    if (configAberta()) preencherDispositivosAudio();
+}
+async function abrirMenuDispositivos(tipo, botao) {
+    const entrada = tipo === 'audioinput';
+    const r = botao.getBoundingClientRect();
+    const dispositivos = await listarDispositivosAudio(tipo);
+    abrirMenu(r.left, r.top, () => {
+        const atualId = entrada ? prefsAudio.microfoneId : prefsAudio.saidaId;
+        const marca = (ok) => (ok ? '✓ ' : '  ');
+        const itens = [{ id: 'padrao', rotulo: marca(atualId === '') + 'Padrão do sistema', mantemAberto: true, acao: () => escolherDispositivoAudio(entrada, '') }];
+        dispositivos.forEach((d, i) => {
+            const nome = (d.label || `${entrada ? 'Microfone' : 'Saída'} ${i + 1}`).slice(0, 44);
+            itens.push({ id: 'disp-' + i, rotulo: marca(atualId === d.deviceId) + nome, mantemAberto: true, acao: () => escolherDispositivoAudio(entrada, d.deviceId) });
+        });
+        if (entrada) {
+            itens.push({ separador: true });
+            [['eco', 'Cancelamento de eco'], ['ruido', 'Supressão de ruído'], ['ganho', 'Volume automático']].forEach(([chave, nome]) => {
+                itens.push({
+                    id: 'proc-' + chave, rotulo: (prefsAudio[chave] ? '☑ ' : '☐ ') + nome, mantemAberto: true,
+                    acao: () => { prefsAudio[chave] = !prefsAudio[chave]; salvarPreferenciasAudio(); reaplicarAudioNaChamada(false); }
+                });
+            });
+        }
+        itens.push({ separador: true });
+        itens.push({ id: 'cfg-voz', rotulo: '⚙️ Configurações de voz', acao: () => abrirConfig('voz') });
+        return { cabecalho: entrada ? 'Microfone' : 'Saída de áudio', itens };
+    });
+}
+document.getElementById('btn-mic-seta').addEventListener('click', (e) => { e.stopPropagation(); abrirMenuDispositivos('audioinput', e.currentTarget); });
+document.getElementById('btn-fone-seta').addEventListener('click', (e) => { e.stopPropagation(); abrirMenuDispositivos('audiooutput', e.currentTarget); });
+
+// ---------- Conexão de voz: ícone de wifi + mini menu com a latência ----------
+// A latência (ping) vem das estatísticas do próprio WebRTC; o LiveKit expõe isso por dentro.
+// Se alguma versão não expuser, os campos ficam com "—" e o resto continua funcionando.
+let ultimaAmostraVoz = null; // { perdidos, recebidos } da leitura anterior (pra calcular a perda recente)
+let estatVoz = { rtt: null, perda: null, jitter: null };
+
+async function lerEstatisticasVoz() {
+    const sala = roomVoz;
+    if (!sala || !vozConectada()) return null;
+    const pcm = sala.engine && sala.engine.pcManager;
+    const transportes = [pcm && pcm.publisher, pcm && pcm.subscriber].filter((t) => t && typeof t.getStats === 'function');
+    let rttPar = null, rttRemoto = null, jitter = null, perdidos = 0, recebidos = 0;
+    for (const t of transportes) {
+        let rel = null;
+        try { rel = await t.getStats(); } catch (e) { continue; }
+        if (!rel) continue;
+        rel.forEach((r) => {
+            if (r.type === 'candidate-pair' && (r.nominated || r.state === 'succeeded') && typeof r.currentRoundTripTime === 'number') {
+                rttPar = rttPar === null ? r.currentRoundTripTime : Math.min(rttPar, r.currentRoundTripTime);
+            }
+            if (r.type === 'remote-inbound-rtp' && typeof r.roundTripTime === 'number') rttRemoto = r.roundTripTime;
+            if (r.type === 'inbound-rtp' && r.kind === 'audio') {
+                perdidos += r.packetsLost || 0; recebidos += r.packetsReceived || 0;
+                if (typeof r.jitter === 'number') jitter = Math.max(jitter || 0, r.jitter * 1000);
+            }
+        });
+    }
+    const seg = rttPar !== null ? rttPar : rttRemoto;
+    let perda = null;
+    if (ultimaAmostraVoz) {
+        const dp = perdidos - ultimaAmostraVoz.perdidos, dr = recebidos - ultimaAmostraVoz.recebidos;
+        if (dp >= 0 && dr >= 0 && dp + dr > 0) perda = (dp / (dp + dr)) * 100;
+        else if (dp === 0 && dr === 0) perda = estatVoz.perda;
+    }
+    ultimaAmostraVoz = { perdidos, recebidos };
+    return { rtt: seg === null ? null : Math.round(seg * 1000), perda, jitter: jitter === null ? null : Math.round(jitter) };
+}
+
+function nivelDaConexao(e) {
+    if (avisoConexaoVoz) return 'desconhecida';
+    if (!e || e.rtt === null) return 'desconhecida';
+    let n = e.rtt < 80 ? 'otima' : e.rtt < 150 ? 'boa' : e.rtt < 250 ? 'regular' : 'ruim';
+    const ordem = ['otima', 'boa', 'regular', 'ruim'];
+    const piso = e.perda !== null && e.perda > 10 ? 'ruim' : (e.perda !== null && e.perda > 4 ? 'regular' : 'otima');
+    if (ordem.indexOf(piso) > ordem.indexOf(n)) n = piso;
+    return n;
+}
+const ROTULO_NIVEL = { otima: 'Ótima', boa: 'Boa', regular: 'Regular', ruim: 'Ruim', desconhecida: 'Medindo...' };
+const DICA_NIVEL = {
+    otima: 'Sua conexão está ótima.',
+    boa: 'Boa conexão para voz e transmissão.',
+    regular: 'A conexão está oscilando. Se a voz picotar, aproxime-se do roteador ou use cabo.',
+    ruim: 'Conexão ruim: a voz pode falhar. Tente cabo de rede, feche downloads ou reduza a qualidade da transmissão.',
+    desconhecida: ''
+};
+
+function desenharConexaoVoz() {
+    const nivel = nivelDaConexao(estatVoz);
+    document.getElementById('btn-conexao').dataset.nivel = nivel;
+    document.getElementById('pop-latencia').textContent = estatVoz.rtt === null ? '—' : estatVoz.rtt + ' ms';
+    document.getElementById('pop-qualidade').textContent = ROTULO_NIVEL[nivel];
+    document.getElementById('pop-perda').textContent = estatVoz.perda === null ? '—' : estatVoz.perda.toFixed(1).replace('.', ',') + '%';
+    document.getElementById('pop-jitter').textContent = estatVoz.jitter === null ? '—' : estatVoz.jitter + ' ms';
+    document.getElementById('pop-dica').textContent = DICA_NIVEL[nivel];
+}
+
+let medindoVoz = false;
+async function atualizarConexaoVoz() {
+    if (medindoVoz) return;
+    if (!vozConectada()) {
+        ultimaAmostraVoz = null;
+        estatVoz = { rtt: null, perda: null, jitter: null };
+        desenharConexaoVoz();
+        return;
+    }
+    medindoVoz = true;
+    try {
+        const e = await lerEstatisticasVoz();
+        if (e) estatVoz = e;
+    } catch (err) { /* sem estatísticas: mantém o último valor */ }
+    medindoVoz = false;
+    desenharConexaoVoz();
+}
+setInterval(atualizarConexaoVoz, 2000);
+
+const popoverConexao = () => document.getElementById('popover-conexao');
+function fecharPopoverConexao() { popoverConexao().style.display = 'none'; }
+document.getElementById('btn-conexao').addEventListener('click', (e) => {
+    e.stopPropagation(); // não deixa o clique "entrar" no canal de voz pelo cartão
+    const pop = popoverConexao();
+    if (pop.style.display === 'flex') return fecharPopoverConexao();
+    const r = e.currentTarget.getBoundingClientRect();
+    pop.style.left = Math.max(10, Math.min(r.left, window.innerWidth - 260)) + 'px';
+    pop.style.bottom = (window.innerHeight - r.top + 8) + 'px';
+    pop.style.top = 'auto';
+    pop.style.display = 'flex';
+    desenharConexaoVoz();
+    atualizarConexaoVoz();
+});
+document.addEventListener('mousedown', (e) => {
+    if (popoverConexao().style.display === 'flex' && !popoverConexao().contains(e.target) && !document.getElementById('btn-conexao').contains(e.target)) fecharPopoverConexao();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') fecharPopoverConexao(); });
+
+// ============================================================
+// Amigos e mensagens diretas
+// ============================================================
+let amigosEstado = { codigo: '', amigos: [], recebidos: [], enviados: [] };
+let temporizadorAmigos = null;
+let abaAmigos = 'amigos';
+let dmAtual = null; // { usuario, nome, avatar }
+
+const amigosAbertos = () => document.getElementById('tela-amigos').style.display === 'flex';
+
+function registrarUltimasServidor(servidorId, ultimas) {
+    if (!ultimas || typeof ultimas !== 'object') return;
+    const mapa = {};
+    Object.keys(ultimas).forEach((canalId) => { mapa[chaveCanalTexto(servidorId, canalId)] = ultimas[canalId]; });
+    registrarUltimas(mapa);
+    atualizarBadges();
+}
+
+async function carregarAmigos() {
+    if (!obterIdentidadeUsuario()) return;
+    try {
+        const d = await api('GET', '/amigos');
+        amigosEstado = {
+            codigo: String(d.codigo || ''),
+            amigos: Array.isArray(d.amigos) ? d.amigos : [],
+            recebidos: Array.isArray(d.recebidos) ? d.recebidos : [],
+            enviados: Array.isArray(d.enviados) ? d.enviados : []
+        };
+        const mapa = {};
+        amigosEstado.amigos.forEach((a) => { mapa[chaveDmLocal(a.usuario)] = a.ultimaDm || 0; });
+        registrarUltimas(mapa);
+        document.getElementById('cfg-codigo-amigo').textContent = amigosEstado.codigo || '—';
+        if (amigosAbertos()) renderizarAmigos();
+        assinaturaBadges = ''; // força o redesenho (mudou a lista de amigos ou os pedidos)
+        atualizarBadges();
+    } catch (err) { /* sem conta ou servidor fora do ar: tenta de novo no próximo ciclo */ }
+}
+function iniciarAmigos() {
+    pararAmigos();
+    carregarAmigos();
+    iniciarAcesso();
+    temporizadorAmigos = setInterval(carregarAmigos, 10000);
+}
+function pararAmigos() {
+    acessoAdmin = false; pararAcesso();
+    if (temporizadorAmigos) { clearInterval(temporizadorAmigos); temporizadorAmigos = null; }
+    amigosEstado = { codigo: '', amigos: [], recebidos: [], enviados: [] };
+    dmAtual = null;
+}
+
+
+// ============================================================
+// Termos de uso (aceite) e denúncias
+// ============================================================
+const VERSAO_TERMOS_APP = 1;   // tem que ser igual à VERSAO_TERMOS do servidor
+let termosPendentes = null;
+
+function garantirTermos() {
+    return api('GET', '/termos').then((d) => (d.aceito ? true : mostrarTelaTermos(d.versao))).catch(() => true);
+}
+
+// Chamado quando o servidor responde "aceite os termos" no meio do uso.
+function exigirTermosAgora() {
+    if (termosPendentes) return;
+    mostrarTelaTermos(VERSAO_TERMOS_APP).then((ok) => { if (ok) { carregarMeusServidores(); iniciarAmigos(); } });
+}
+
+function mostrarTelaTermos(versaoServidor) {
+    if (termosPendentes) return termosPendentes;
+    const tela = document.getElementById('tela-termos');
+    const check = document.getElementById('termos-check');
+    const aceitar = document.getElementById('termos-aceitar');
+    const desatualizado = versaoServidor !== VERSAO_TERMOS_APP;
+    const texto = document.getElementById('termos-texto');
+    const aviso = document.getElementById('termos-aviso');
+    check.checked = false;
+    aceitar.disabled = true;
+    texto.scrollTop = 0;
+    const conferirLeitura = () => {
+        const leu = texto.scrollHeight - texto.scrollTop - texto.clientHeight < 8;
+        check.disabled = desatualizado || !leu;
+        aviso.style.display = leu ? 'none' : '';
+    };
+    texto.onscroll = conferirLeitura;
+    document.getElementById('termos-versao').textContent = desatualizado
+        ? 'Os termos foram atualizados. Instale a versão mais nova do Estrivisor para continuar.'
+        : `Termos, versão ${VERSAO_TERMOS_APP}.`;
+    tela.style.display = 'flex';
+    conferirLeitura();
+    termosPendentes = new Promise((resolve) => {
+        const fechar = (resultado) => {
+            tela.style.display = 'none';
+            check.onchange = aceitar.onclick = document.getElementById('termos-sair').onclick = texto.onscroll = null;
+            termosPendentes = null;
+            resolve(resultado);
+        };
+        check.onchange = () => { aceitar.disabled = !check.checked || desatualizado; };
+        aceitar.onclick = async () => {
+            aceitar.disabled = true;
+            try {
+                await api('POST', '/termos/aceitar', { versao: VERSAO_TERMOS_APP, maior18: true });
+                fechar(true);
+            } catch (err) { aceitar.disabled = false; mostrarNotificacao('Não consegui registrar o aceite: ' + err.message); }
+        };
+        document.getElementById('termos-sair').onclick = async () => {
+            try { await window.electronAPI.sairDaConta(); } catch (e) { /* sai mesmo assim */ }
+            fechar(false);
+            await encerrarContaNoApp();
+            mostrarTelaLogin('entrar');
+        };
+    });
+    return termosPendentes;
+}
+
+const MOTIVOS_DENUNCIA = {
+    assedio: 'Assédio / ameaça', 'sexual-menores': 'Conteúdo sexual com menores', golpe: 'Golpe / fraude',
+    pirataria: 'Pirataria', ilegal: 'Atividade ilegal', outro: 'Outro'
+};
+
+function itemDenunciar(usuario, nome) {
+    if (usuario === obterIdentidadeUsuario()) return { separador: true };
+    return { id: 'denunciar', rotulo: '🚩 Denunciar', perigo: true, acao: () => abrirDenuncia({ titulo: `Denunciar ${nome}`, corpo: { tipo: 'pessoa', alvo: usuario } }) };
+}
+
+function denunciarMensagem(m, caminho) {
+    let corpo = null;
+    const canal = /^\/servidores\/([^/]+)\/canais\/([^/]+)\/mensagens/.exec(caminho || '');
+    const dm = /^\/dm\/([^/]+)\/mensagens/.exec(caminho || '');
+    if (canal) corpo = { tipo: 'mensagem', origem: 'canal', servidorId: canal[1], canalId: canal[2], seq: m.seq };
+    else if (dm) corpo = { tipo: 'mensagem', origem: 'dm', outro: decodeURIComponent(dm[1]), seq: m.seq };
+    if (!corpo) return;
+    abrirDenuncia({ titulo: `Denunciar mensagem de ${m.nome || 'alguém'}`, dica: 'O administrador vai ler esta mensagem e as que vieram antes e depois dela.', corpo });
+}
+
+function abrirDenuncia({ titulo, dica = '', corpo }) {
+    const modal = document.getElementById('modal-denuncia');
+    document.getElementById('denuncia-titulo').textContent = titulo;
+    document.getElementById('denuncia-dica').textContent = dica;
+    document.getElementById('denuncia-motivo').value = 'assedio';
+    document.getElementById('denuncia-detalhe').value = '';
+    modal.style.display = 'flex';
+    const enviar = document.getElementById('denuncia-enviar');
+    const fechar = () => { modal.style.display = 'none'; enviar.onclick = null; document.getElementById('denuncia-cancelar').onclick = null; };
+    document.getElementById('denuncia-cancelar').onclick = fechar;
+    enviar.onclick = async () => {
+        enviar.disabled = true;
+        try {
+            await api('POST', '/denuncias', { ...corpo, motivo: document.getElementById('denuncia-motivo').value, detalhe: document.getElementById('denuncia-detalhe').value });
+            fechar();
+            mostrarNotificacao('Denúncia enviada. Obrigado por avisar.', 'info');
+        } catch (err) { mostrarNotificacao('Não consegui enviar a denúncia: ' + err.message); }
+        enviar.disabled = false;
+    };
+}
+
+// ============================================================
+// Administração (só administrador): pedidos, pessoas, servidores, denúncias e histórico
+// ============================================================
+let acessoAdmin = false;
+let acessoPedidosVistos = null;
+let temporizadorAcesso = null;
+let abaAdmin = 'pedidos';
+const ROTULOS_ACAO = {
+    liberar: 'liberou', negar: 'negou o pedido de', 'remover-acesso': 'removeu o acesso de', suspender: 'suspendeu', banir: 'baniu',
+    'desfazer-punicao': 'desfez a punição de', 'apagar-servidor': 'apagou um servidor de',
+    'denuncia-ignorar': 'ignorou uma denúncia contra', 'denuncia-remover-mensagem': 'removeu uma mensagem de',
+    'denuncia-suspender': 'suspendeu (denúncia)', 'denuncia-banir': 'baniu (denúncia)'
+};
+
+function textoSeguro(t) { const d = document.createElement('div'); d.textContent = String(t == null ? '' : t); return d.innerHTML; }
+const dataHora = (ts) => ts ? new Date(ts).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
+
+function linhaAdmin({ usuario, avatar, titulo, selos = [], sub = '', botoes = [] }) {
+    const li = document.createElement('div');
+    li.className = 'acesso-linha';
+    const img = document.createElement('span');
+    img.className = 'avatar-participante';
+    if (usuario) aplicarAvatar(img, usuario, titulo, urlAvatarSegura(avatar));
+    else img.style.display = 'none';
+    const info = document.createElement('div');
+    info.className = 'acesso-info';
+    info.innerHTML = `<b>${textoSeguro(titulo)}${selos.map((s) => `<span class="selo ${s.tom || ''}">${textoSeguro(s.texto)}</span>`).join('')}</b><span>${textoSeguro(sub)}</span>`;
+    const bt = document.createElement('div');
+    bt.className = 'acesso-botoes';
+    botoes.forEach((b) => { const el = document.createElement('button'); el.textContent = b.texto; if (b.perigo) el.className = 'cfg-btn-perigo'; el.onclick = b.acao; bt.appendChild(el); });
+    li.append(img, info, bt);
+    return li;
+}
+
+function vazioAdmin(texto) { const d = document.createElement('div'); d.className = 'acesso-vazio'; d.textContent = texto; return d; }
+
+function atualizarContadoresAdmin(d) {
+    const p = d.pedidos.length, n = d.denunciasAbertas || 0;
+    const a = document.getElementById('adm-cont-pedidos'), b = document.getElementById('adm-cont-denuncias'), c = document.getElementById('cfg-badge-acesso');
+    a.textContent = p; a.style.display = p ? '' : 'none';
+    b.textContent = n; b.style.display = n ? '' : 'none';
+    c.textContent = p + n; c.style.display = p + n ? '' : 'none';
+}
+
+async function carregarAcesso(avisar) {
+    try {
+        const d = await api('GET', '/admin/acesso');
+        d.pedidos = Array.isArray(d.pedidos) ? d.pedidos : [];
+        acessoAdmin = true;
+        document.getElementById('cfg-item-acesso').style.display = '';
+        atualizarContadoresAdmin(d);
+        const ids = new Set(d.pedidos.map((p) => p.usuario));
+        if (avisar && acessoPedidosVistos) {
+            const novos = d.pedidos.filter((p) => !acessoPedidosVistos.has(p.usuario));
+            if (novos.length) mostrarNotificacao(`${novos[0].nome || 'Alguém'} pediu acesso ao Estrivisor. Veja em Configurações > Administração.`, 'info');
+        }
+        acessoPedidosVistos = ids;
+        if (modalConfig().style.display === 'flex' && document.getElementById('cfg-painel-acesso').classList.contains('ativo')) desenharAbaAdmin(d);
+    } catch (err) {
+        if (err.status === 403) { acessoAdmin = false; pararAcesso(); }
+    }
+}
+
+function irParaAbaAdmin(aba) {
+    abaAdmin = aba;
+    document.querySelectorAll('.adm-aba').forEach((b) => b.classList.toggle('ativa', b.dataset.aba === aba));
+    desenharAbaAdmin();
+}
+document.getElementById('adm-abas').addEventListener('click', (e) => { const b = e.target.closest('.adm-aba'); if (b) irParaAbaAdmin(b.dataset.aba); });
+
+async function desenharAbaAdmin(dadosAcesso) {
+    const alvo = document.getElementById('adm-conteudo');
+    const dica = document.getElementById('adm-dica');
+    const minha = abaAdmin;
+    try {
+        const nova = document.createElement('div');
+        nova.className = 'acesso-lista';
+        if (minha === 'pedidos') {
+            dica.textContent = 'Quem tenta entrar sem estar liberado aparece aqui. Só libere quem você conhece e sabe que é maior de 18 anos.';
+            const d = dadosAcesso || await api('GET', '/admin/acesso');
+            if (!d.pedidos.length) nova.appendChild(vazioAdmin('Nenhum pedido no momento.'));
+            d.pedidos.forEach((p) => nova.appendChild(linhaAdmin({
+                usuario: p.usuario, avatar: p.avatar, titulo: p.nome || p.usuario, sub: `${String(p.usuario).replace('discord:', 'ID ')} · pediu em ${dataHora(p.ts)}`,
+                botoes: [
+                    { texto: 'Liberar', acao: () => agirAdmin('POST', '/admin/acesso/autorizar', { usuario: p.usuario }) },
+                    { texto: 'Negar', perigo: true, acao: () => agirAdmin('POST', '/admin/acesso/negar', { usuario: p.usuario }) },
+                    { texto: 'Banir', perigo: true, acao: () => punirPessoa(p, 'ban') }
+                ]
+            })));
+        } else if (minha === 'pessoas') {
+            dica.textContent = 'Todas as pessoas com acesso. Suspender tem data de fim; banir vale até você desfazer.';
+            const d = await api('GET', '/admin/pessoas');
+            if (!d.pessoas.length) nova.appendChild(vazioAdmin('Ninguém ainda.'));
+            d.pessoas.forEach((p) => {
+                const selos = [];
+                if (p.admin) selos.push({ texto: 'admin', tom: 'bom' });
+                if (p.online) selos.push({ texto: 'online', tom: 'bom' });
+                if (p.estado === 'banido') selos.push({ texto: 'banido', tom: 'ruim' });
+                if (p.estado === 'suspenso') selos.push({ texto: 'suspenso até ' + dataHora(p.punicao && p.punicao.ate), tom: 'ruim' });
+                if (p.estado === 'removido') selos.push({ texto: 'sem acesso', tom: 'ruim' });
+                if (!p.aceite) selos.push({ texto: 'sem aceite dos termos' });
+                const botoes = [];
+                if (!p.admin) {
+                    if (p.estado === 'banido' || p.estado === 'suspenso') botoes.push({ texto: 'Desfazer punição', acao: () => agirAdmin('POST', '/admin/desfazer-punicao', { usuario: p.usuario }) });
+                    else if (p.estado === 'removido') botoes.push({ texto: 'Liberar', acao: () => agirAdmin('POST', '/admin/acesso/autorizar', { usuario: p.usuario }) });
+                    else {
+                        botoes.push({ texto: 'Suspender', perigo: true, acao: () => punirPessoa(p, 'suspensao') });
+                        botoes.push({ texto: 'Banir', perigo: true, acao: () => punirPessoa(p, 'ban') });
+                        botoes.push({ texto: 'Remover acesso', perigo: true, acao: () => removerAcesso(p) });
+                    }
+                }
+                nova.appendChild(linhaAdmin({
+                    usuario: p.usuario, avatar: p.avatar, titulo: p.nome, selos,
+                    sub: `${String(p.usuario).replace('discord:', 'ID ')} · última vez: ${p.online ? 'agora' : dataHora(p.ultimaVez)} · liberado em ${dataHora(p.desde)} · servidores: ${p.servidores.length ? p.servidores.join(', ') : 'nenhum'}${p.aceite ? ' · termos v' + p.aceite.versao + ' em ' + dataHora(p.aceite.ts) : ''}${p.punicao && p.punicao.motivo ? ' · motivo: ' + p.punicao.motivo : ''}`,
+                    botoes
+                }));
+            });
+        } else if (minha === 'servidores') {
+            dica.textContent = 'Todos os servidores criados. Apagar remove canais, membros e conversas, e não tem volta.';
+            const d = await api('GET', '/admin/servidores');
+            if (!d.servidores.length) nova.appendChild(vazioAdmin('Nenhum servidor criado.'));
+            d.servidores.forEach((s) => nova.appendChild(linhaAdmin({
+                titulo: s.nome, sub: `Dono: ${s.donoNome || s.dono} · ${s.membros} membro(s) · ${s.canais} canal(is) · criado em ${dataHora(s.criadoEm)}`,
+                botoes: [{ texto: 'Apagar servidor', perigo: true, acao: () => apagarServidorAdmin(s) }]
+            })));
+        } else if (minha === 'denuncias') {
+            dica.textContent = 'Você só vê o trecho que a pessoa denunciou, nada além disso.';
+            const d = await api('GET', '/admin/denuncias');
+            if (!d.denuncias.length) nova.appendChild(vazioAdmin('Nenhuma denúncia.'));
+            [...d.denuncias].sort((a, b) => (a.estado === 'aberta' ? 0 : 1) - (b.estado === 'aberta' ? 0 : 1) || b.id - a.id).forEach((x) => nova.appendChild(cartaoDenuncia(x)));
+        } else {
+            dica.textContent = 'Tudo o que foi feito pelo painel, do mais novo para o mais antigo.';
+            const d = await api('GET', '/admin/historico');
+            if (!d.historico.length) nova.appendChild(vazioAdmin('Ainda não há registros.'));
+            d.historico.forEach((h) => nova.appendChild(linhaAdmin({
+                titulo: `${h.porNome || h.por} ${ROTULOS_ACAO[h.acao] || h.acao}${h.alvoNome ? ' ' + h.alvoNome : ''}`, sub: `${dataHora(h.ts)}${h.detalhe ? ' · ' + h.detalhe : ''}`
+            })));
+        }
+        if (minha !== abaAdmin) return; // trocou de aba enquanto carregava
+        alvo.replaceChildren(...nova.childNodes);
+    } catch (err) {
+        if (minha === abaAdmin) { alvo.replaceChildren(vazioAdmin('Não consegui carregar: ' + err.message)); }
+    }
+}
+
+function cartaoDenuncia(x) {
+    const card = document.createElement('div');
+    card.className = 'denuncia-card' + (x.estado === 'aberta' ? '' : ' resolvida');
+    const onde = x.origem
+        ? (x.origem.tipo === 'dm' ? `mensagem direta com ${x.origem.outroNome || ''}` : `canal #${x.origem.canalNome} em "${x.origem.servidorNome}"`)
+        : 'denúncia da pessoa';
+    const cab = document.createElement('div');
+    cab.className = 'acesso-info';
+    cab.innerHTML = `<b>${textoSeguro(MOTIVOS_DENUNCIA[x.motivo] || x.motivo)}<span class="selo ${x.estado === 'aberta' ? 'ruim' : ''}">${x.estado}</span></b>
+        <span>${textoSeguro(x.deNome)} denunciou <strong>${textoSeguro(x.alvoNome)}</strong> · ${textoSeguro(onde)} · ${dataHora(x.ts)}</span>`;
+    card.appendChild(cab);
+    if (x.detalhe) { const d = document.createElement('div'); d.className = 'cfg-dica'; d.textContent = 'Relato: ' + x.detalhe; card.appendChild(d); }
+    if (x.contexto && x.contexto.length) {
+        const ctx = document.createElement('div');
+        ctx.className = 'denuncia-ctx';
+        x.contexto.forEach((m) => {
+            const l = document.createElement('div');
+            if (x.origem && m.seq === x.origem.seq) l.className = 'alvo';
+            l.innerHTML = `<b>${textoSeguro(m.nome)}</b> <span class="cfg-dica">${dataHora(m.ts)}</span>: ${textoSeguro(m.texto)}`;
+            ctx.appendChild(l);
+        });
+        card.appendChild(ctx);
+    }
+    if (x.estado === 'aberta') {
+        const bt = document.createElement('div');
+        bt.className = 'acesso-botoes';
+        const add = (texto, perigo, acao) => { const b = document.createElement('button'); b.textContent = texto; if (perigo) b.className = 'cfg-btn-perigo'; b.onclick = acao; bt.appendChild(b); };
+        add('Ignorar', false, () => agirAdmin('POST', `/admin/denuncias/${x.id}/resolver`, { acao: 'ignorar' }));
+        if (x.origem) add('Remover mensagem', true, () => agirAdmin('POST', `/admin/denuncias/${x.id}/resolver`, { acao: 'remover-mensagem' }));
+        add('Suspender', true, () => punirPessoa({ usuario: x.alvo, nome: x.alvoNome }, 'suspensao', x.id));
+        add('Banir', true, () => punirPessoa({ usuario: x.alvo, nome: x.alvoNome }, 'ban', x.id));
+        card.appendChild(bt);
+    } else if (x.resolucao) {
+        const r = document.createElement('div');
+        r.className = 'cfg-dica';
+        r.textContent = `Resolvida (${x.resolucao.acao}${x.resolucao.nota ? ': ' + x.resolucao.nota : ''}) em ${dataHora(x.resolucao.ts)}`;
+        card.appendChild(r);
+    }
+    return card;
+}
+
+async function agirAdmin(metodo, caminho, corpo) {
+    try { await api(metodo, caminho, corpo); await carregarAcesso(false); desenharAbaAdmin(); }
+    catch (err) { mostrarNotificacao('Não foi possível concluir: ' + err.message); }
+}
+
+async function punirPessoa(p, tipo, denunciaId) {
+    let dias;
+    if (tipo === 'suspensao') {
+        const d = await pedirTexto({ titulo: `Suspender ${p.nome || 'esta pessoa'}`, dica: 'Por quantos dias? (1 a 365)', valor: '7', max: 3 });
+        if (!d) return;
+        dias = Number(d.texto);
+        if (!Number.isFinite(dias) || dias < 1 || dias > 365) return mostrarNotificacao('Digite um número de dias entre 1 e 365.');
+    }
+    const m = await pedirTexto({
+        titulo: (tipo === 'ban' ? 'Banir ' : 'Suspender ') + (p.nome || 'esta pessoa'),
+        dica: 'Escreva o motivo. A pessoa vai ler esta mensagem e ele fica no histórico.', max: 200, rotuloOk: tipo === 'ban' ? 'Banir' : 'Suspender'
+    });
+    if (!m) return;
+    if (denunciaId) await agirAdmin('POST', `/admin/denuncias/${denunciaId}/resolver`, { acao: tipo === 'ban' ? 'banir' : 'suspender', dias, motivo: m.texto });
+    else await agirAdmin('POST', '/admin/punir', { usuario: p.usuario, tipo, dias, motivo: m.texto });
+}
+
+async function removerAcesso(p) {
+    const c = await pedirTexto({ titulo: `Remover ${p.nome || 'esta pessoa'}?`, dica: 'A pessoa perde o acesso ao Estrivisor na hora e pode pedir de novo.', semCampo: true, rotuloOk: 'Remover' });
+    if (!c) return;
+    await agirAdmin('DELETE', '/admin/acesso/' + encodeURIComponent(p.usuario));
+}
+
+async function apagarServidorAdmin(s) {
+    const c = await pedirTexto({ titulo: `Apagar o servidor "${s.nome}"?`, dica: 'Remove canais, membros e todas as conversas dele. Não tem volta.', semCampo: true, rotuloOk: 'Apagar' });
+    if (!c) return;
+    await agirAdmin('DELETE', '/admin/servidores/' + encodeURIComponent(s.id));
+}
+
+function iniciarAcesso() {
+    pararAcesso();
+    carregarAcesso(false);
+    temporizadorAcesso = setInterval(() => { if (acessoAdmin) carregarAcesso(true); }, 30000);
+}
+function pararAcesso() {
+    if (temporizadorAcesso) { clearInterval(temporizadorAcesso); temporizadorAcesso = null; }
+    if (!acessoAdmin) { const i = document.getElementById('cfg-item-acesso'); if (i) i.style.display = 'none'; }
+    acessoPedidosVistos = null;
+}
+
+const chatDm = criarChat({
+    container: document.getElementById('amigos-mensagens'),
+    input: document.getElementById('amigos-input-mensagem'),
+    aoSemAcesso: () => { dmAtual = null; mostrarDmVazio(); carregarAmigos(); }
+});
+
+function mostrarDmVazio() {
+    chatDm.fechar();
+    document.getElementById('amigos-vazio').style.display = 'flex';
+    document.getElementById('amigos-chat').style.display = 'none';
+    document.getElementById('amigos-cab-titulo').textContent = 'Mensagens diretas';
+}
+
+function abrirDm(amigo) {
+    dmAtual = amigo;
+    document.getElementById('amigos-vazio').style.display = 'none';
+    document.getElementById('amigos-chat').style.display = 'flex';
+    document.getElementById('amigos-cab-titulo').textContent = '@ ' + amigo.nome;
+    document.getElementById('amigos-input-mensagem').placeholder = `Enviar mensagem para ${amigo.nome}`;
+    chatDm.abrir({
+        caminho: `/dm/${encodeURIComponent(amigo.usuario)}/mensagens`,
+        chaveLida: chaveDmLocal(amigo.usuario),
+        podeModerar: () => false
+    });
+    renderizarAmigos();
+    document.getElementById('amigos-input-mensagem').focus();
+}
+
+function subtituloAmigo(a) {
+    if (!a.online) return 'Offline';
+    return a.emVoz ? '🔊 Em chamada' : 'Online';
+}
+
+function linhaPessoa(p, { status, sub, acoes, acoesSempre, aoClicar, ativo, nl }) {
+    const linha = document.createElement('div');
+    linha.className = 'amigo-linha' + (ativo ? ' ativo' : '');
+    linha.innerHTML = `
+        <span class="avatar-wrap"><span class="avatar-participante"></span>${status !== undefined ? '<span class="ponto-status"></span>' : ''}</span>
+        <span class="amigo-info"><span class="amigo-nome"></span><span class="amigo-sub"></span></span>`;
+    aplicarAvatar(linha.querySelector('.avatar-participante'), p.usuario, p.nome, urlAvatarSegura(p.avatar));
+    linha.querySelector('.amigo-nome').textContent = p.nome;
+    linha.querySelector('.amigo-sub').textContent = (status && status.texto) || sub || '';
+    if (status !== undefined) linha.querySelector('.ponto-status').className = 'ponto-status' + (status.classe ? ' ' + status.classe : '');
+    if (nl) { const b = document.createElement('span'); b.className = 'badge-nl'; b.textContent = nl > 99 ? '99+' : String(nl); linha.appendChild(b); }
+    if (acoes && acoes.length) {
+        const div = document.createElement('span');
+        div.className = 'amigo-acoes' + (acoesSempre ? ' sempre' : '');
+        acoes.forEach(([rotulo, titulo, fn]) => {
+            const b = document.createElement('button');
+            b.textContent = rotulo; b.title = titulo;
+            b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
+            div.appendChild(b);
+        });
+        linha.appendChild(div);
+    }
+    if (aoClicar) linha.addEventListener('click', aoClicar);
+    return linha;
+}
+
+async function acaoAmizade(metodo, caminho, corpo, erroTexto) {
+    try { await api(metodo, caminho, corpo); } catch (err) { mostrarNotificacao(erroTexto + ' ' + err.message); }
+    await carregarAmigos();
+}
+
+function renderizarAmigos() {
+    const lista = document.getElementById('amigos-lista');
+    lista.innerHTML = '';
+    document.getElementById('amigos-codigo').textContent = amigosEstado.codigo || '—';
+    const pt = document.getElementById('amigos-pt');
+    pt.style.display = amigosEstado.recebidos.length ? '' : 'none';
+    pt.textContent = String(amigosEstado.recebidos.length);
+    document.querySelectorAll('#amigos-abas button').forEach((b) => b.classList.toggle('ativo', b.dataset.aba === abaAmigos));
+    document.getElementById('amigos-adicionar').style.display = abaAmigos === 'adicionar' ? 'flex' : 'none';
+
+    const vazio = (texto) => { const d = document.createElement('div'); d.className = 'amigos-vazio'; d.textContent = texto; lista.appendChild(d); };
+
+    if (abaAmigos === 'amigos') {
+        if (!amigosEstado.amigos.length) return vazio('Você ainda não tem amigos adicionados. Use a aba Adicionar com o código de um amigo, ou clique numa pessoa da lista de online de um servidor.');
+        const ordenados = [...amigosEstado.amigos].sort((a, b) => (b.online - a.online) || a.nome.localeCompare(b.nome, 'pt-BR'));
+        ordenados.forEach((a) => {
+            lista.appendChild(linhaPessoa(a, {
+                status: { texto: subtituloAmigo(a), classe: a.online ? (a.emVoz ? 'voz' : 'on') : '' },
+                ativo: dmAtual && dmAtual.usuario === a.usuario,
+                nl: dmAtual && dmAtual.usuario === a.usuario && chatDm.ativo() ? 0 : naoLidas(chaveDmLocal(a.usuario)),
+                aoClicar: () => abrirDm(a),
+                acoes: [['✕', 'Remover amigo', async () => {
+                    const r = await pedirTexto({ titulo: `Remover ${a.nome}?`, dica: 'Vocês deixam de ser amigos. O histórico da conversa volta se adicionarem de novo.', semCampo: true, rotuloOk: 'Remover' });
+                    if (!r) return;
+                    if (dmAtual && dmAtual.usuario === a.usuario) { dmAtual = null; mostrarDmVazio(); }
+                    acaoAmizade('DELETE', `/amigos/${encodeURIComponent(a.usuario)}`, undefined, 'Não consegui remover:');
+                }]]
+            }));
+        });
+    } else if (abaAmigos === 'pendentes') {
+        if (!amigosEstado.recebidos.length && !amigosEstado.enviados.length) return vazio('Nenhum pedido pendente.');
+        amigosEstado.recebidos.forEach((p) => lista.appendChild(linhaPessoa(p, {
+            sub: 'Quer ser seu amigo', acoesSempre: true,
+            acoes: [
+                ['✔', 'Aceitar', () => acaoAmizade('POST', '/amigos/aceitar', { usuario: p.usuario }, 'Não consegui aceitar:')],
+                ['✕', 'Recusar', () => acaoAmizade('POST', '/amigos/recusar', { usuario: p.usuario }, 'Não consegui recusar:')]
+            ]
+        })));
+        amigosEstado.enviados.forEach((p) => lista.appendChild(linhaPessoa(p, {
+            sub: 'Pedido enviado', acoesSempre: true,
+            acoes: [['Cancelar', 'Cancelar pedido', () => acaoAmizade('POST', '/amigos/recusar', { usuario: p.usuario }, 'Não consegui cancelar:')]]
+        })));
+    }
+}
+
+async function enviarPedidoAmizade() {
+    const campo = document.getElementById('amigos-input-codigo');
+    const res = document.getElementById('amigos-resultado');
+    const codigo = campo.value.trim();
+    if (!codigo) return;
+    res.className = 'resultado'; res.textContent = 'Enviando...';
+    try {
+        const r = await api('POST', '/amigos/pedir', { codigo });
+        res.className = 'resultado ok';
+        res.textContent = r.resultado === 'amigos' ? `Pronto! Você e ${r.pessoa.nome} agora são amigos.` : `Pedido enviado para ${r.pessoa.nome}. Falta ela aceitar.`;
+        campo.value = '';
+        carregarAmigos();
+    } catch (err) {
+        res.className = 'resultado erro';
+        res.textContent = err.message;
+    }
+}
+document.getElementById('amigos-enviar-pedido').addEventListener('click', enviarPedidoAmizade);
+document.getElementById('amigos-input-codigo').addEventListener('keydown', (e) => { if (e.key === 'Enter') enviarPedidoAmizade(); });
+document.querySelectorAll('#amigos-abas button').forEach((b) => b.addEventListener('click', () => {
+    abaAmigos = b.dataset.aba;
+    document.getElementById('amigos-resultado').textContent = '';
+    renderizarAmigos();
+}));
+
+function copiarTexto(texto, aviso) {
+    const ok = () => mostrarNotificacao(aviso || 'Copiado!', 'info');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(texto).then(ok).catch(() => copiarReserva(texto, ok));
+    } else copiarReserva(texto, ok);
+}
+function copiarReserva(texto, ok) {
+    const t = document.createElement('textarea');
+    t.value = texto; t.style.position = 'fixed'; t.style.opacity = '0';
+    document.body.appendChild(t); t.select();
+    try { document.execCommand('copy'); ok(); } catch (e) { mostrarNotificacao('Não consegui copiar. Selecione e copie à mão: ' + texto); }
+    t.remove();
+}
+document.getElementById('amigos-copiar').addEventListener('click', () => { if (amigosEstado.codigo) copiarTexto(amigosEstado.codigo, 'Código copiado!'); });
+document.getElementById('cfg-copiar-codigo').addEventListener('click', () => { if (amigosEstado.codigo) copiarTexto(amigosEstado.codigo, 'Código copiado!'); });
+
+function abrirAmigos(aba, usuarioParaAbrir) {
+    if (!obterIdentidadeUsuario()) return mostrarNotificacao('Entre com a sua conta pra usar a lista de amigos.');
+    if (configAberta()) fecharConfig();
+    if (aba) abaAmigos = aba;
+    document.getElementById('tela-amigos').style.display = 'flex';
+    renderizarAmigos();
+    renderizarBarraServidores();
+    carregarAmigos().then(() => {
+        const a = usuarioParaAbrir && amigosEstado.amigos.find((x) => x.usuario === usuarioParaAbrir);
+        if (a) abrirDm(a);
+    });
+}
+function fecharAmigos() {
+    const tela = document.getElementById('tela-amigos');
+    if (tela.style.display !== 'flex') return;
+    tela.style.display = 'none';
+    mostrarDmVazio();
+    dmAtual = null;
+    renderizarBarraServidores();
+}
+document.getElementById('amigos-fechar').addEventListener('click', fecharAmigos);
+document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !amigosAbertos() || configAberta()) return;
+    if (document.getElementById('modal-texto').style.display === 'flex' || menuContextoAberto) return;
+    fecharAmigos();
+});
+window.addEventListener('focus', () => { chatCanal.marcarVisto(); chatDm.marcarVisto(); });
+
+// ---------- Adicionar amigo / mandar mensagem a partir de uma pessoa ----------
+async function pedirAmizadePorUsuario(usuario) {
+    try {
+        const r = await api('POST', '/amigos/pedir', { usuario });
+        mostrarNotificacao(r.resultado === 'amigos' ? `Você e ${r.pessoa.nome} agora são amigos!` : `Pedido enviado para ${r.pessoa.nome}.`, 'info');
+        carregarAmigos();
+    } catch (err) { mostrarNotificacao(err.message); }
+}
+function itemAmizade(usuario) {
+    if (usuario === obterIdentidadeUsuario()) return { id: 'eu', rotulo: 'Você', desabilitado: true, acao: () => {} };
+    if (amigosEstado.amigos.some((a) => a.usuario === usuario)) return { id: 'dm', rotulo: '💬 Enviar mensagem', acao: () => abrirAmigos('amigos', usuario) };
+    if (amigosEstado.enviados.some((p) => p.usuario === usuario)) return { id: 'pend', rotulo: '⏳ Pedido de amizade enviado', desabilitado: true, acao: () => {} };
+    if (amigosEstado.recebidos.some((p) => p.usuario === usuario)) return { id: 'aceitar', rotulo: '✔ Aceitar pedido de amizade', acao: () => acaoAmizade('POST', '/amigos/aceitar', { usuario }, 'Não consegui aceitar:') };
+    return { id: 'add', rotulo: '➕ Adicionar amigo', acao: () => pedirAmizadePorUsuario(usuario) };
+}
+function abrirMenuPessoa(x, y, usuario, nome) {
+    abrirMenu(x, y, () => ({ cabecalho: nome, itens: [itemAmizade(usuario), itemDenunciar(usuario, nome)] }));
+}
+
+// ============================================================
 // Inicialização
 // ============================================================
+carregarPreferenciasAudio();
 carregarFundo();
 carregarPreferenciasVideo();
 atualizarBotaoMicrofone();

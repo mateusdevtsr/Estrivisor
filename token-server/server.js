@@ -20,6 +20,16 @@ const DISCORD_REDIRECTS = (process.env.DISCORD_REDIRECT_URI || 'http://127.0.0.1
 // Transição: enquanto ainda houver app antigo (sem login), "0" aceita a identidade que o
 // próprio app informa. Depois que todo mundo atualizar, coloque EXIGIR_LOGIN=1 no server.env.
 const EXIGIR_LOGIN = process.env.EXIGIR_LOGIN === '1';
+// Acesso restrito (ligado por padrão): só usa o Estrivisor quem o administrador liberou.
+// ACESSO_RESTRITO=0 desliga (qualquer pessoa com o app consegue entrar).
+const ACESSO_RESTRITO = process.env.ACESSO_RESTRITO !== '0';
+// IDs do Discord dos administradores (separados por vírgula). Eles liberam e bloqueiam pessoas pelo app.
+// Versão dos termos de uso que o app mostra. Se você mudar os termos, aumente este número: todo mundo aceita de novo.
+const VERSAO_TERMOS = 1;
+// EXIGIR_ACEITE=1: quem não aceitou os termos não consegue usar o servidor (ligue depois que todos atualizarem o app).
+const EXIGIR_ACEITE = process.env.EXIGIR_ACEITE === '1';
+const ADMINS = (process.env.ADMIN_DISCORD_IDS || '').split(',').map((s) => s.trim()).filter(Boolean)
+  .map((id) => (/^\d+$/.test(id) ? `discord:${id}` : id));
 
 if (!API_KEY || !API_SECRET || !INVITE_KEY || !LIVEKIT_URL) {
   console.error(
@@ -37,13 +47,35 @@ const HOST_ADMIN = LIVEKIT_URL.replace(/^ws/, 'http');
 let roomService = new RoomServiceClient(HOST_ADMIN, API_KEY, API_SECRET);
 let buscarNoDiscord = (...args) => fetch(...args); // trocável nos testes
 
-const { criarRepositorio, ErroRegra, limparTexto, limparAvatar, interpretarSala } = require('./servidores');
+const { criarRepositorio, ErroRegra, limparTexto, limparAvatar, interpretarSala, salaDoCanal } = require('./servidores');
 const { criarSessoes } = require('./sessoes');
 const { contaDoCodigo, ErroDiscord } = require('./discord');
+const { criarConversas, ErroConversa } = require('./conversas');
+const { criarAmigos, ErroAmigos } = require('./amigos');
+const { criarAcesso } = require('./acesso');
+const { criarModeracao, ErroModeracao } = require('./moderacao');
 
 const ARQUIVO_DADOS = process.env.DATA_FILE || '/data/servidores.json';
 const repo = criarRepositorio({ arquivo: ARQUIVO_DADOS });
 const sessoes = criarSessoes({ arquivo: process.env.SESSOES_FILE || path.join(path.dirname(ARQUIVO_DADOS), 'sessoes.json') });
+const conversas = criarConversas({ arquivo: process.env.CONVERSAS_FILE || path.join(path.dirname(ARQUIVO_DADOS), 'conversas.json') });
+const acesso = criarAcesso({
+  arquivo: process.env.ACESSO_FILE || path.join(path.dirname(ARQUIVO_DADOS), 'acesso.json'),
+  restrito: ACESSO_RESTRITO,
+  admins: ADMINS,
+});
+const moderacao = criarModeracao({
+  arquivoDenuncias: process.env.DENUNCIAS_FILE || path.join(path.dirname(ARQUIVO_DADOS), 'denuncias.json'),
+  arquivoAuditoria: process.env.AUDITORIA_FILE || path.join(path.dirname(ARQUIVO_DADOS), 'auditoria.json'),
+});
+const amigos = criarAmigos({ arquivo: process.env.AMIGOS_FILE || path.join(path.dirname(ARQUIVO_DADOS), 'amigos.json') });
+
+if (ACESSO_RESTRITO && acesso.semear([...sessoes.todos(), ...repo.todosUsuarios(), ...amigos.todos()])) {
+  console.log('[acesso] primeira vez com acesso restrito: quem já usava o Estrivisor foi liberado. Veja com: node autorizar.js listar');
+}
+if (ACESSO_RESTRITO && !ADMINS.length) {
+  console.warn('[aviso] ADMIN_DISCORD_IDS não definido: ninguém consegue liberar pessoas pelo app (use autorizar.js).');
+}
 
 const app = express();
 // Os ícones dos servidores viajam em base64 (até ~40 mil caracteres), então o limite sobe um pouco.
@@ -70,32 +102,66 @@ function chaveDeSessao(req) {
   return m ? m[1] : null;
 }
 
-function identidadeDe(req, usuarioLegado) {
+const quando = (ts) => new Date(ts).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' });
+
+// Texto que a pessoa vê quando o acesso dela está bloqueado.
+function mensagemDaSituacao(sit) {
+  const p = sit.punicao;
+  if (sit.estado === 'banido') {
+    return `Seu acesso ao Estrivisor foi bloqueado.${p && p.motivo ? ' Motivo: ' + p.motivo + '.' : ''} Se acha que foi engano, escreva para estrivisor@gmail.com.`;
+  }
+  if (sit.estado === 'suspenso') {
+    return `Seu acesso ao Estrivisor está suspenso até ${quando(p.ate)}.${p.motivo ? ' Motivo: ' + p.motivo + '.' : ''}`;
+  }
+  return 'O seu acesso ao Estrivisor não foi liberado (ou foi removido). Fale com o dono do Estrivisor.';
+}
+
+function exigirAcesso(usuario) {
+  const sit = acesso.situacao(usuario);
+  if (sit.estado !== 'ok') throw erroLogin(mensagemDaSituacao(sit));
+}
+
+function exigirAceite(usuario) {
+  if (EXIGIR_ACEITE && !acesso.aceitou(usuario, VERSAO_TERMOS)) {
+    const erro = new ErroRegra(403, 'Aceite os Termos de uso para continuar.');
+    erro.codigo = 'aceite';
+    throw erro;
+  }
+}
+
+function identidadeDe(req, usuarioLegado, { semAceite = false } = {}) {
   const chave = chaveDeSessao(req);
   if (chave) {
     const sessao = sessoes.validar(chave);
     if (!sessao) throw erroLogin('Sua sessão expirou. Entre de novo.');
+    exigirAcesso(sessao.usuario);
+    if (!semAceite) exigirAceite(sessao.usuario);
     return { usuario: sessao.usuario, sessao };
   }
   if (EXIGIR_LOGIN) throw erroLogin('Atualize o Estrivisor e entre com a sua conta.');
   const usuario = usuarioLegado !== undefined ? usuarioLegado : req.get('x-usuario');
   if (!usuario || typeof usuario !== 'string') throw erroLogin('Entre com a sua conta pra continuar.');
+  exigirAcesso(usuario);
   return { usuario, sessao: null };
 }
 
 function responderErro(res, err) {
-  if (err instanceof ErroRegra) return res.status(err.status).json({ erro: err.message, codigo: err.codigo });
+  if (err instanceof ErroRegra || err instanceof ErroConversa || err instanceof ErroAmigos || err instanceof ErroModeracao) {
+    return res.status(err.status).json({ erro: err.message, codigo: err.codigo });
+  }
   console.error('Erro interno:', err);
   return res.status(500).json({ erro: 'Erro interno do servidor.' });
 }
 
 // Embrulha uma rota: exige a chave do app, descobre quem pediu e trata os erros.
 // "legado" diz de onde o app antigo mandava a identidade naquele pedido.
-function rota(fn, { legado } = {}) {
+function rota(fn, { legado, semAceite = false } = {}) {
   return async (req, res) => {
     if (!chaveValida(req)) return res.status(401).json({ erro: 'Chave de convite inválida.' });
     try {
-      const { usuario, sessao } = identidadeDe(req, legado ? legado(req) : undefined);
+      const { usuario, sessao } = identidadeDe(req, legado ? legado(req) : undefined, { semAceite });
+      acesso.marcarVisto(usuario);
+      if (sessao) amigos.registrar(usuario, sessao.perfil); // mantém nome e foto no diretório de amigos
       await fn(req, res, usuario, sessao);
     } catch (err) {
       responderErro(res, err);
@@ -138,6 +204,14 @@ app.post('/auth/discord', async (req, res) => {
       codigo, redirectUri, clientId: DISCORD_CLIENT_ID, clientSecret: DISCORD_CLIENT_SECRET, buscar: buscarNoDiscord,
     });
     const usuario = `discord:${perfil.id}`;
+    const sit = acesso.situacao(usuario);
+    if (sit.estado === 'banido' || sit.estado === 'suspenso') {
+      return res.status(403).json({ erro: mensagemDaSituacao(sit), codigo: 'punido' });
+    }
+    if (sit.estado !== 'ok') {
+      acesso.registrarPedido(usuario, perfil);
+      return res.status(403).json({ erro: 'Seu acesso ainda não foi liberado. O pedido foi enviado ao dono do Estrivisor: avise ele para liberar você e depois entre de novo.', codigo: 'sem-acesso' });
+    }
     const { chave } = sessoes.criar({ usuario, tipo: 'discord', perfil });
     res.json({ sessao: chave, conta: contaPublica(usuario, 'discord', perfil) });
   } catch (err) {
@@ -150,6 +224,7 @@ app.post('/auth/discord', async (req, res) => {
 app.post('/auth/local', (req, res) => {
   if (!chaveValida(req)) return res.status(401).json({ erro: 'Chave de convite inválida.' });
   if (!loginLiberado()) return res.status(429).json({ erro: 'Muitos logins seguidos. Espere um minuto.' });
+  if (ACESSO_RESTRITO) return res.status(403).json({ erro: 'Entrar sem Discord está desativado. Use o login com o Discord.', codigo: 'sem-acesso' });
   const nome = limparTexto((req.body || {}).nome, 40);
   if (!nome) return res.status(400).json({ erro: 'Digite um nome.' });
   const usuario = 'local:' + crypto.randomUUID();
@@ -161,7 +236,7 @@ app.post('/auth/local', (req, res) => {
 app.get('/auth/eu', rota((req, res, usuario, sessao) => {
   if (!sessao) throw erroLogin('Entre com a sua conta.');
   res.json({ conta: contaPublica(usuario, sessao.tipo, sessao.perfil) });
-}));
+}, { semAceite: true }));
 
 app.post('/auth/sair', (req, res) => {
   if (!chaveValida(req)) return res.status(401).json({ erro: 'Chave de convite inválida.' });
@@ -364,6 +439,7 @@ app.patch('/servidores/:id', rota((req, res, usuario) => {
 app.delete('/servidores/:id', rota(async (req, res, usuario) => {
   const { salas } = repo.apagarServidor(req.params.id, usuario);
   presenca.delete(req.params.id);
+  conversas.apagarPrefixo(`c:${req.params.id}:`);
   await desconectar(salas, null);
   res.json({ ok: true });
 }));
@@ -401,6 +477,7 @@ app.patch('/servidores/:id/canais/:canalId', rota((req, res, usuario) => {
 
 app.delete('/servidores/:id/canais/:canalId', rota(async (req, res, usuario) => {
   const { sala } = repo.apagarCanal(req.params.id, usuario, req.params.canalId);
+  conversas.apagarConversa(chaveCanal(req.params.id, req.params.canalId));
   await desconectar([sala], null);
   res.json({ ok: true });
 }));
@@ -448,6 +525,20 @@ app.post('/convites/usar', rota((req, res, usuario) => {
 // Cada app avisa a cada ~10s que está aberto; quem fica 60s sem avisar some da lista.
 const TTL_PRESENCA_MS = 60 * 1000;
 const presenca = new Map(); // servidorId -> Map(usuario -> { nome, avatar, canalVoz, ultimo })
+const visto = new Map();    // usuario -> última vez que o app dele avisou que está aberto (em qualquer servidor)
+const online = (usuario) => (visto.get(usuario) || 0) > Date.now() - TTL_PRESENCA_MS;
+function emVoz(usuario) {
+  for (const mapa of presenca.values()) {
+    const p = mapa.get(usuario);
+    if (p && p.canalVoz && p.ultimo > Date.now() - TTL_PRESENCA_MS) return true;
+  }
+  return false;
+}
+
+function tirarPresencaDeTodos(usuario) {
+  for (const mapa of presenca.values()) mapa.delete(usuario);
+  visto.delete(usuario);
+}
 
 function tirarPresenca(servidorId, usuario) {
   const mapa = presenca.get(servidorId);
@@ -477,14 +568,362 @@ app.post('/servidores/:id/presenca', rota((req, res, usuario, sessao) => {
     canalVoz: canalOk,
     ultimo: Date.now(),
   });
+  visto.set(usuario, Date.now());
+  // Último número de mensagem de cada canal de texto: o app compara com o que já leu (não lidas).
+  const ultimas = {};
+  servidor.canais.filter((c) => c.tipo === 'texto').forEach((c) => { ultimas[c.id] = conversas.ultimaSeq(chaveCanal(servidor.id, c.id)); });
   // A resposta já traz a versão do servidor: se mudou (canal novo, nome...), o app recarrega.
-  res.json({ versao: servidor.versao, online: listarOnline(servidor.id) });
+  res.json({ versao: servidor.versao, online: listarOnline(servidor.id), ultimas });
 }));
 
 app.post('/servidores/:id/presenca/sair', rota((req, res, usuario) => {
   repo.obter(req.params.id, usuario);
   tirarPresenca(req.params.id, usuario);
   res.json({ ok: true });
+}));
+
+
+// ============================================================
+// Mensagens de texto (canais) e conversas privadas
+// ============================================================
+const chaveCanal = (servidorId, canalId) => `c:${servidorId}:${canalId}`;
+const chaveDm = (a, b) => 'd:' + (a < b ? `${a}|${b}` : `${b}|${a}`);
+
+// Freio: no máximo 8 mensagens a cada 10 segundos por pessoa.
+const envios = new Map(); // usuario -> [horários]
+function exigirRitmo(usuario) {
+  const t = Date.now();
+  const recentes = (envios.get(usuario) || []).filter((x) => t - x < 10000);
+  if (recentes.length >= 8) throw new ErroRegra(429, 'Calma! Você está enviando mensagens rápido demais.');
+  recentes.push(t);
+  envios.set(usuario, recentes);
+}
+setInterval(() => { const t = Date.now(); for (const [u, l] of envios) if (!l.some((x) => t - x < 10000)) envios.delete(u); }, 60000).unref();
+
+const inteiro = (v) => (v !== undefined && v !== '' && Number.isInteger(Number(v)) ? Number(v) : undefined);
+function mensagemPublica(m) {
+  return { seq: m.seq, usuario: m.usuario, nome: m.nome, avatar: m.avatar, texto: m.texto, ts: m.ts, editadoEm: m.editadoEm };
+}
+function exigirCanalTexto(servidorId, canalId, usuario) {
+  const servidor = repo.obter(servidorId, usuario); // 403 se não for membro
+  const canal = servidor.canais.find((c) => c.id === canalId && c.tipo === 'texto');
+  if (!canal) throw new ErroRegra(404, 'Canal de texto não encontrado.');
+  return servidor;
+}
+function exigirSessao(sessao) {
+  if (!sessao) throw erroLogin('Entre com a sua conta pra usar isto.');
+}
+function exigirAmigo(usuario, outro) {
+  if (!amigos.saoAmigos(usuario, outro)) throw new ErroRegra(403, 'Vocês não são amigos.');
+}
+function nomeDoAutor(req, sessao, usuario) {
+  return limparTexto((req.body || {}).nome, 40) || (sessao && sessao.perfil.nome) || usuario;
+}
+function listarMensagens(chave, req) {
+  const r = conversas.listar(chave, { depois: inteiro(req.query.depois), antes: inteiro(req.query.antes), limite: inteiro(req.query.limite) });
+  return { mensagens: r.mensagens.map(mensagemPublica), ultimaSeq: r.ultimaSeq, temMais: r.temMais };
+}
+
+app.get('/servidores/:id/canais/:canalId/mensagens', rota((req, res, usuario) => {
+  exigirCanalTexto(req.params.id, req.params.canalId, usuario);
+  res.json(listarMensagens(chaveCanal(req.params.id, req.params.canalId), req));
+}));
+
+app.post('/servidores/:id/canais/:canalId/mensagens', rota((req, res, usuario, sessao) => {
+  exigirCanalTexto(req.params.id, req.params.canalId, usuario);
+  exigirRitmo(usuario);
+  const msg = conversas.enviar(chaveCanal(req.params.id, req.params.canalId), {
+    usuario, nome: nomeDoAutor(req, sessao, usuario), avatar: sessao ? (sessao.perfil.avatar || '') : '', texto: (req.body || {}).texto,
+  });
+  res.status(201).json({ mensagem: mensagemPublica(msg) });
+}));
+
+app.patch('/servidores/:id/canais/:canalId/mensagens/:seq', rota((req, res, usuario) => {
+  exigirCanalTexto(req.params.id, req.params.canalId, usuario);
+  res.json({ mensagem: mensagemPublica(conversas.editar(chaveCanal(req.params.id, req.params.canalId), inteiro(req.params.seq), usuario, (req.body || {}).texto)) });
+}));
+
+app.delete('/servidores/:id/canais/:canalId/mensagens/:seq', rota((req, res, usuario) => {
+  const servidor = exigirCanalTexto(req.params.id, req.params.canalId, usuario);
+  res.json(conversas.apagar(chaveCanal(req.params.id, req.params.canalId), inteiro(req.params.seq), usuario, servidor.souDono));
+}));
+
+// ---- Amigos ----
+app.get('/amigos', rota((req, res, usuario, sessao) => {
+  exigirSessao(sessao);
+  visto.set(usuario, Date.now());
+  const l = amigos.listar(usuario);
+  res.json({
+    codigo: amigos.meuCodigo(usuario),
+    amigos: l.amigos.map((p) => ({ ...p, online: online(p.usuario), emVoz: online(p.usuario) && emVoz(p.usuario), ultimaDm: conversas.ultimaSeq(chaveDm(usuario, p.usuario)) })),
+    recebidos: l.recebidos,
+    enviados: l.enviados,
+  });
+}));
+
+app.post('/amigos/pedir', rota((req, res, usuario, sessao) => {
+  exigirSessao(sessao);
+  const { codigo, usuario: alvoDireto } = req.body || {};
+  let alvo = null;
+  if (typeof codigo === 'string' && codigo.trim()) {
+    alvo = amigos.porCodigo(codigo);
+  } else if (typeof alvoDireto === 'string') {
+    // Pelo menu de uma pessoa: só vale pra quem divide um servidor com você.
+    const emComum = repo.listarMeus(usuario).some((s) => s.membros.some((m) => m.usuario === alvoDireto));
+    if (!emComum) throw new ErroRegra(403, 'Você só pode adicionar quem está num servidor com você.');
+    alvo = alvoDireto;
+  }
+  if (!alvo) throw new ErroRegra(404, 'Não encontrei ninguém com esse código.');
+  const resultado = amigos.pedir(usuario, alvo);
+  res.json({ resultado, pessoa: amigos.pessoa(alvo) });
+}));
+
+app.post('/amigos/aceitar', rota((req, res, usuario, sessao) => {
+  exigirSessao(sessao);
+  amigos.aceitar(usuario, String((req.body || {}).usuario || ''));
+  res.json({ ok: true });
+}));
+
+app.post('/amigos/recusar', rota((req, res, usuario, sessao) => {
+  exigirSessao(sessao);
+  amigos.recusar(usuario, String((req.body || {}).usuario || ''));
+  res.json({ ok: true });
+}));
+
+app.delete('/amigos/:outro', rota((req, res, usuario, sessao) => {
+  exigirSessao(sessao);
+  amigos.remover(usuario, req.params.outro);
+  res.json({ ok: true });
+}));
+
+// ---- Mensagens diretas (só entre amigos) ----
+app.get('/dm/:outro/mensagens', rota((req, res, usuario, sessao) => {
+  exigirSessao(sessao); exigirAmigo(usuario, req.params.outro);
+  res.json(listarMensagens(chaveDm(usuario, req.params.outro), req));
+}));
+
+app.post('/dm/:outro/mensagens', rota((req, res, usuario, sessao) => {
+  exigirSessao(sessao); exigirAmigo(usuario, req.params.outro);
+  exigirRitmo(usuario);
+  const msg = conversas.enviar(chaveDm(usuario, req.params.outro), {
+    usuario, nome: nomeDoAutor(req, sessao, usuario), avatar: sessao.perfil.avatar || '', texto: (req.body || {}).texto,
+  });
+  res.status(201).json({ mensagem: mensagemPublica(msg) });
+}));
+
+app.patch('/dm/:outro/mensagens/:seq', rota((req, res, usuario, sessao) => {
+  exigirSessao(sessao); exigirAmigo(usuario, req.params.outro);
+  res.json({ mensagem: mensagemPublica(conversas.editar(chaveDm(usuario, req.params.outro), inteiro(req.params.seq), usuario, (req.body || {}).texto)) });
+}));
+
+app.delete('/dm/:outro/mensagens/:seq', rota((req, res, usuario, sessao) => {
+  exigirSessao(sessao); exigirAmigo(usuario, req.params.outro);
+  res.json(conversas.apagar(chaveDm(usuario, req.params.outro), inteiro(req.params.seq), usuario, false));
+}));
+
+
+// ============================================================
+// Termos de uso (aceite) e denúncias — qualquer pessoa liberada
+// ============================================================
+app.get('/termos', rota((req, res, usuario) => {
+  res.json({ versao: VERSAO_TERMOS, aceito: acesso.aceitou(usuario, VERSAO_TERMOS), exigido: EXIGIR_ACEITE });
+}, { semAceite: true }));
+
+app.post('/termos/aceitar', rota((req, res, usuario) => {
+  const { versao, maior18 } = req.body || {};
+  if (maior18 !== true) throw new ErroRegra(400, 'É preciso confirmar que você tem 18 anos ou mais.');
+  if (versao !== VERSAO_TERMOS) throw new ErroRegra(409, 'Os termos mudaram. Atualize o Estrivisor para a versão mais nova.');
+  acesso.aceitar(usuario, VERSAO_TERMOS);
+  res.json({ ok: true });
+}, { semAceite: true }));
+
+app.post('/denuncias', rota((req, res, usuario, sessao) => {
+  exigirSessao(sessao);
+  const b = req.body || {};
+  const eu = sessao.perfil.nome || usuario;
+  const nomeDe = (u) => (amigos.pessoa(u) || {}).nome || u;
+  let alvo; let origem = null; let contexto = [];
+  if (b.tipo === 'pessoa') {
+    alvo = String(b.alvo || '');
+    if (!/^(discord|local):[A-Za-z0-9-]{1,40}$/.test(alvo) || !amigos.existe(alvo)) throw new ErroRegra(404, 'Pessoa não encontrada.');
+  } else if (b.tipo === 'mensagem') {
+    const seq = inteiro(b.seq);
+    if (!seq) throw new ErroRegra(400, 'Mensagem inválida.');
+    let chave;
+    if (b.origem === 'dm') {
+      const outro = String(b.outro || '');
+      exigirAmigo(usuario, outro);
+      chave = chaveDm(usuario, outro);
+      origem = { tipo: 'dm', chave, seq, outro, outroNome: nomeDe(outro) };
+    } else {
+      const servidor = exigirCanalTexto(String(b.servidorId || ''), String(b.canalId || ''), usuario);
+      chave = chaveCanal(servidor.id, b.canalId);
+      const canal = servidor.canais.find((c) => c.id === b.canalId);
+      origem = { tipo: 'canal', chave, seq, servidorId: servidor.id, servidorNome: servidor.nome, canalId: canal.id, canalNome: canal.nome };
+    }
+    contexto = conversas.contexto(chave, seq, 5);
+    if (!contexto) throw new ErroRegra(404, 'Essa mensagem não existe mais.');
+    alvo = contexto.find((m) => m.seq === seq).usuario;
+  } else {
+    throw new ErroRegra(400, 'Denúncia inválida.');
+  }
+  if (acesso.ehAdmin(alvo)) throw new ErroRegra(400, 'Esta pessoa é administradora do Estrivisor. Se há um problema, escreva para estrivisor@gmail.com.');
+  moderacao.denunciar({
+    de: usuario, deNome: eu, alvo, alvoNome: nomeDe(alvo), motivo: b.motivo, detalhe: limparTexto(b.detalhe, 500), origem, contexto,
+  });
+  res.json({ ok: true });
+}));
+
+// ============================================================
+// Administração (só administradores)
+// ============================================================
+function exigirAdmin(usuario) {
+  if (!acesso.ehAdmin(usuario)) throw new ErroRegra(403, 'Só o administrador do Estrivisor pode fazer isso.');
+}
+const nomeConhecido = (u) => (amigos.pessoa(u) || {}).nome || u;
+function auditar(usuario, acao, alvo, detalhe) {
+  moderacao.registrar({ por: usuario, porNome: nomeConhecido(usuario), acao, alvo: alvo || '', alvoNome: alvo ? nomeConhecido(alvo) : '', detalhe });
+}
+// Tira a pessoa de tudo que está ligado agora (presença e chamadas de voz).
+async function cortarAcesso(usuario) {
+  tirarPresencaDeTodos(usuario);
+  const salas = repo.servidoresDe(usuario).flatMap((s) => s.canais.map((c) => salaDoCanal(s.id, c.id)));
+  await desconectar(salas, usuario);
+}
+function exigirAlvoPunivel(usuario, alvo) {
+  if (!/^(discord|local):[A-Za-z0-9-]{1,40}$/.test(String(alvo || ''))) throw new ErroRegra(400, 'Pessoa inválida.');
+  if (acesso.ehAdmin(alvo)) throw new ErroRegra(400, 'Administradores não podem ser punidos.');
+  if (alvo === usuario) throw new ErroRegra(400, 'Você não pode fazer isso consigo mesmo.');
+}
+async function aplicarPunicao(usuario, { alvo, tipo, dias, motivo }) {
+  exigirAlvoPunivel(usuario, alvo);
+  const texto = limparTexto(motivo, 200);
+  if (!texto) throw new ErroRegra(400, 'Escreva o motivo.');
+  let ate = null;
+  if (tipo === 'suspensao') {
+    const d = Number(dias);
+    if (!Number.isFinite(d) || d < 1 || d > 365) throw new ErroRegra(400, 'A suspensão deve ser de 1 a 365 dias.');
+    ate = Date.now() + Math.round(d) * 24 * 3600 * 1000;
+  } else if (tipo !== 'ban') {
+    throw new ErroRegra(400, 'Tipo de punição inválido.');
+  }
+  acesso.punir(alvo, { tipo, ate, motivo: texto, por: usuario, nome: nomeConhecido(alvo) });
+  auditar(usuario, tipo === 'ban' ? 'banir' : 'suspender', alvo, `${texto}${ate ? ' (até ' + quando(ate) + ')' : ''}`);
+  await cortarAcesso(alvo);
+}
+
+app.get('/admin/acesso', rota((req, res, usuario) => {
+  exigirAdmin(usuario);
+  res.json({ restrito: ACESSO_RESTRITO, ...acesso.listar(), denunciasAbertas: moderacao.abertas() });
+}));
+
+app.post('/admin/acesso/autorizar', rota((req, res, usuario) => {
+  exigirAdmin(usuario);
+  const alvo = String((req.body || {}).usuario || '');
+  if (!/^discord:\d{5,25}$/.test(alvo)) throw new ErroRegra(400, 'Pessoa inválida.');
+  acesso.autorizar(alvo, usuario);
+  auditar(usuario, 'liberar', alvo, '');
+  res.json({ ok: true });
+}));
+
+app.post('/admin/acesso/negar', rota((req, res, usuario) => {
+  exigirAdmin(usuario);
+  const alvo = String((req.body || {}).usuario || '');
+  acesso.negar(alvo);
+  auditar(usuario, 'negar', alvo, '');
+  res.json({ ok: true });
+}));
+
+app.delete('/admin/acesso/:alvo', rota(async (req, res, usuario) => {
+  exigirAdmin(usuario);
+  if (acesso.ehAdmin(req.params.alvo)) throw new ErroRegra(400, 'Administradores não podem ser removidos por aqui.');
+  acesso.revogar(req.params.alvo);
+  auditar(usuario, 'remover-acesso', req.params.alvo, '');
+  await cortarAcesso(req.params.alvo);
+  res.json({ ok: true });
+}));
+
+app.post('/admin/punir', rota(async (req, res, usuario) => {
+  exigirAdmin(usuario);
+  const b = req.body || {};
+  await aplicarPunicao(usuario, { alvo: String(b.usuario || ''), tipo: b.tipo, dias: b.dias, motivo: b.motivo });
+  res.json({ ok: true });
+}));
+
+app.post('/admin/desfazer-punicao', rota((req, res, usuario) => {
+  exigirAdmin(usuario);
+  const alvo = String((req.body || {}).usuario || '');
+  if (!acesso.desfazerPunicao(alvo)) throw new ErroRegra(404, 'Esta pessoa não está punida.');
+  auditar(usuario, 'desfazer-punicao', alvo, '');
+  res.json({ ok: true });
+}));
+
+app.get('/admin/pessoas', rota((req, res, usuario) => {
+  exigirAdmin(usuario);
+  const l = acesso.listar();
+  const ids = new Set([...ADMINS, ...l.autorizados.map((a) => a.usuario), ...l.punidos.map((p) => p.usuario)]);
+  const pessoas = [...ids].map((u) => {
+    const dir = amigos.pessoa(u) || {};
+    const aut = l.autorizados.find((a) => a.usuario === u) || {};
+    const sit = acesso.situacao(u);
+    const aceite = acesso.aceiteDe(u);
+    return {
+      usuario: u, nome: dir.nome || aut.nome || u, avatar: dir.avatar || '', admin: acesso.ehAdmin(u),
+      desde: aut.desde || null, ultimaVez: visto.get(u) || acesso.ultimaVez(u), online: online(u),
+      servidores: repo.servidoresDe(u).map((s) => s.nome),
+      aceite: aceite ? { versao: aceite.versao, ts: aceite.ts } : null,
+      estado: sit.estado === 'nao-liberado' ? 'removido' : sit.estado,
+      punicao: sit.punicao ? { tipo: sit.punicao.tipo, ate: sit.punicao.ate, motivo: sit.punicao.motivo, ts: sit.punicao.ts } : null,
+    };
+  }).sort((a, b) => String(a.nome).localeCompare(String(b.nome), 'pt-BR'));
+  res.json({ versaoTermos: VERSAO_TERMOS, pessoas });
+}));
+
+app.get('/admin/servidores', rota((req, res, usuario) => {
+  exigirAdmin(usuario);
+  res.json({ servidores: repo.listarTodos().map((s) => ({ ...s, donoNome: nomeConhecido(s.dono) || s.donoNome })) });
+}));
+
+app.delete('/admin/servidores/:id', rota(async (req, res, usuario) => {
+  exigirAdmin(usuario);
+  const { salas, nome, dono } = repo.apagarComoAdmin(req.params.id);
+  presenca.delete(req.params.id);
+  conversas.apagarPrefixo(`c:${req.params.id}:`);
+  await desconectar(salas, null);
+  auditar(usuario, 'apagar-servidor', dono, `Servidor "${nome}"`);
+  res.json({ ok: true });
+}));
+
+app.get('/admin/denuncias', rota((req, res, usuario) => {
+  exigirAdmin(usuario);
+  res.json({ denuncias: moderacao.listarDenuncias() });
+}));
+
+app.post('/admin/denuncias/:id/resolver', rota(async (req, res, usuario) => {
+  exigirAdmin(usuario);
+  const b = req.body || {};
+  const d = moderacao.denuncia(req.params.id);
+  if (!d) throw new ErroRegra(404, 'Denúncia não encontrada.');
+  const acao = String(b.acao || '');
+  let nota = '';
+  if (acao === 'remover-mensagem') {
+    if (!d.origem || !d.origem.chave) throw new ErroRegra(400, 'Esta denúncia não é de uma mensagem.');
+    try { conversas.apagar(d.origem.chave, d.origem.seq, usuario, true); } catch (e) { /* já tinha sido apagada */ }
+    nota = 'mensagem removida';
+  } else if (acao === 'suspender' || acao === 'banir') {
+    await aplicarPunicao(usuario, { alvo: d.alvo, tipo: acao === 'banir' ? 'ban' : 'suspensao', dias: b.dias, motivo: b.motivo });
+    nota = acao === 'banir' ? 'banido' : `suspenso por ${Number(b.dias)} dia(s)`;
+  } else if (acao !== 'ignorar') {
+    throw new ErroRegra(400, 'Ação inválida.');
+  }
+  moderacao.resolverDenuncia(d.id, { acao, por: usuario, nota });
+  auditar(usuario, `denuncia-${acao}`, d.alvo, `Denúncia #${d.id} (${d.motivo})`);
+  res.json({ ok: true });
+}));
+
+app.get('/admin/historico', rota((req, res, usuario) => {
+  exigirAdmin(usuario);
+  res.json({ historico: moderacao.historico(200) });
 }));
 
 // Limpeza geral de tempos em tempos (servidores sem ninguém avisando).
@@ -496,12 +935,20 @@ setInterval(() => {
 }, 60000).unref();
 
 module.exports = {
-  app, repo, sessoes,
+  app, repo, sessoes, conversas, amigos, acesso, moderacao,
   _trocarRoomService: (novo) => { roomService = novo; },
   _trocarBuscaDiscord: (nova) => { buscarNoDiscord = nova; },
 };
 
+// Ao desligar (docker stop / reiniciar), grava na hora o que ainda estava esperando pra ir pro disco.
+function gravarTudoEsair() {
+  try { conversas.gravarAgora(); amigos.gravarAgora(); } catch (e) { console.error(e); }
+  process.exit(0);
+}
+
 if (require.main === module) {
+  process.on('SIGTERM', gravarTudoEsair);
+  process.on('SIGINT', gravarTudoEsair);
   app.listen(PORT, () => {
     console.log(`Servidor do Estrivisor ativo na porta ${PORT} (login obrigatório: ${EXIGIR_LOGIN ? 'sim' : 'não, modo de transição'})`);
   });

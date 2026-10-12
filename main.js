@@ -306,10 +306,10 @@ function apagarSessao() {
 }
 
 // O servidor disse que a sessão não vale mais (venceu ou foi encerrada): avisa a tela.
-function sessaoExpirou() {
+function sessaoExpirou(mensagem) {
   if (!sessao.chave) return;
   apagarSessao();
-  if (janelaPrincipal && !janelaPrincipal.isDestroyed()) janelaPrincipal.webContents.send('sessao-expirou');
+  if (janelaPrincipal && !janelaPrincipal.isDestroyed()) janelaPrincipal.webContents.send('sessao-expirou', typeof mensagem === 'string' ? mensagem.slice(0, 300) : '');
 }
 
 // Único lugar que fala com o servidor do Estrivisor.
@@ -332,9 +332,11 @@ async function chamarServidor(caminho, { metodo = 'GET', corpo, semSessao = fals
   const dados = await resposta.json().catch(() => ({}));
   if (resposta.ok) return { ok: true, status: resposta.status, dados };
   // Só derruba a sessão se ela ainda for a mesma que foi usada neste pedido.
-  if (resposta.status === 401 && dados.codigo === 'login' && chaveUsada && chaveUsada === sessao.chave) sessaoExpirou();
+  if (resposta.status === 401 && dados.codigo === 'login' && chaveUsada && chaveUsada === sessao.chave) sessaoExpirou(dados.erro);
   return { ok: false, status: resposta.status, erro: dados.erro || `Erro ${resposta.status} do servidor.`, codigo: dados.codigo };
 }
+
+responder('obter-versao', () => app.getVersion());
 
 responder('conta-atual', () => {
   if (!sessao.chave) return { conta: null };
@@ -523,9 +525,9 @@ responder('forcar-parar-transmissao', (evento, { sala, identidadeAlvo } = {}) =>
 responder('forcar-mutar-microfone', (evento, { sala, identidadeAlvo } = {}) => pedirModeracao(sala, 'mutar-microfone', identidadeAlvo));
 
 // ---------- Servidores, canais, convites e presença ----------
-// A tela pede por este canal único; só passam caminhos que começam com /servidores ou /convites.
+// A tela pede por este canal único; só passam caminhos que começam com /servidores, /convites, /amigos, /dm, /admin, /termos ou /denuncias.
 const METODOS_API = ['GET', 'POST', 'PATCH', 'DELETE'];
-const CAMINHO_API = /^\/(servidores|convites)(\/[A-Za-z0-9._\-]+)*$/;
+const CAMINHO_API = /^\/(servidores|convites|amigos|dm|admin|termos|denuncias)(\/[A-Za-z0-9._%\-]+)*(\?[A-Za-z0-9=&._\-]*)?$/;
 
 responder('api-servidor', async (evento, { metodo, caminho, corpo } = {}) => {
   if (!METODOS_API.includes(metodo) || typeof caminho !== 'string' || !CAMINHO_API.test(caminho)) {

@@ -4,6 +4,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 // 'electron'. Expomos aqui apenas o mínimo necessário. A chave de sessão (login) nunca
 // passa por aqui: ela fica só no processo principal.
 contextBridge.exposeInMainWorld('electronAPI', {
+  versaoApp: () => ipcRenderer.invoke('obter-versao'),
+
   // Conta / login
   contaAtual: () => ipcRenderer.invoke('conta-atual'),
   loginDiscord: () => ipcRenderer.invoke('login-discord'),
@@ -11,7 +13,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   loginLocal: (nome) => ipcRenderer.invoke('login-local', nome),
   sairDaConta: () => ipcRenderer.invoke('sair-da-conta'),
   aoExpirarSessao: (callback) => {
-    ipcRenderer.on('sessao-expirou', () => callback());
+    ipcRenderer.on('sessao-expirou', (evento, mensagem) => callback(mensagem));
   },
 
   // Canais (tokens do LiveKit) e transmissão

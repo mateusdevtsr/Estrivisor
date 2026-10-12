@@ -98,7 +98,14 @@ function criarSessoes({ arquivo = null, agora = () => Date.now(), log = console 
     if (dados.sessoes.length !== antes) salvar();
   }
 
-  return { criar, validar, revogar };
+  // Quem já tem sessão (usado só pra liberar o pessoal que já usava, quando o acesso passa a ser restrito).
+  function todos() {
+    const mapa = new Map();
+    dados.sessoes.forEach((x) => { if (!mapa.has(x.usuario)) mapa.set(x.usuario, { usuario: x.usuario, nome: x.perfil && x.perfil.nome }); });
+    return [...mapa.values()];
+  }
+
+  return { criar, validar, revogar, todos };
 }
 
 module.exports = { criarSessoes, VALIDADE_MS };
