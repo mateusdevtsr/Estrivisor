@@ -574,7 +574,7 @@ app.post('/servidores/:id/sair', rota(async (req, res, usuario) => {
 }));
 
 app.post('/servidores/:id/expulsar', rota(async (req, res, usuario) => {
-  const { alvo } = req.body || {};
+  const alvo = idPessoa((req.body || {}).alvo);
   const { salas } = repo.expulsar(req.params.id, usuario, alvo);
   tirarPresenca(req.params.id, alvo);
   await desconectar(salas, alvo);
@@ -582,7 +582,7 @@ app.post('/servidores/:id/expulsar', rota(async (req, res, usuario) => {
 }));
 
 app.post('/servidores/:id/transferir', rota((req, res, usuario) => {
-  const { novoDono } = req.body || {};
+  const novoDono = idPessoa((req.body || {}).novoDono);
   res.json({ servidor: repo.transferir(req.params.id, usuario, novoDono) });
 }));
 
@@ -735,6 +735,13 @@ function exigirCanalTexto(servidorId, canalId, usuario) {
 function exigirSessao(sessao) {
   if (!sessao) throw erroLogin('Entre com a sua conta pra usar isto.');
 }
+// Toda rota que recebe uma pessoa passa por aqui: só aceita o formato real das contas
+// ("discord:123..." ou "local:abc"), e recusa coisas como "__proto__" ou "constructor".
+function idPessoa(valor) {
+  const id = typeof valor === 'string' ? valor.trim() : '';
+  if (!/^(discord|local):[A-Za-z0-9-]{1,40}$/.test(id)) throw new ErroRegra(400, 'Pessoa inválida.');
+  return id;
+}
 function exigirAmigo(usuario, outro) {
   if (!amigos.saoAmigos(usuario, outro)) throw new ErroRegra(403, 'Vocês não são amigos.');
 }
@@ -787,7 +794,8 @@ app.get('/amigos', rota((req, res, usuario, sessao) => {
 
 app.post('/amigos/pedir', rota((req, res, usuario, sessao) => {
   exigirSessao(sessao);
-  const { codigo, usuario: alvoDireto } = req.body || {};
+  const { codigo } = req.body || {};
+  const alvoDireto = typeof (req.body || {}).usuario === 'string' ? idPessoa(req.body.usuario) : undefined;
   let alvo = null;
   if (typeof codigo === 'string' && codigo.trim()) {
     alvo = amigos.porCodigo(codigo);
@@ -804,19 +812,19 @@ app.post('/amigos/pedir', rota((req, res, usuario, sessao) => {
 
 app.post('/amigos/aceitar', rota((req, res, usuario, sessao) => {
   exigirSessao(sessao);
-  amigos.aceitar(usuario, String((req.body || {}).usuario || ''));
+  amigos.aceitar(usuario, idPessoa((req.body || {}).usuario));
   res.json({ ok: true });
 }));
 
 app.post('/amigos/recusar', rota((req, res, usuario, sessao) => {
   exigirSessao(sessao);
-  amigos.recusar(usuario, String((req.body || {}).usuario || ''));
+  amigos.recusar(usuario, idPessoa((req.body || {}).usuario));
   res.json({ ok: true });
 }));
 
 app.delete('/amigos/:outro', rota((req, res, usuario, sessao) => {
   exigirSessao(sessao);
-  amigos.remover(usuario, req.params.outro);
+  amigos.remover(usuario, idPessoa(req.params.outro));
   res.json({ ok: true });
 }));
 
@@ -952,7 +960,7 @@ app.post('/admin/acesso/autorizar', rota((req, res, usuario) => {
 
 app.post('/admin/acesso/negar', rota((req, res, usuario) => {
   exigirAdmin(usuario);
-  const alvo = String((req.body || {}).usuario || '');
+  const alvo = idPessoa((req.body || {}).usuario);
   acesso.negar(alvo);
   auditar(usuario, 'negar', alvo, '');
   res.json({ ok: true });
@@ -960,10 +968,11 @@ app.post('/admin/acesso/negar', rota((req, res, usuario) => {
 
 app.delete('/admin/acesso/:alvo', rota(async (req, res, usuario) => {
   exigirAdmin(usuario);
-  if (acesso.ehAdmin(req.params.alvo)) throw new ErroRegra(400, 'Administradores não podem ser removidos por aqui.');
-  acesso.revogar(req.params.alvo);
-  auditar(usuario, 'remover-acesso', req.params.alvo, '');
-  await cortarAcesso(req.params.alvo);
+  const alvo = idPessoa(req.params.alvo);
+  if (acesso.ehAdmin(alvo)) throw new ErroRegra(400, 'Administradores não podem ser removidos por aqui.');
+  acesso.revogar(alvo);
+  auditar(usuario, 'remover-acesso', alvo, '');
+  await cortarAcesso(alvo);
   res.json({ ok: true });
 }));
 
@@ -976,7 +985,7 @@ app.post('/admin/punir', rota(async (req, res, usuario) => {
 
 app.post('/admin/desfazer-punicao', rota((req, res, usuario) => {
   exigirAdmin(usuario);
-  const alvo = String((req.body || {}).usuario || '');
+  const alvo = idPessoa((req.body || {}).usuario);
   if (!acesso.desfazerPunicao(alvo)) throw new ErroRegra(404, 'Esta pessoa não está punida.');
   auditar(usuario, 'desfazer-punicao', alvo, '');
   res.json({ ok: true });
@@ -1109,8 +1118,9 @@ app.delete('/admin/chaves/:id', rota((req, res, usuario) => {
 
 app.delete('/admin/qualidade/:alvo', rota((req, res, usuario) => {
   exigirAdmin(usuario);
-  if (!chaves.revogar(req.params.alvo)) throw new ErroRegra(404, 'Essa pessoa não tem qualidade liberada por chave.');
-  auditar(usuario, 'revogar-qualidade', req.params.alvo, '');
+  const alvo = idPessoa(req.params.alvo);
+  if (!chaves.revogar(alvo)) throw new ErroRegra(404, 'Essa pessoa não tem qualidade liberada por chave.');
+  auditar(usuario, 'revogar-qualidade', alvo, '');
   res.json({ ok: true });
 }));
 
