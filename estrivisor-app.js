@@ -4416,6 +4416,21 @@ function copiarReserva(texto, ok) {
 }
 document.getElementById('amigos-copiar').addEventListener('click', () => { if (amigosEstado.codigo) copiarTexto(amigosEstado.codigo, 'Código copiado!'); });
 document.getElementById('cfg-copiar-codigo').addEventListener('click', () => { if (amigosEstado.codigo) copiarTexto(amigosEstado.codigo, 'Código copiado!'); });
+document.getElementById('cfg-trocar-codigo').addEventListener('click', async () => {
+    const ok = await pedirTexto({
+        titulo: 'Trocar o código de amigo?',
+        dica: 'O código atual deixa de funcionar. Quem já é seu amigo continua sendo; só quem ainda não te adicionou vai precisar do código novo.',
+        semCampo: true, rotuloOk: 'Trocar',
+    });
+    if (!ok) return;
+    try {
+        const d = await api('POST', '/amigos/codigo/trocar', {});
+        amigosEstado.codigo = String(d.codigo || '');
+        document.getElementById('cfg-codigo-amigo').textContent = amigosEstado.codigo || '—';
+        document.getElementById('amigos-codigo').textContent = amigosEstado.codigo || '—';
+        mostrarNotificacao('Código trocado!');
+    } catch (err) { mostrarNotificacao(err.message || 'Não consegui trocar o código.'); }
+});
 
 function abrirAmigos(aba, usuarioParaAbrir) {
     if (!obterIdentidadeUsuario()) return mostrarNotificacao('Entre com a sua conta pra usar a lista de amigos.');

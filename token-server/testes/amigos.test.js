@@ -61,3 +61,23 @@ test('cadastro antigo ganha código sorteado na primeira leitura e as amizades c
   assert.strictEqual(b.meuCodigo('discord:1'), a.meuCodigo('discord:1'));
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('trocarCodigo gera outro código, invalida o antigo, mantém amizades e limita a 1 por minuto', () => {
+  let t = 1000000;
+  const a = criarAmigos({ agora: () => t, log: { error() {} } });
+  a.registrar('discord:1', { nome: 'Um' });
+  a.registrar('discord:2', { nome: 'Dois' });
+  a.pedir('discord:1', 'discord:2');
+  a.aceitar('discord:2', 'discord:1');
+  const antes = a.meuCodigo('discord:1');
+  const depois = a.trocarCodigo('discord:1');
+  assert.notStrictEqual(depois, antes);
+  assert.strictEqual(a.meuCodigo('discord:1'), depois);
+  assert.strictEqual(a.porCodigo(antes), null);
+  assert.strictEqual(a.porCodigo(depois), 'discord:1');
+  assert.strictEqual(a.saoAmigos('discord:1', 'discord:2'), true);
+  assert.throws(() => a.trocarCodigo('discord:1'), /Espere um minuto/);
+  t += 61000;
+  assert.notStrictEqual(a.trocarCodigo('discord:1'), depois);
+  assert.throws(() => a.trocarCodigo('discord:999'), /Cadastro não encontrado/);
+});

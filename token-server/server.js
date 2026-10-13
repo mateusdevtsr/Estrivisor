@@ -792,6 +792,11 @@ app.get('/amigos', rota((req, res, usuario, sessao) => {
   });
 }));
 
+app.post('/amigos/codigo/trocar', rota((req, res, usuario, sessao) => {
+  exigirSessao(sessao);
+  res.json({ codigo: amigos.trocarCodigo(usuario) });
+}));
+
 app.post('/amigos/pedir', rota((req, res, usuario, sessao) => {
   exigirSessao(sessao);
   const { codigo } = req.body || {};

@@ -94,6 +94,19 @@ function criarAmigos({ arquivo = null, agora = () => Date.now(), log = console, 
   const existe = (usuario) => Boolean(dados.usuarios[usuario]);
   const meuCodigo = (usuario) => (dados.usuarios[usuario] || {}).codigo || '';
 
+  // A pessoa pode trocar o próprio código (o antigo deixa de valer; amizades não mudam).
+  // Limite de uma troca por minuto, pra ninguém ficar sorteando códigos sem parar.
+  const ultimaTroca = new Map();
+  function trocarCodigo(usuario) {
+    if (!dados.usuarios[usuario]) throw new ErroAmigos(404, 'Cadastro não encontrado.');
+    const t = ultimaTroca.get(usuario) || 0;
+    if (agora() - t < 60000) throw new ErroAmigos(429, 'Espere um minuto para trocar o código de novo.');
+    ultimaTroca.set(usuario, agora());
+    dados.usuarios[usuario].codigo = novoCodigoUnico();
+    marcarSujo();
+    return dados.usuarios[usuario].codigo;
+  }
+
   function porCodigo(codigo) {
     const c = normalizarCodigo(codigo);
     if (!c) return null;
@@ -158,7 +171,7 @@ function criarAmigos({ arquivo = null, agora = () => Date.now(), log = console, 
     return n;
   }
 
-  return { apagarDe, todos, registrar, existe, meuCodigo, porCodigo, saoAmigos, amigosDe, pedir, aceitar, recusar, remover, listar, pessoa, gravarAgora };
+  return { apagarDe, todos, registrar, existe, meuCodigo, trocarCodigo, porCodigo, saoAmigos, amigosDe, pedir, aceitar, recusar, remover, listar, pessoa, gravarAgora };
 }
 
 module.exports = { criarAmigos, ErroAmigos, normalizarCodigo };
