@@ -2,10 +2,10 @@
 // ============================================================
 // Amigos: diretório de pessoas, pedidos de amizade e amizades.
 //
-// Todo mundo tem um "código de amigo" (ex.: K7M2-9QXA) calculado a partir do próprio
-// ID — ninguém escolhe, ninguém adivinha só pelo nome. Pra adicionar alguém você usa o
-// código dela (ou clica na pessoa dentro de um servidor em comum). O pedido só vira
-// amizade quando a outra pessoa aceita.
+// Todo mundo tem um "código de amigo" (ex.: K7M2-9QXA) sorteado pelo servidor e guardado
+// junto do cadastro — não dá pra calcular a partir do ID do Discord, que é público.
+// Pra adicionar alguém você usa o código dela (ou clica na pessoa dentro de um servidor
+// em comum). O pedido só vira amizade quando a outra pessoa aceita.
 // ============================================================
 const fs = require('fs');
 const path = require('path');
@@ -18,10 +18,9 @@ class ErroAmigos extends Error {
   constructor(status, mensagem) { super(mensagem); this.status = status; }
 }
 
-function codigoDe(usuario) {
-  const h = crypto.createHash('sha256').update('estrivisor-amigo:' + usuario).digest();
+function sortearCodigo() {
   let c = '';
-  for (let i = 0; i < 8; i++) c += ALFABETO[h[i] % ALFABETO.length];
+  for (let i = 0; i < 8; i++) c += ALFABETO[crypto.randomInt(ALFABETO.length)];
   return c.slice(0, 4) + '-' + c.slice(4);
 }
 function normalizarCodigo(codigo) {
@@ -45,6 +44,11 @@ function criarAmigos({ arquivo = null, agora = () => Date.now(), log = console, 
     const l = tentarLer(arquivo) || (fs.existsSync(arquivo + '.bak') ? tentarLer(arquivo + '.bak') : null);
     if (l) dados = l; else log.error('[amigos] arquivo ilegível; a lista de amigos começa vazia.');
   }
+  // Sorteia um código que ninguém mais usa.
+  function novoCodigoUnico() {
+    const usados = new Set(Object.values(dados.usuarios).map((u) => u.codigo));
+    for (;;) { const c = sortearCodigo(); if (!usados.has(c)) return c; }
+  }
   function gravarAgora() {
     if (relogio) { clearTimeout(relogio); relogio = null; }
     if (!sujo || !arquivo) { sujo = false; return; }
@@ -62,13 +66,25 @@ function criarAmigos({ arquivo = null, agora = () => Date.now(), log = console, 
     if (!relogio && arquivo) { relogio = setTimeout(gravarAgora, gravarApos); if (relogio.unref) relogio.unref(); }
   }
 
+  // Cadastros antigos tinham um código calculado a partir do ID (qualquer um conseguia gerar).
+  // Na primeira vez, cada um ganha um código sorteado; as amizades e pedidos não mudam.
+  let migrou = false;
+  for (const u of Object.keys(dados.usuarios)) {
+    if (!dados.usuarios[u].codigoSorteado) {
+      dados.usuarios[u].codigo = novoCodigoUnico();
+      dados.usuarios[u].codigoSorteado = true;
+      migrou = true;
+    }
+  }
+  if (migrou) { sujo = true; gravarAgora(); }
+
   // Chamado a cada pedido autenticado: mantém nome e foto atualizados (só grava se mudou).
   function registrar(usuario, perfil) {
     const nome = String((perfil && perfil.nome) || '').slice(0, 40);
     const avatar = (perfil && perfil.avatar) || '';
     const atual = dados.usuarios[usuario];
     if (atual && atual.nome === nome && atual.avatar === avatar) return;
-    dados.usuarios[usuario] = { nome, avatar, codigo: codigoDe(usuario) };
+    dados.usuarios[usuario] = { nome, avatar, codigo: atual ? atual.codigo : novoCodigoUnico(), codigoSorteado: true };
     marcarSujo();
   }
   const pessoa = (usuario) => {
@@ -76,7 +92,7 @@ function criarAmigos({ arquivo = null, agora = () => Date.now(), log = console, 
     return { usuario, nome: u ? u.nome : usuario, avatar: u ? u.avatar : '' };
   };
   const existe = (usuario) => Boolean(dados.usuarios[usuario]);
-  const meuCodigo = (usuario) => codigoDe(usuario);
+  const meuCodigo = (usuario) => (dados.usuarios[usuario] || {}).codigo || '';
 
   function porCodigo(codigo) {
     const c = normalizarCodigo(codigo);
@@ -145,4 +161,4 @@ function criarAmigos({ arquivo = null, agora = () => Date.now(), log = console, 
   return { apagarDe, todos, registrar, existe, meuCodigo, porCodigo, saoAmigos, amigosDe, pedir, aceitar, recusar, remover, listar, pessoa, gravarAgora };
 }
 
-module.exports = { criarAmigos, ErroAmigos, codigoDe, normalizarCodigo };
+module.exports = { criarAmigos, ErroAmigos, normalizarCodigo };
