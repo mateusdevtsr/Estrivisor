@@ -17,10 +17,18 @@ OPCOES="-i $CHAVE -o BatchMode=yes -o ConnectTimeout=20 -o UserKnownHostsFile=/h
 # Como root (cron), usa a conta mateus, dona da chave. Como mateus, roda direto.
 if [ "$(id -u)" = "0" ]; then COMO="runuser -u mateus --"; else COMO=""; fi
 
-if $COMO scp -q $OPCOES "$ARQ" "$DESTINO:backups/" \
-   && $COMO ssh $OPCOES "$DESTINO" 'ls -1t backups/dados-*.tar.gz | tail -n +9 | xargs -r rm --'; then
-  echo "$(date '+%F %T') cópia na VPS ok"
-else
-  echo "$(date '+%F %T') ERRO: não consegui copiar para a VPS" >&2
-  exit 1
-fi
+enviar() {
+  $COMO scp -q $OPCOES "$ARQ" "$DESTINO:backups/" \
+    && $COMO ssh $OPCOES "$DESTINO" 'ls -1t backups/dados-*.tar.gz | tail -n +9 | xargs -r rm --'
+}
+# A rede oscila de vez em quando: tenta até 3 vezes antes de desistir.
+for tentativa in 1 2 3; do
+  if enviar; then
+    echo "$(date '+%F %T') cópia na VPS ok"
+    exit 0
+  fi
+  echo "$(date '+%F %T') tentativa $tentativa de 3 falhou" >&2
+  [ "$tentativa" -lt 3 ] && sleep 30
+done
+echo "$(date '+%F %T') ERRO: não consegui copiar para a VPS" >&2
+exit 1
