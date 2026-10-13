@@ -28,7 +28,7 @@ services:
   # Túnel da Cloudflare: publica o servidor em https://api.SEU-DOMINIO sem abrir porta no
   # roteador e sem mostrar o IP da sua casa. O token fica no arquivo tunnel.env.
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    image: cloudflare/cloudflared:2026.10.0
     container_name: estrivisor-tunel
     restart: unless-stopped
     command: tunnel --no-autoupdate run
