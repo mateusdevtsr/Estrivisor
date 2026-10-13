@@ -1,0 +1,30 @@
+services:
+  livekit:
+    image: livekit/livekit-server:v1.13.9
+    container_name: estrivisor-livekit
+    restart: unless-stopped
+    command: --config /etc/livekit.yaml
+    env_file:
+      - ./livekit.env        # LIVEKIT_KEYS="chave: segredo"  (NUNCA suba pro GitHub)
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      - "7881:7881/tcp"      # mídia por TCP (quando o UDP é bloqueado)
+      - "7882:7882/udp"      # mídia (voz e tela)
+    # O sinal (7880) fica só na rede interna; quem expõe é o Caddy abaixo, com HTTPS.
+
+  caddy:
+    image: caddy:2.11.7
+    container_name: estrivisor-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on:
+      - livekit
+
+volumes:
+  caddy_data:
