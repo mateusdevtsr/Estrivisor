@@ -17,9 +17,6 @@ const DISCORD_CLIENT_SECRET = (process.env.DISCORD_CLIENT_SECRET || '').trim();
 // exatamente os mesmos cadastrados no Discord e usados pelo app.
 const DISCORD_REDIRECTS = (process.env.DISCORD_REDIRECT_URI || 'http://127.0.0.1:53134/callback')
   .split(',').map((s) => s.trim()).filter(Boolean);
-// Transição: enquanto ainda houver app antigo (sem login), "0" aceita a identidade que o
-// próprio app informa. Depois que todo mundo atualizar, coloque EXIGIR_LOGIN=1 no server.env.
-const EXIGIR_LOGIN = process.env.EXIGIR_LOGIN === '1';
 // Acesso restrito (ligado por padrão): só usa o Estrivisor quem o administrador liberou.
 // ACESSO_RESTRITO=0 desliga (qualquer pessoa com o app consegue entrar).
 const ACESSO_RESTRITO = process.env.ACESSO_RESTRITO !== '0';
@@ -112,9 +109,8 @@ app.use((req, res, next) => {
 // ============================================================
 // Quem está pedindo
 // ============================================================
-// Com login, a identidade vem da SESSÃO (cabeçalho Authorization) — o app não consegue
-// mais simplesmente dizer quem é. Sem sessão, só no modo de transição, vale o que o app
-// antigo informa (cabeçalho x-usuario, ou o campo que ele usava em cada pedido).
+// A identidade vem sempre da SESSÃO (cabeçalho Authorization): o app não consegue
+// simplesmente dizer quem é. Sem sessão válida, o pedido é recusado.
 function erroLogin(mensagem) {
   const erro = new ErroRegra(401, mensagem);
   erro.codigo = 'login'; // o app entende isso como "mostrar a tela de login"
@@ -153,20 +149,14 @@ function exigirAceite(usuario) {
   }
 }
 
-function identidadeDe(req, usuarioLegado, { semAceite = false } = {}) {
+function identidadeDe(req, { semAceite = false } = {}) {
   const chave = chaveDeSessao(req);
-  if (chave) {
-    const sessao = sessoes.validar(chave);
-    if (!sessao) throw erroLogin('Sua sessão expirou. Entre de novo.');
-    exigirAcesso(sessao.usuario);
-    if (!semAceite) exigirAceite(sessao.usuario);
-    return { usuario: sessao.usuario, sessao };
-  }
-  if (EXIGIR_LOGIN) throw erroLogin('Atualize o Estrivisor e entre com a sua conta.');
-  const usuario = usuarioLegado !== undefined ? usuarioLegado : req.get('x-usuario');
-  if (!usuario || typeof usuario !== 'string') throw erroLogin('Entre com a sua conta pra continuar.');
-  exigirAcesso(usuario);
-  return { usuario, sessao: null };
+  if (!chave) throw erroLogin('Atualize o Estrivisor e entre com a sua conta.');
+  const sessao = sessoes.validar(chave);
+  if (!sessao) throw erroLogin('Sua sessão expirou. Entre de novo.');
+  exigirAcesso(sessao.usuario);
+  if (!semAceite) exigirAceite(sessao.usuario);
+  return { usuario: sessao.usuario, sessao };
 }
 
 function responderErro(res, err) {
@@ -178,12 +168,11 @@ function responderErro(res, err) {
 }
 
 // Embrulha uma rota: exige a chave do app, descobre quem pediu e trata os erros.
-// "legado" diz de onde o app antigo mandava a identidade naquele pedido.
-function rota(fn, { legado, semAceite = false } = {}) {
+function rota(fn, { semAceite = false } = {}) {
   return async (req, res) => {
     if (!chaveValida(req)) return res.status(401).json({ erro: 'Chave de convite inválida.' });
     try {
-      const { usuario, sessao } = identidadeDe(req, legado ? legado(req) : undefined, { semAceite });
+      const { usuario, sessao } = identidadeDe(req, { semAceite });
       acesso.marcarVisto(usuario);
       if (sessao) amigos.registrar(usuario, sessao.perfil); // mantém nome e foto no diretório de amigos
       await fn(req, res, usuario, sessao);
@@ -362,18 +351,16 @@ app.post('/token', rota(async (req, res, usuario, sessao) => {
     usuario, nome: nomeExibicao, avatar: avatarSeguro, status: 'pendente', token: null, criadoEm: Date.now(),
   });
   res.json({ aguardando: true, solicitacaoId });
-}, { legado: (req) => (req.body || {}).usuario }));
+}));
 
 // Quem está esperando consulta aqui se já foi decidido (com login, só o próprio pedido).
 app.get('/token/status/:solicitacaoId', (req, res) => {
   if (!chaveValida(req)) return res.status(401).json({ erro: 'Chave de convite inválida.' });
-  let usuario = null; // null = app antigo no modo de transição (sem conferência, como antes)
-  if (chaveDeSessao(req) || EXIGIR_LOGIN) {
-    try { usuario = identidadeDe(req).usuario; } catch (err) { return responderErro(res, err); }
-  }
+  let usuario;
+  try { usuario = identidadeDe(req).usuario; } catch (err) { return responderErro(res, err); }
   for (const pendentes of pendentesPorSala.values()) {
     const pedido = pendentes.get(req.params.solicitacaoId);
-    if (pedido && (usuario === null || pedido.usuario === usuario)) {
+    if (pedido && pedido.usuario === usuario) {
       return res.json({ status: pedido.status, token: pedido.token || undefined, url: pedido.token ? LIVEKIT_URL : undefined });
     }
   }
@@ -473,15 +460,13 @@ async function mutarFaixasDe(req, res, usuario, tipos, mensagemErro) {
   }
 }
 
-const quemMandouLegado = { legado: (req) => (req.body || {}).usuarioQueMandou };
-
 // Parar a transmissão de tela de outra pessoa (vídeo e o áudio que vem junto).
 app.post('/rooms/:sala/parar-transmissao', rota((req, res, usuario) =>
-  mutarFaixasDe(req, res, usuario, [FAIXA.TELA, FAIXA.AUDIO_DA_TELA], 'Falha ao forçar parar a transmissão.'), quemMandouLegado));
+  mutarFaixasDe(req, res, usuario, [FAIXA.TELA, FAIXA.AUDIO_DA_TELA], 'Falha ao forçar parar a transmissão.')));
 
 // Mutar o microfone de outra pessoa (pra todos na sala).
 app.post('/rooms/:sala/mutar-microfone', rota((req, res, usuario) =>
-  mutarFaixasDe(req, res, usuario, [FAIXA.MICROFONE], 'Falha ao mutar o microfone.'), quemMandouLegado));
+  mutarFaixasDe(req, res, usuario, [FAIXA.MICROFONE], 'Falha ao mutar o microfone.')));
 
 // ============================================================
 // Meus dados (LGPD): exportar e apagar a própria conta
@@ -1158,6 +1143,6 @@ if (require.main === module) {
   process.on('SIGTERM', gravarTudoEsair);
   process.on('SIGINT', gravarTudoEsair);
   app.listen(PORT, () => {
-    console.log(`Servidor do Estrivisor ativo na porta ${PORT} (login obrigatório: ${EXIGIR_LOGIN ? 'sim' : 'não, modo de transição'})`);
+    console.log(`Servidor do Estrivisor ativo na porta ${PORT} (login obrigatório)`);
   });
 }

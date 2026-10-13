@@ -54,15 +54,11 @@ conta no LiveKit Cloud.
 3. Aumente a `version` no `package.json` e rode `npm run dist` (com `GH_TOKEN` definido, o
    instalador é publicado nos Releases do GitHub e os apps instalados se atualizam sozinhos).
 
-## Transição para o login obrigatório
+## Login obrigatório
 
-Enquanto ainda houver amigos com app antigo (sem login), deixe `EXIGIR_LOGIN=0` no
-`server.env`. Quando todo mundo estiver na versão com login:
-
-1. `EXIGIR_LOGIN=1` no `server.env`;
-2. no `docker-compose.yml`, troque `"28080:8080"` por `"127.0.0.1:28080:8080"`;
-3. feche a porta 28080 no roteador;
-4. `docker compose up -d`.
+O login pelo Discord é sempre obrigatório (não há mais modo de transição). Para expor só o
+túnel e não a porta do servidor, use `"127.0.0.1:28080:8080"` no `docker-compose.yml`, feche a
+porta 28080 no roteador e rode `docker compose up -d`.
 
 ## Segurança — o que está coberto
 
