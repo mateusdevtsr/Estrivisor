@@ -2,10 +2,11 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const crypto = require('crypto');
-const { app, BrowserWindow, ipcMain, desktopCapturer, session, dialog, Tray, Menu, nativeImage, shell, safeStorage } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain, desktopCapturer, session, dialog, Tray, Menu, nativeImage, shell, safeStorage, screen } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const { migrarDadosAntigos } = require('./migrar-dados');
 const { lerConfiguracao, salvarConfiguracao } = require('./configuracao');
+const flutuante = require('./flutuante');
 
 // Carrega o .env pelo caminho absoluto da pasta do app, não pela pasta
 // "atual" de execução — sem isso, o .env não é encontrado quando o app
@@ -212,6 +213,7 @@ function aoFecharJanela(evento) {
 
 // Qualquer pedido de saída (menu da bandeja, atualização automática, sistema) libera o fechamento.
 app.on('before-quit', () => { encerrando = true; });
+app.on('will-quit', () => { try { globalShortcut.unregisterAll(); } catch (e) { /* já saindo */ } });
 if (instanciaPrincipal) app.on('second-instance', mostrarJanela);
 
 function createWindow() {
@@ -242,9 +244,200 @@ function createWindow() {
   if (!app.isPackaged) win.webContents.openDevTools();
   janelaPrincipal = win;
   win.on('close', aoFecharJanela);
+  for (const ev of ['move', 'resize', 'minimize', 'restore', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen', 'show', 'hide']) {
+    win.on(ev, () => { if (typeof manterFlutuanteNaTela === 'function') manterFlutuanteNaTela(); });
+  }
   win.on('session-end', () => { encerrando = true; }); // Windows desligando / encerrando a sessão
-  win.on('closed', () => { if (janelaPrincipal === win) janelaPrincipal = null; });
+  win.on('closed', () => {
+    if (janelaPrincipal === win) janelaPrincipal = null;
+    fecharJanelaFlutuante(); // sem a janela principal não há sala para mostrar
+    estadoFlutuante = flutuante.limparEstado(null);
+  });
   win.loadFile('index.html');
+}
+
+// ============================================================
+// Janela flutuante — um cartão pequeno por cima do jogo com quem está na sala de voz.
+// - Só aparece se a pessoa ligou em Configurações > Visual E está numa sala de voz.
+// - Não rouba o foco do jogo (clicar nela não tira você do jogo).
+// - Recebe o estado da janela principal (limpo em flutuante.js) e só pode pedir 3 coisas
+//   de volta: microfone, ensurdecer e sair da sala. Quem executa é a janela principal.
+// - Em jogo em tela cheia EXCLUSIVA o Windows pode esconder qualquer janela por cima;
+//   em "janela sem bordas" (o mais comum) ela aparece normalmente.
+// ============================================================
+let janelaFlutuante = null;
+let flutuantePronta = false;
+let estadoFlutuante = flutuante.limparEstado(null);
+let timerPosicao = null;
+let flutuanteOculta = false; // escondida pelo atalho (vale até alternar de novo ou sair da sala)
+let atalhoRegistrado = false;
+const ATALHO_FLUTUANTE = 'CommandOrControl+Shift+F';
+const ATALHO_CLIQUE = 'CommandOrControl+Shift+G'; // liga/desliga o "clique atravessa"
+
+// Liga/desliga o atalho global conforme a opção. Se outro programa já usa a combinação, o
+// registro falha e a tela avisa (nada quebra).
+function aplicarAtalhoFlutuante() {
+  try {
+    if (configuracao.flutuanteAtalho && configuracao.flutuanteAtiva) {
+      if (!atalhoRegistrado) {
+        atalhoRegistrado = globalShortcut.register(ATALHO_FLUTUANTE, () => {
+          if (!configuracao.flutuanteAtiva || !estadoFlutuante.naVoz) return;
+          flutuanteOculta = !flutuanteOculta;
+          atualizarFlutuante();
+        });
+        // Com o clique atravessando, a janela não responde ao mouse: este atalho volta ao normal.
+        globalShortcut.register(ATALHO_CLIQUE, () => {
+          if (!configuracao.flutuanteAtiva) return;
+          configuracao = salvarConfiguracao(app.getPath('userData'), { flutuanteClique: !configuracao.flutuanteClique });
+          atualizarFlutuante();
+          if (janelaPrincipal && !janelaPrincipal.isDestroyed()) janelaPrincipal.webContents.send('flutuante-mudou', true);
+        });
+      }
+    } else if (atalhoRegistrado || globalShortcut.isRegistered(ATALHO_FLUTUANTE)) {
+      globalShortcut.unregister(ATALHO_FLUTUANTE);
+      globalShortcut.unregister(ATALHO_CLIQUE);
+      atalhoRegistrado = false;
+    }
+  } catch (e) {
+    atalhoRegistrado = false;
+    console.warn('[janela flutuante] atalho indisponível:', e.message);
+  }
+}
+
+function remetenteFlutuante(evento) {
+  const url = evento && evento.senderFrame && evento.senderFrame.url;
+  return Boolean(janelaFlutuante) && !janelaFlutuante.isDestroyed()
+    && evento.sender === janelaFlutuante.webContents
+    && typeof url === 'string' && url.startsWith('file://') && url.endsWith('/flutuante.html');
+}
+
+function criarJanelaFlutuante() {
+  const pasta = app.getPath('userData');
+  const areas = screen.getAllDisplays().map((d) => d.workArea);
+  const pos = flutuante.posicaoValida(flutuante.lerPosicao(pasta), areas) || flutuante.posicaoPadrao(screen.getPrimaryDisplay().workArea);
+  const win = new BrowserWindow({
+    width: flutuante.LARGURA,
+    height: flutuante.alturaDaJanela(estadoFlutuante.participantes.length, Boolean(estadoParaJanela().mensagem)),
+    x: pos.x,
+    y: pos.y,
+    show: false,
+    frame: false,
+    transparent: true,
+    hasShadow: false,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    focusable: false,     // clicar nela não tira o foco do jogo
+    alwaysOnTop: true,
+    title: 'Estrivisor (sala de voz)',
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
+      backgroundThrottling: false,
+      preload: path.join(__dirname, 'preload-flutuante.js')
+    }
+  });
+  win.setAlwaysOnTop(true, 'screen-saver');
+  if (!ouvindoMonitores) { // o módulo "screen" só pode ser usado depois do app abrir
+    ouvindoMonitores = true;
+    screen.on('display-metrics-changed', manterFlutuanteNaTela);
+    screen.on('display-removed', manterFlutuanteNaTela);
+  }
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  win.webContents.on('will-navigate', (evento) => evento.preventDefault());
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('did-finish-load', () => {
+    flutuantePronta = true;
+    enviarEstadoFlutuante();
+  });
+  // Durante o arrasto não mexemos na janela (isso travava o movimento). Só ao SOLTAR
+  // ('moved') ela é puxada de volta pra dentro do limite; a posição é guardada logo depois.
+  const guardarPosicao = () => {
+    clearTimeout(timerPosicao);
+    timerPosicao = setTimeout(() => {
+      if (win.isDestroyed()) return;
+      const [x, y] = win.getPosition();
+      flutuante.gravarPosicao(pasta, { x, y });
+    }, 400);
+  };
+  win.on('move', guardarPosicao);
+  win.on('moved', () => { manterFlutuanteNaTela(); guardarPosicao(); });
+  win.on('closed', () => {
+    clearTimeout(timerPosicao);
+    if (janelaFlutuante === win) { janelaFlutuante = null; flutuantePronta = false; }
+  });
+  janelaFlutuante = win;
+  flutuantePronta = false;
+  win.loadFile('flutuante.html');
+}
+
+// Onde a janela flutuante pode ficar: com o Estrivisor aberto em janela (não maximizado, nem
+// em tela cheia), ela fica dentro da área dele; com ele escondido, minimizado, maximizado ou
+// em tela cheia, vale a tela inteira (aí ela serve de overlay por cima do jogo).
+function areaLimiteFlutuante(bounds) {
+  const p = janelaPrincipal;
+  if (p && !p.isDestroyed() && p.isVisible() && !p.isMinimized() && !p.isMaximized() && !p.isFullScreen()) {
+    const c = p.getContentBounds();
+    if (c.width >= flutuante.LARGURA && c.height >= 150) return c;
+  }
+  return screen.getDisplayMatching(bounds).workArea;
+}
+
+function manterFlutuanteNaTela() {
+  const win = janelaFlutuante;
+  if (!win || win.isDestroyed()) return;
+  const b = win.getBounds();
+  const area = areaLimiteFlutuante(b);
+  const p = flutuante.limitarAArea({ x: b.x, y: b.y }, b.width, b.height, area);
+  if (p.x !== b.x || p.y !== b.y) win.setPosition(p.x, p.y);
+}
+let ouvindoMonitores = false;
+
+// O que a janela flutuante recebe: o estado limpo, sem a mensagem/aviso se a pessoa não ligou.
+function estadoParaJanela() {
+  return {
+    ...estadoFlutuante,
+    mensagem: configuracao.flutuanteChat ? estadoFlutuante.mensagem : null,
+    aviso: configuracao.flutuanteAvisos ? estadoFlutuante.aviso : null,
+  };
+}
+
+function enviarEstadoFlutuante() {
+  if (janelaFlutuante && !janelaFlutuante.isDestroyed() && flutuantePronta) {
+    janelaFlutuante.webContents.send('flutuante-estado', estadoParaJanela());
+  }
+}
+
+function fecharJanelaFlutuante() {
+  if (janelaFlutuante && !janelaFlutuante.isDestroyed()) janelaFlutuante.destroy();
+  janelaFlutuante = null;
+  flutuantePronta = false;
+}
+
+// Mostra, esconde e redimensiona conforme a configuração e o estado da sala.
+function atualizarFlutuante() {
+  if (!estadoFlutuante.naVoz) flutuanteOculta = false; // saiu da sala: na próxima ela volta a aparecer
+  const deveAparecer = configuracao.flutuanteAtiva && estadoFlutuante.naVoz && !flutuanteOculta && !encerrando;
+  if (!deveAparecer) {
+    if (janelaFlutuante && !janelaFlutuante.isDestroyed()) janelaFlutuante.hide();
+    return;
+  }
+  if (!janelaFlutuante || janelaFlutuante.isDestroyed()) criarJanelaFlutuante();
+  const win = janelaFlutuante;
+  const [largura, altura] = win.getSize();
+  const alturaNova = flutuante.alturaDaJanela(estadoFlutuante.participantes.length, Boolean(estadoParaJanela().mensagem));
+  if (altura !== alturaNova || largura !== flutuante.LARGURA) {
+    win.setSize(flutuante.LARGURA, alturaNova);
+    manterFlutuanteNaTela(); // a lista cresceu: não deixa passar do fim da tela
+  }
+  win.setOpacity(configuracao.flutuanteOpacidade / 100);
+  win.setIgnoreMouseEvents(configuracao.flutuanteClique, { forward: true }); // clique atravessa (se ligado)
+  enviarEstadoFlutuante();
+  if (!win.isVisible()) win.showInactive();
 }
 
 // ============================================================
@@ -262,6 +455,46 @@ function responder(canal, fn) {
     return fn(evento, ...args);
   });
 }
+
+// ---- Janela flutuante: pedidos da tela principal ----
+function opcoesFlutuante() {
+  return {
+    ativa: configuracao.flutuanteAtiva,
+    atalho: configuracao.flutuanteAtalho,
+    atalhoFunciona: atalhoRegistrado,
+    opacidade: configuracao.flutuanteOpacidade,
+    clique: configuracao.flutuanteClique,
+    chat: configuracao.flutuanteChat,
+    avisos: configuracao.flutuanteAvisos,
+  };
+}
+responder('flutuante-ler', () => opcoesFlutuante());
+responder('flutuante-definir', (evento, opcoes) => {
+  const novas = flutuante.limparOpcoes(opcoes);
+  if (!Object.keys(novas).length) throw new Error('Valor inválido.');
+  configuracao = salvarConfiguracao(app.getPath('userData'), novas);
+  aplicarAtalhoFlutuante();
+  atualizarFlutuante();
+  return opcoesFlutuante();
+});
+responder('flutuante-estado', (evento, estado) => {
+  estadoFlutuante = flutuante.limparEstado(estado);
+  atualizarFlutuante();
+});
+
+// ---- Janela flutuante: pedidos da própria janela flutuante ----
+ipcMain.handle('flutuante-comando', (evento, comando) => {
+  if (!remetenteFlutuante(evento)) throw new Error('Pedido recusado: origem desconhecida.');
+  if (!flutuante.comandoValido(comando)) throw new Error('Comando inválido.');
+  if (janelaPrincipal && !janelaPrincipal.isDestroyed()) janelaPrincipal.webContents.send('flutuante-comando', comando);
+});
+ipcMain.handle('flutuante-esconder', (evento) => {
+  if (!remetenteFlutuante(evento)) throw new Error('Pedido recusado: origem desconhecida.');
+  configuracao = salvarConfiguracao(app.getPath('userData'), { flutuanteAtiva: false });
+  aplicarAtalhoFlutuante();
+  atualizarFlutuante();
+  if (janelaPrincipal && !janelaPrincipal.isDestroyed()) janelaPrincipal.webContents.send('flutuante-mudou', false);
+});
 
 // ============================================================
 // Conta (login) — a sessão fica SÓ aqui no processo principal
@@ -595,6 +828,7 @@ app.whenReady().then(() => {
   carregarSessao();
   criarBandeja();
   createWindow();
+  aplicarAtalhoFlutuante();
   conectarDiscordRpc();
 
   // Sem isso, navigator.mediaDevices.getDisplayMedia() do renderer falha

@@ -1,13 +1,14 @@
 {
   "name": "estrivisor",
   "productName": "Estrivisor",
-  "version": "3.9.1",
+  "version": "3.10.0",
   "description": "Estrivisor — voz, chat e compartilhamento de tela entre amigos",
   "author": "mateusdevtsr",
   "license": "UNLICENSED",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "test": "node --test testes/flutuante.test.js testes/estilo.test.js testes/areas.test.js testes/sons.test.js",
     "dist": "electron-builder --publish always"
   },
   "dependencies": {
@@ -29,6 +30,14 @@
       "migrar-dados.js",
       "icone.png",
       "configuracao.js",
+      "flutuante.js",
+      "estilo.js",
+      "areas.js",
+      "sons.js",
+      "flutuante.html",
+      "flutuante.css",
+      "flutuante-tela.js",
+      "preload-flutuante.js",
       "index.html",
       "estrivisor-app.js",
       ".env",

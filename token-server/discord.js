@@ -38,6 +38,21 @@ function montarPerfilDiscord(usuario) {
   return { id, nome, avatar };
 }
 
+// O motivo que o Discord deu ao recusar (ex.: "invalid_grant: Invalid "code" in request."), só
+// pro log do servidor. Essa resposta do Discord não traz segredo nenhum.
+async function motivoDaRecusa(resposta) {
+  try {
+    const corpo = await resposta.json();
+    return [corpo && corpo.error, corpo && corpo.error_description]
+      .filter((x) => typeof x === 'string' && x)
+      .join(': ')
+      .replace(/[\u0000-\u001f\u007f]/g, ' ')
+      .slice(0, 200);
+  } catch (e) {
+    return '';
+  }
+}
+
 // Troca o código pela conta da pessoa. "buscar" é o fetch (trocável nos testes).
 async function contaDoCodigo({ codigo, redirectUri, clientId, clientSecret, buscar = fetch }) {
   const credenciais = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
@@ -53,8 +68,14 @@ async function contaDoCodigo({ codigo, redirectUri, clientId, clientSecret, busc
     console.error('[discord] falha de rede:', (e && e.cause && e.cause.code) || (e && e.name) || 'erro', (e && e.message) || '');
     throw new ErroDiscord('Não consegui falar com o Discord. Tente de novo.');
   }
-  if (!resposta.ok) throw new ErroDiscord('O Discord não confirmou o login (o código venceu ou já foi usado). Tente de novo.');
-  const { access_token: tokenAcesso } = await resposta.json().catch(() => ({}));
+  if (!resposta.ok) {
+    const motivo = await motivoDaRecusa(resposta);
+    console.error(`[discord] o Discord recusou o código de login (HTTP ${resposta.status || '?'})${motivo ? ': ' + motivo : ''}`);
+    throw new ErroDiscord('O Discord não confirmou o login (o código venceu ou já foi usado). Tente de novo.');
+  }
+  let corpoToken = null;
+  try { corpoToken = await resposta.json(); } catch (e) { /* resposta sem JSON */ }
+  const tokenAcesso = corpoToken && typeof corpoToken.access_token === 'string' ? corpoToken.access_token : null;
   if (!tokenAcesso) throw new ErroDiscord('Resposta estranha do Discord. Tente de novo.');
 
   let eu;
@@ -64,8 +85,13 @@ async function contaDoCodigo({ codigo, redirectUri, clientId, clientSecret, busc
     console.error('[discord] falha de rede:', (e && e.cause && e.cause.code) || (e && e.name) || 'erro', (e && e.message) || '');
     throw new ErroDiscord('Não consegui falar com o Discord. Tente de novo.');
   }
-  if (!eu.ok) throw new ErroDiscord('O Discord não liberou os dados da conta. Tente de novo.');
-  const perfil = montarPerfilDiscord(await eu.json().catch(() => null));
+  if (!eu.ok) {
+    console.error(`[discord] o Discord não liberou os dados da conta (HTTP ${eu.status || '?'})`);
+    throw new ErroDiscord('O Discord não liberou os dados da conta. Tente de novo.');
+  }
+  let dadosConta = null;
+  try { dadosConta = await eu.json(); } catch (e) { /* resposta sem JSON */ }
+  const perfil = montarPerfilDiscord(dadosConta);
   if (!perfil) throw new ErroDiscord('Não consegui ler a sua conta do Discord.');
   return perfil;
 }

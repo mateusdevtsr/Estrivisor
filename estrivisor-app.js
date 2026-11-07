@@ -384,6 +384,16 @@ function mostrarAreaVazia() {
     document.getElementById('area-texto').style.display = 'none';
     document.getElementById('area-voz').style.display = 'none';
     document.getElementById('area-vazia').style.display = 'flex';
+    atualizarCinemaDuplo();
+}
+
+// Layout Cinema: o chat do canal de texto aberto fica ao lado da transmissão (lado a lado).
+// Nos outros layouts, voz e texto continuam alternando como sempre.
+const layoutCinemaAtivo = () => document.body.classList.contains('layout-cinema');
+function atualizarCinemaDuplo() {
+    const texto = document.getElementById('area-texto').style.display === 'flex';
+    const voz = document.getElementById('area-voz').style.display === 'flex';
+    document.body.classList.toggle('cinema-duplo', layoutCinemaAtivo() && texto && voz);
 }
 
 async function excluirCanal(canal) {
@@ -469,6 +479,7 @@ function renderizarListaCanais() {
         const abertoAgora = canalTextoAtual && canalTextoAtual.id === canal.id;
         const pendentesLeitura = abertoAgora && chatCanal.ativo() ? 0 : naoLidas(chaveCanalTexto(servidorAtual.id, canal.id));
         item.className = 'item-canal' + (abertoAgora ? ' ativo' : '') + (pendentesLeitura ? ' nao-lido' : '');
+        item.title = canal.nome; // no layout Compacto/Cinema só o ícone aparece
         item.innerHTML = `<span class="icone-canal">#</span><span>${escaparHtml(canal.nome)}</span>${pendentesLeitura ? `<span class="badge-nl">${pendentesLeitura > 99 ? '99+' : pendentesLeitura}</span>` : ''}`;
         item.addEventListener('click', () => entrarCanalTexto(canal));
         adicionarControlesDeCanal(item, canal);
@@ -478,6 +489,7 @@ function renderizarListaCanais() {
     servidorAtual.canais.filter(c => c.tipo === 'voz').forEach(canal => {
         const item = document.createElement('div');
         item.className = 'item-canal' + (canalVozAtual && canalVozAtual.id === canal.id ? ' ativo' : '');
+        item.title = canal.nome;
         item.innerHTML = `<span class="icone-canal">🔊</span><span>${escaparHtml(canal.nome)}</span>${canal.aprovacao ? '<span class="cadeado">🔒</span>' : ''}`;
         item.addEventListener('click', () => entrarCanalVoz(canal));
         adicionarControlesDeCanal(item, canal);
@@ -669,6 +681,8 @@ function registrarUltimas(mapa) {
     let mudouLidas = false;
     Object.keys(mapa || {}).forEach((chave) => {
         const v = Number(mapa[chave]) || 0;
+        // Chegou mensagem nova numa conversa que você não está lendo agora: toca o som.
+        if (ultimasConhecidas[chave] !== undefined && v > ultimasConhecidas[chave] && v > (lidasMapa[chave] || 0)) somDeMensagem(chave, v);
         ultimasConhecidas[chave] = v;
         if (lidasMapa[chave] === undefined) { lidasMapa[chave] = v; mudouLidas = true; }
     });
@@ -784,6 +798,7 @@ function criarChat({ container, input, aoSemAcesso }) {
             if (!ant || !mesmoDia(ant.ts, m.ts)) container.appendChild(separadorDia(m.ts));
             container.appendChild(elementoMensagem(m, ant && mesmoDia(ant.ts, m.ts) ? ant : null));
             msgs.push(m);
+            if (m.usuario !== obterIdentidadeUsuario()) { registrarMensagemFlutuante(m); if (cfg) somDeMensagem(cfg.chaveLida, m.seq); }
             mudou = true;
         });
         if (!mudou) return;
@@ -919,8 +934,10 @@ function entrarCanalTexto(canal) {
     canalTextoAtual = canal;
     document.getElementById('cabecalho-canal').innerHTML = `<span class="icone-canal">#</span> <span>${escaparHtml(canal.nome)}</span>`;
     document.getElementById('area-vazia').style.display = 'none';
-    document.getElementById('area-voz').style.display = 'none';
+    // No Cinema, se você está numa sala de voz, a transmissão continua na tela ao lado do chat.
+    document.getElementById('area-voz').style.display = (layoutCinemaAtivo() && canalVozAtual) ? 'flex' : 'none';
     document.getElementById('area-texto').style.display = 'flex';
+    atualizarCinemaDuplo();
     document.getElementById('input-mensagem').placeholder = `Enviar mensagem em #${canal.nome}`;
     chatCanal.abrir({
         caminho: `/servidores/${servidorId}/canais/${canal.id}/mensagens`,
@@ -947,8 +964,9 @@ function vozConectada() {
 function mostrarAreaVoz(canal) {
     document.getElementById('cabecalho-canal').innerHTML = `<span class="icone-canal">🔊</span> <span>${escaparHtml(canal.nome)}</span>`;
     document.getElementById('area-vazia').style.display = 'none';
-    document.getElementById('area-texto').style.display = 'none';
+    document.getElementById('area-texto').style.display = (layoutCinemaAtivo() && canalTextoAtual) ? 'flex' : 'none';
     document.getElementById('area-voz').style.display = 'flex';
+    atualizarCinemaDuplo();
 }
 
 // Explica por que a chamada caiu (quando não foi você que saiu).
@@ -1011,6 +1029,8 @@ async function entrarCanalVoz(canal) {
 
         conectandoVoz = false;
         avisoConexaoVoz = '';
+        entradaNaVozEm = Date.now(); // pra não avisar "entrou" de quem já estava na sala
+        tocarSomApp('voceEntrou');
         document.getElementById('status-usuario-rodape').style.display = 'block';
         document.getElementById('select-fontes').disabled = false;
         // A lista de janelas é só pra transmitir: se falhar, a chamada continua normalmente.
@@ -1072,7 +1092,12 @@ function registrarEventosDaVoz(sala) {
         atualizarListaMembros();
     });
     sala.on(E.TrackUnmuted, () => { if (atual()) atualizarListaMembros(); });
-    sala.on(E.TrackPublished, () => { if (atual()) atualizarListaMembros(); });
+    sala.on(E.TrackPublished, (pub, participante) => {
+        if (!atual()) return;
+        const src = LivekitClient.Track && LivekitClient.Track.Source;
+        if (pub && src && pub.source === src.ScreenShare && participante && participante !== sala.localParticipant && Date.now() - entradaNaVozEm >= 3000) tocarSomApp('transmissao');
+        atualizarListaMembros();
+    });
     sala.on(E.TrackUnpublished, () => { if (atual()) atualizarListaMembros(); });
 
     // Sem conferir "atual()": a limpeza dos elementos de áudio/vídeo tem que acontecer sempre.
@@ -1087,8 +1112,8 @@ function registrarEventosDaVoz(sala) {
         atualizarListaMembros();
     });
 
-    sala.on(E.ParticipantConnected, () => { if (atual()) { atualizarListaMembros(); atualizarSubMembrosVoz(); } });
-    sala.on(E.ParticipantDisconnected, () => { if (atual()) { atualizarListaMembros(); atualizarSubMembrosVoz(); } });
+    sala.on(E.ParticipantConnected, (p) => { if (atual()) { if (Date.now() - entradaNaVozEm >= 3000) tocarSomApp('entrou'); avisarFlutuante(`${(p && (p.name || p.identity)) || 'Alguém'} entrou`); atualizarListaMembros(); atualizarSubMembrosVoz(); } });
+    sala.on(E.ParticipantDisconnected, (p) => { if (atual()) { if (Date.now() - entradaNaVozEm >= 3000) tocarSomApp('saiu'); avisarFlutuante(`${(p && (p.name || p.identity)) || 'Alguém'} saiu`); atualizarListaMembros(); atualizarSubMembrosVoz(); } });
     sala.on(E.ActiveSpeakersChanged, (falantes) => {
         if (!atual()) return;
         identidadesFalando = new Set(falantes.map(p => p.identity));
@@ -1134,6 +1159,7 @@ function registrarEventosDaVoz(sala) {
 async function sairCanalVoz() {
     if (!roomVoz && !canalVozAtual) return;
     tentativaVoz++; // cancela uma entrada que ainda esteja em andamento (token, aprovação, conexão)
+    if (vozConectada()) tocarSomApp('voceSaiu');
     const sala = roomVoz;
     document.body.classList.remove('modo-cinema');
     if (sala && sala.state === estadoConectado()) {
@@ -1746,7 +1772,11 @@ async function alternarMicrofone(btn) {
     } catch (err) {
         microfoneAtivo = !microfoneAtivo;
         mostrarNotificacao('Erro ao ativar microfone: ' + err.message);
+        atualizarBotaoMicrofone();
+        atualizarListaMembros();
+        return;
     }
+    tocarSomApp(microfoneAtivo ? 'micLigado' : 'micDesligado');
     atualizarBotaoMicrofone();
     atualizarListaMembros();
 }
@@ -1826,6 +1856,8 @@ document.getElementById('btn-surdo-rodape').addEventListener('click', () => {
     btn.classList.toggle('mudo', surdoAtivo);
     btn.title = surdoAtivo ? 'Reativar áudio recebido' : 'Silenciar áudio recebido';
     elementosAudioPorIdentidade.forEach((_, identity) => aplicarAudioDePessoa(identity));
+    tocarSomApp(surdoAtivo ? 'surdoLigado' : 'surdoDesligado');
+    enviarEstadoFlutuante();
 });
 
 // ---------- Câmera ----------
@@ -2407,6 +2439,8 @@ function atualizarListaMembros() {
 
     if (!vozConectada()) {
         titulo.style.display = 'none';
+        renderizarFesta();
+        enviarEstadoFlutuante();
         return;
     }
 
@@ -2436,7 +2470,662 @@ function atualizarListaMembros() {
         item.addEventListener('contextmenu', (e) => { e.preventDefault(); abrirMenuContexto(p.identity, nome, ehVoce, e.clientX, e.clientY, transmitindo); });
         lista.appendChild(item);
     });
+    renderizarFesta();
+    enviarEstadoFlutuante();
 }
+
+
+
+
+
+// ---------- Sons do app ----------
+// Sons gerados na hora (sem arquivos) ou um arquivo escolhido pela pessoa (fica no IndexedDB).
+// Só os ajustes ficam no localStorage. Nada disso vai para a chamada: só você ouve.
+const CHAVE_SONS = 'estrivisor_sons';
+let configSons = window.Sons ? window.Sons.validar(null) : null;
+let contextoSons = null;
+const buffersSons = new Map();     // id -> AudioBuffer do arquivo escolhido
+const ultimoSomEm = new Map();     // id -> quando tocou (evita barulho repetido)
+const somMensagemSeq = {};         // conversa -> última mensagem que já tocou som
+
+function salvarConfigSons() {
+    try { localStorage.setItem(CHAVE_SONS, JSON.stringify(configSons)); } catch (e) { /* vale só nesta sessão */ }
+}
+function contextoDeSons() {
+    if (!contextoSons) {
+        contextoSons = new AudioContext();
+        // Sai pelo mesmo alto-falante escolhido em Voz e áudio (se o navegador permitir).
+        try { if (typeof prefsAudio !== 'undefined' && prefsAudio.saidaId && contextoSons.setSinkId) contextoSons.setSinkId(prefsAudio.saidaId).catch(() => {}); } catch (e) { /* usa o padrão */ }
+    }
+    if (contextoSons.state === 'suspended') contextoSons.resume().catch(() => {});
+    return contextoSons;
+}
+
+async function tocarSomApp(id, { forcar = false } = {}) {
+    const S = window.Sons;
+    if (!S || !configSons) return;
+    const ev = S.evento(id);
+    if (!ev) return;
+    if (!forcar && (!configSons.ativo || !configSons.eventos[id])) return;
+    const agora = Date.now();
+    if (!forcar && agora - (ultimoSomEm.get(id) || 0) < 350) return; // não toca o mesmo som várias vezes seguidas
+    ultimoSomEm.set(id, agora);
+    try {
+        const ctx = contextoDeSons();
+        const saida = ctx.createGain();
+        saida.gain.value = (configSons.volume / 100) * 0.8;
+        saida.connect(ctx.destination);
+        const buffer = buffersSons.get(id);
+        if (buffer) {
+            const fonte = ctx.createBufferSource();
+            fonte.buffer = buffer;
+            fonte.connect(saida);
+            fonte.start();
+            return;
+        }
+        const t0 = ctx.currentTime + 0.01;
+        ev.notas.forEach((nota) => {
+            const osc = ctx.createOscillator();
+            const g = ctx.createGain();
+            osc.type = nota.o;
+            osc.frequency.value = nota.f;
+            g.gain.setValueAtTime(0.0001, t0 + nota.t);
+            g.gain.exponentialRampToValueAtTime(nota.v, t0 + nota.t + 0.012);
+            g.gain.exponentialRampToValueAtTime(0.0001, t0 + nota.t + nota.d);
+            osc.connect(g).connect(saida);
+            osc.start(t0 + nota.t);
+            osc.stop(t0 + nota.t + nota.d + 0.02);
+        });
+    } catch (e) { console.warn('[sons] não consegui tocar:', e.message); }
+}
+
+// Mensagem nova numa conversa: toca uma vez por mensagem (a conversa aberta e o aviso de fundo
+// podem avisar a mesma mensagem; o mapa evita o som duplicado).
+function somDeMensagem(chaveConversa, seq) {
+    if (!(seq > (somMensagemSeq[chaveConversa] || 0))) return;
+    somMensagemSeq[chaveConversa] = seq;
+    tocarSomApp(String(chaveConversa).startsWith('d:') ? 'dm' : 'mensagem');
+}
+
+(function ligarSons() {
+    const S = window.Sons;
+    const lista = document.getElementById('lista-sons');
+    if (!S || !lista) return;
+    try { configSons = S.validar(JSON.parse(localStorage.getItem(CHAVE_SONS) || 'null')); } catch (e) { configSons = S.validar(null); }
+
+    const atualizarLinha = (id) => {
+        const linha = lista.querySelector(`[data-som="${id}"]`);
+        if (!linha) return;
+        const c = configSons.custom[id];
+        linha.querySelector('.info-som').textContent = c ? `Seu arquivo: ${c.nome || 'áudio'}` : 'Som padrão do app';
+        linha.querySelector('.btn-restaurar-som').style.display = c ? '' : 'none';
+        linha.querySelector('input[type=checkbox]').checked = configSons.eventos[id];
+    };
+
+    S.EVENTOS.forEach((ev) => {
+        const linha = document.createElement('div');
+        linha.className = 'linha-som';
+        linha.dataset.som = ev.id;
+        const marca = document.createElement('input'); marca.type = 'checkbox'; marca.title = 'Tocar este som';
+        marca.style.width = 'auto';
+        const texto = document.createElement('div'); texto.className = 'texto-som';
+        const nome = document.createElement('div'); nome.className = 'nome-som'; nome.textContent = ev.nome;
+        const info = document.createElement('div'); info.className = 'dica-config info-som';
+        texto.append(nome, info);
+        const botoes = document.createElement('div'); botoes.className = 'botoes-som';
+        const testar = document.createElement('button'); testar.type = 'button'; testar.textContent = '▶ Testar';
+        const escolher = document.createElement('button'); escolher.type = 'button'; escolher.textContent = 'Trocar';
+        const restaurar = document.createElement('button'); restaurar.type = 'button'; restaurar.className = 'btn-restaurar-som'; restaurar.textContent = 'Voltar ao padrão';
+        const arquivo = document.createElement('input'); arquivo.type = 'file'; arquivo.accept = 'audio/*'; arquivo.style.display = 'none';
+        botoes.append(testar, escolher, restaurar, arquivo);
+        linha.append(marca, texto, botoes);
+        lista.appendChild(linha);
+
+        marca.addEventListener('change', () => { configSons.eventos[ev.id] = marca.checked; salvarConfigSons(); });
+        testar.addEventListener('click', () => tocarSomApp(ev.id, { forcar: true }));
+        escolher.addEventListener('click', () => arquivo.click());
+        arquivo.addEventListener('change', async () => {
+            const f = arquivo.files && arquivo.files[0];
+            arquivo.value = '';
+            if (!f) return;
+            const v = S.validarArquivo(f);
+            if (!v.ok) return mostrarNotificacao(v.erro);
+            try {
+                const buffer = await contextoDeSons().decodeAudioData(await f.arrayBuffer());
+                if (buffer.duration > S.MAX_SEGUNDOS) return mostrarNotificacao(`Som longo demais (máximo de ${S.MAX_SEGUNDOS} segundos).`);
+                await bancoAreas('readwrite', (loja) => loja.put(f, 'som-' + ev.id));
+                buffersSons.set(ev.id, buffer);
+                configSons.custom[ev.id] = { tipo: f.type, nome: String(f.name || '').slice(0, 60) };
+                salvarConfigSons();
+                atualizarLinha(ev.id);
+                tocarSomApp(ev.id, { forcar: true });
+            } catch (e) {
+                mostrarNotificacao('Não consegui abrir esse áudio. Tente um MP3 ou WAV.');
+            }
+        });
+        restaurar.addEventListener('click', async () => {
+            try { await bancoAreas('readwrite', (loja) => loja.delete('som-' + ev.id)); } catch (e) { /* já não existia */ }
+            buffersSons.delete(ev.id);
+            delete configSons.custom[ev.id];
+            salvarConfigSons();
+            atualizarLinha(ev.id);
+        });
+        atualizarLinha(ev.id);
+    });
+
+    const ativo = document.getElementById('check-sons-ativo');
+    const volume = document.getElementById('slider-sons');
+    const valor = document.getElementById('valor-sons');
+    ativo.checked = configSons.ativo;
+    volume.value = configSons.volume; valor.textContent = configSons.volume + '%';
+    ativo.addEventListener('change', () => { configSons.ativo = ativo.checked; salvarConfigSons(); });
+    volume.addEventListener('input', () => { configSons.volume = Number(volume.value); valor.textContent = volume.value + '%'; });
+    volume.addEventListener('change', () => { salvarConfigSons(); tocarSomApp('mensagem', { forcar: true }); });
+
+    // Carrega os arquivos que a pessoa já tinha escolhido.
+    (async () => {
+        for (const id of Object.keys(configSons.custom)) {
+            try {
+                const f = await bancoAreas('readonly', (loja) => loja.get('som-' + id));
+                if (!f || !S.validarArquivo(f).ok) throw new Error('sumiu');
+                buffersSons.set(id, await contextoDeSons().decodeAudioData(await f.arrayBuffer()));
+            } catch (e) {
+                delete configSons.custom[id]; // o arquivo sumiu: volta ao som padrão
+                atualizarLinha(id);
+            }
+        }
+        salvarConfigSons();
+    })();
+})();
+
+// ---------- Imagens e animações por área ----------
+// O arquivo fica guardado (como veio, pra não perder a animação) no IndexedDB deste computador;
+// só os ajustes ficam no localStorage. Cada área ganha uma "camada" atrás do conteúdo dela.
+const CHAVE_AREAS = 'estrivisor_areas';
+let metaAreas = {};               // id -> { escuro, ajuste, tipo, nome }
+const urlsAreas = new Map();      // id -> URL do arquivo (blob:)
+
+function abrirBancoAreas() {
+    return new Promise((resolve, reject) => {
+        const req = indexedDB.open('estrivisor-imagens', 1);
+        req.onupgradeneeded = () => req.result.createObjectStore('areas');
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+    });
+}
+async function bancoAreas(modo, fn) {
+    const db = await abrirBancoAreas();
+    try {
+        return await new Promise((resolve, reject) => {
+            const tx = db.transaction('areas', modo);
+            const req = fn(tx.objectStore('areas'));
+            tx.oncomplete = () => resolve(req ? req.result : undefined);
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error);
+        });
+    } finally { db.close(); }
+}
+function salvarMetaAreas() {
+    try { localStorage.setItem(CHAVE_AREAS, JSON.stringify(metaAreas)); } catch (e) { /* vale só nesta sessão */ }
+}
+
+function camadaDaArea(area) {
+    return area.fixa ? document.getElementById('camada-area-' + area.id) : document.querySelector(area.seletor + ' > .camada-area');
+}
+
+function desenharAreaNaTela(area) {
+    const A = window.Areas;
+    const meta = metaAreas[area.id];
+    const url = urlsAreas.get(area.id);
+    const alvo = area.fixa ? document.body : document.querySelector(area.seletor);
+    if (!alvo) return;
+    const antiga = camadaDaArea(area);
+    if (antiga) antiga.remove();
+    if (!meta || !url) { if (!area.fixa) alvo.classList.remove('alvo-imagem'); atualizarClasseFundoAnim(); return; }
+
+    const camada = document.createElement('div');
+    camada.className = 'camada-area' + (area.fixa ? ' fixa' : '');
+    if (area.fixa) camada.id = 'camada-area-' + area.id;
+    camada.style.setProperty('--escuro', String(meta.escuro / 100));
+    camada.style.setProperty('--ajuste-img', meta.ajuste);
+    let midia;
+    if (A.ehVideo(meta.tipo)) {
+        midia = document.createElement('video');
+        midia.muted = true; midia.loop = true; midia.autoplay = true; midia.playsInline = true; midia.controls = false;
+        midia.disablePictureInPicture = true;
+        midia.addEventListener('error', () => { mostrarNotificacao('Não consegui reproduzir esse vídeo. Tente MP4 (H.264) ou WebM.'); removerImagemDaArea(area.id); });
+    } else {
+        midia = document.createElement('img');
+        midia.alt = ''; midia.draggable = false;
+        midia.addEventListener('error', () => { mostrarNotificacao('Não consegui abrir essa imagem.'); removerImagemDaArea(area.id); });
+    }
+    midia.src = url;
+    const escura = document.createElement('div');
+    escura.className = 'escura';
+    camada.appendChild(midia);
+    camada.appendChild(escura);
+    if (area.fixa) document.body.insertBefore(camada, document.body.firstChild);
+    else { alvo.classList.add('alvo-imagem'); alvo.insertBefore(camada, alvo.firstChild); }
+    atualizarClasseFundoAnim();
+}
+
+function atualizarClasseFundoAnim() {
+    document.body.classList.toggle('com-fundo-anim', Boolean(metaAreas.app && urlsAreas.get('app')));
+}
+
+function atualizarLinhaArea(area) {
+    const linha = document.querySelector(`.linha-area[data-area="${area.id}"]`);
+    if (!linha) return;
+    const meta = metaAreas[area.id];
+    linha.querySelector('.info-area').textContent = meta ? (meta.nome || 'Arquivo escolhido') : 'Nenhuma imagem.';
+    linha.querySelector('.btn-remover-area').disabled = !meta;
+    linha.querySelector('.opcoes-area').style.display = meta ? 'grid' : 'none';
+    if (meta) {
+        linha.querySelector('.slider-area').value = meta.escuro;
+        linha.querySelector('.valor-escuro').textContent = meta.escuro + '%';
+        linha.querySelector('.select-ajuste').value = meta.ajuste;
+    }
+}
+
+async function escolherImagemDaArea(id, arquivo) {
+    const A = window.Areas;
+    const area = A.AREAS.find((a) => a.id === id);
+    if (!area) return;
+    const v = A.validarArquivo(arquivo);
+    if (!v.ok) return mostrarNotificacao(v.erro);
+    try {
+        await bancoAreas('readwrite', (loja) => loja.put(arquivo, id));
+    } catch (e) {
+        return mostrarNotificacao('Não consegui guardar esse arquivo no app.');
+    }
+    const antiga = urlsAreas.get(id);
+    if (antiga) URL.revokeObjectURL(antiga);
+    urlsAreas.set(id, URL.createObjectURL(arquivo));
+    const atual = metaAreas[id] ? A.validarAjustes(metaAreas[id]) : A.PADRAO;
+    metaAreas[id] = { ...atual, tipo: arquivo.type, nome: String(arquivo.name || '').slice(0, 80) };
+    salvarMetaAreas();
+    desenharAreaNaTela(area);
+    atualizarLinhaArea(area);
+}
+
+async function removerImagemDaArea(id) {
+    const area = window.Areas.AREAS.find((a) => a.id === id);
+    if (!area) return;
+    try { await bancoAreas('readwrite', (loja) => loja.delete(id)); } catch (e) { /* já não existia */ }
+    const antiga = urlsAreas.get(id);
+    if (antiga) URL.revokeObjectURL(antiga);
+    urlsAreas.delete(id);
+    delete metaAreas[id];
+    salvarMetaAreas();
+    desenharAreaNaTela(area);
+    atualizarLinhaArea(area);
+}
+
+// Janela escondida na bandeja: pausa vídeos e esconde as camadas (pra não gastar processador à toa).
+document.addEventListener('visibilitychange', () => {
+    document.querySelectorAll('.camada-area').forEach((c) => { c.style.display = document.hidden ? 'none' : ''; });
+    document.querySelectorAll('.camada-area > video').forEach((v) => { if (document.hidden) v.pause(); else v.play().catch(() => {}); });
+});
+
+(async function ligarImagensPorArea() {
+    const A = window.Areas;
+    const lista = document.getElementById('lista-areas-imagem');
+    if (!A || !lista) return;
+    A.AREAS.forEach((area) => {
+        const linha = document.createElement('div');
+        linha.className = 'linha-area';
+        linha.dataset.area = area.id;
+        const nome = document.createElement('div'); nome.className = 'nome-area'; nome.textContent = area.nome;
+        const desc = document.createElement('div'); desc.className = 'dica-config'; desc.textContent = area.desc;
+        const botoes = document.createElement('div'); botoes.className = 'botoes-area';
+        const escolher = document.createElement('button'); escolher.type = 'button'; escolher.textContent = 'Escolher arquivo';
+        const remover = document.createElement('button'); remover.type = 'button'; remover.className = 'btn-remover-area'; remover.textContent = 'Remover'; remover.disabled = true;
+        const info = document.createElement('span'); info.className = 'dica-config info-area'; info.textContent = 'Nenhuma imagem.';
+        const entrada = document.createElement('input'); entrada.type = 'file'; entrada.style.display = 'none';
+        entrada.accept = A.TIPOS.join(',');
+        botoes.append(escolher, remover, info, entrada);
+        const opcoes = document.createElement('div'); opcoes.className = 'opcoes-area'; opcoes.style.display = 'none';
+        const rotEscuro = document.createElement('div'); rotEscuro.className = 'rotulo-config';
+        const valor = document.createElement('span'); valor.className = 'valor-escuro'; valor.textContent = '40%';
+        rotEscuro.append('Escurecer ', valor);
+        const slider = document.createElement('input'); slider.type = 'range'; slider.className = 'slider-area'; slider.min = '0'; slider.max = '90'; slider.step = '5';
+        const rotAjuste = document.createElement('div'); rotAjuste.className = 'rotulo-config'; rotAjuste.textContent = 'Encaixe';
+        const sel = document.createElement('select'); sel.className = 'select-ajuste';
+        [['cover', 'Cobrir a área'], ['contain', 'Mostrar inteira'], ['fill', 'Esticar']].forEach(([v, t]) => { const o = document.createElement('option'); o.value = v; o.textContent = t; sel.appendChild(o); });
+        opcoes.append(rotEscuro, slider, rotAjuste, sel);
+        linha.append(nome, desc, botoes, opcoes);
+        lista.appendChild(linha);
+
+        escolher.addEventListener('click', () => entrada.click());
+        entrada.addEventListener('change', () => { const f = entrada.files && entrada.files[0]; entrada.value = ''; if (f) escolherImagemDaArea(area.id, f); });
+        remover.addEventListener('click', () => removerImagemDaArea(area.id));
+        const mudou = () => {
+            if (!metaAreas[area.id]) return;
+            metaAreas[area.id] = { ...metaAreas[area.id], ...A.validarAjustes({ escuro: Number(slider.value), ajuste: sel.value }) };
+            valor.textContent = metaAreas[area.id].escuro + '%';
+            const camada = camadaDaArea(area);
+            if (camada) { camada.style.setProperty('--escuro', String(metaAreas[area.id].escuro / 100)); camada.style.setProperty('--ajuste-img', metaAreas[area.id].ajuste); }
+        };
+        slider.addEventListener('input', mudou);
+        slider.addEventListener('change', () => { mudou(); salvarMetaAreas(); });
+        sel.addEventListener('change', () => { mudou(); salvarMetaAreas(); });
+    });
+
+    // Carrega o que já estava guardado.
+    let salvo = {};
+    try { salvo = A.validarMeta(JSON.parse(localStorage.getItem(CHAVE_AREAS) || '{}')); } catch (e) { salvo = {}; }
+    for (const area of A.AREAS) {
+        if (!salvo[area.id]) continue;
+        try {
+            const arquivo = await bancoAreas('readonly', (loja) => loja.get(area.id));
+            if (arquivo && arquivo.size > 0 && arquivo.size <= A.MAX_BYTES && A.TIPOS.includes(arquivo.type)) {
+                urlsAreas.set(area.id, URL.createObjectURL(arquivo));
+                metaAreas[area.id] = { ...salvo[area.id], tipo: arquivo.type };
+            }
+        } catch (e) { /* arquivo sumiu: a área fica sem imagem */ }
+    }
+    salvarMetaAreas();
+    A.AREAS.forEach((area) => { desenharAreaNaTela(area); atualizarLinhaArea(area); });
+})();
+
+// ---------- Cores e estilo ----------
+// Tudo vira variável CSS (valores validados em estilo.js). Fica salvo só neste computador.
+const CHAVE_ESTILO = 'estrivisor_estilo';
+let estilo = window.Estilo ? window.Estilo.estadoPadrao() : null;
+
+function aplicarEstilo() {
+    if (!estilo || !window.Estilo) return;
+    const raiz = document.documentElement;
+    const vars = window.Estilo.variaveis(estilo);
+    Object.keys(vars).forEach((k) => raiz.style.setProperty(k, vars[k]));
+    document.body.style.fontFamily = window.Estilo.FONTES[estilo.fonte].css;
+    document.body.classList.toggle('raio-custom', estilo.raio !== window.Estilo.LIMITES.raio[2]);
+    document.body.classList.toggle('avatar-custom', estilo.avatar !== 'circulo');
+    if (window.electronAPI && window.electronAPI.definirZoom) window.electronAPI.definirZoom(estilo.zoom / 100);
+    // Controles da tela
+    const def = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+    const txt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    ['sinal', 'bg', 'painel', 'texto'].forEach((k) => def('cor-' + k, estilo.cores[k]));
+    def('select-fonte', estilo.fonte); def('select-avatar', estilo.avatar);
+    def('slider-zoom', estilo.zoom); txt('valor-zoom', estilo.zoom + '%');
+    def('slider-raio', estilo.raio); txt('valor-raio', estilo.raio + ' px');
+    document.querySelectorAll('#lista-temas .chip-tema').forEach((c) => c.classList.toggle('ativo', c.dataset.tema === estilo.tema));
+}
+function salvarEstilo() {
+    try { localStorage.setItem(CHAVE_ESTILO, JSON.stringify(estilo)); } catch (e) { /* vale só nesta sessão */ }
+}
+
+(function ligarEstilo() {
+    const E = window.Estilo;
+    if (!E) return;
+    try { estilo = E.validar(JSON.parse(localStorage.getItem(CHAVE_ESTILO) || 'null')); } catch (e) { estilo = E.estadoPadrao(); }
+
+    const lista = document.getElementById('lista-temas');
+    if (lista) {
+        Object.keys(E.TEMAS).forEach((id) => {
+            const t = E.TEMAS[id];
+            const b = document.createElement('button');
+            b.type = 'button'; b.className = 'chip-tema'; b.dataset.tema = id;
+            const amostra = document.createElement('span');
+            amostra.className = 'amostra';
+            [t.cores.bg, t.cores.painel, t.cores.sinal].forEach((c) => { const i = document.createElement('i'); i.style.backgroundColor = c; amostra.appendChild(i); });
+            b.appendChild(amostra);
+            b.appendChild(document.createTextNode(t.nome));
+            b.addEventListener('click', () => { estilo.tema = id; estilo.cores = { ...t.cores }; aplicarEstilo(); salvarEstilo(); });
+            lista.appendChild(b);
+        });
+        const p = document.createElement('button');
+        p.type = 'button'; p.className = 'chip-tema'; p.dataset.tema = 'personalizado'; p.textContent = 'Personalizado'; p.disabled = true;
+        lista.appendChild(p);
+    }
+    const selFonte = document.getElementById('select-fonte');
+    if (selFonte) Object.keys(E.FONTES).forEach((id) => {
+        const o = document.createElement('option'); o.value = id; o.textContent = E.FONTES[id].nome; selFonte.appendChild(o);
+    });
+
+    ['sinal', 'bg', 'painel', 'texto'].forEach((k) => {
+        const el = document.getElementById('cor-' + k);
+        if (!el) return;
+        el.addEventListener('input', () => {
+            const base = {};
+            E.CHAVES_BASE.forEach((c) => { base[c] = estilo.cores[c]; });
+            base[k] = el.value;
+            estilo.cores = E.derivar(base);
+            estilo.tema = 'personalizado';
+            aplicarEstilo();
+        });
+        el.addEventListener('change', salvarEstilo);
+    });
+    const ligar = (id, evento, fn) => { const el = document.getElementById(id); if (el) el.addEventListener(evento, fn); };
+    ligar('select-fonte', 'change', (e) => { estilo.fonte = e.target.value; aplicarEstilo(); salvarEstilo(); });
+    ligar('select-avatar', 'change', (e) => { estilo.avatar = e.target.value; aplicarEstilo(); salvarEstilo(); });
+    ligar('slider-raio', 'input', (e) => { estilo.raio = Number(e.target.value); aplicarEstilo(); });
+    ligar('slider-raio', 'change', salvarEstilo);
+    // O zoom só é aplicado ao soltar o controle (mexer na tela enquanto se arrasta o controle faria ele fugir).
+    ligar('slider-zoom', 'input', (e) => { const v = document.getElementById('valor-zoom'); if (v) v.textContent = e.target.value + '%'; });
+    ligar('slider-zoom', 'change', (e) => { estilo.zoom = Number(e.target.value); aplicarEstilo(); salvarEstilo(); });
+    ligar('btn-restaurar-estilo', 'click', () => { estilo = E.estadoPadrao(); aplicarEstilo(); salvarEstilo(); mostrarNotificacao('Aparência restaurada ao padrão.', 'info'); });
+    // Valores vindos do armazenamento passam por validar(), então o raio/zoom já são válidos.
+    estilo = E.validar(estilo);
+    aplicarEstilo();
+})();
+
+// ---------- Layouts ----------
+// O layout é só uma classe no <body> (layout-xxx) mais um pouco de CSS: nada muda no que o app
+// faz. Fica salvo neste computador; qualquer valor desconhecido volta pro "Clássico".
+const LAYOUTS = [
+    { id: 'classico', nome: 'Clássico', desc: 'Como sempre foi: servidores, canais, conteúdo e membros.' },
+    { id: 'espelhado', nome: 'Espelhado', desc: 'Todas as barras ficam à direita e o conteúdo à esquerda.' },
+    { id: 'compacto', nome: 'Compacto', desc: 'Barras só com ícones (nome ao passar o mouse) e chat largo.' },
+    { id: 'cinema', nome: 'Cinema', desc: 'Barras mínimas, transmissão grande e o chat ao lado dela.' },
+    { id: 'duas', nome: 'Duas telas', desc: 'Assiste duas transmissões lado a lado, metade da tela cada.' },
+    { id: 'festa', nome: 'Festa de voz', desc: 'Rostos grandes de quem está na sala; quem fala acende.' },
+];
+const CHAVE_LAYOUT = 'estrivisor_layout';
+
+// Desenho pequeno de cada layout (só decoração do cartão).
+function miniaturaLayout(id) {
+    const f = (x, y, w, h, c) => `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="1.5" fill="${c}"/>`;
+    const B = '#23272c', C = '#3a4048', V = '#05070a';
+    let g = '';
+    if (id === 'classico') g = f(2, 2, 6, 56, B) + f(10, 2, 16, 56, B) + f(28, 2, 42, 56, C) + f(72, 2, 22, 56, B);
+    else if (id === 'espelhado') g = f(2, 2, 42, 56, C) + f(46, 2, 22, 56, B) + f(70, 2, 16, 56, B) + f(88, 2, 6, 56, B);
+    else if (id === 'compacto') g = f(2, 2, 5, 56, B) + f(9, 2, 6, 56, B) + f(17, 2, 53, 56, C) + f(72, 2, 22, 56, B);
+    else if (id === 'cinema') g = f(2, 2, 5, 56, B) + f(9, 2, 6, 56, B) + f(17, 2, 56, 40, V) + f(17, 44, 56, 14, B) + f(75, 2, 19, 56, B);
+    else if (id === 'duas') g = f(2, 2, 4, 56, B) + f(8, 2, 6, 56, B) + f(16, 2, 36, 40, V) + f(54, 2, 16, 40, V) + f(72, 2, 22, 56, B) + f(16, 44, 54, 14, C);
+    else if (id === 'festa') g = f(2, 2, 6, 56, B) + f(10, 2, 16, 56, B) + '<circle cx="38" cy="22" r="7" fill="#2f6fed"/><circle cx="52" cy="22" r="7" fill="#ffb020"/><circle cx="45" cy="38" r="7" fill="#7a4fd0"/>' + f(72, 2, 22, 56, B);
+    return `<svg viewBox="0 0 96 60" aria-hidden="true">${g}</svg>`;
+}
+
+function aplicarLayout(id) {
+    if (!LAYOUTS.some((l) => l.id === id)) id = 'classico';
+    LAYOUTS.forEach((l) => document.body.classList.remove('layout-' + l.id));
+    document.body.classList.add('layout-' + id);
+    // Entrando no Cinema com voz e um chat abertos: mostra os dois. Saindo: volta a mostrar só a voz.
+    const areaTexto = document.getElementById('area-texto');
+    const areaVoz = document.getElementById('area-voz');
+    if (id === 'cinema' && areaVoz.style.display === 'flex' && canalTextoAtual) areaTexto.style.display = 'flex';
+    if (id !== 'cinema' && areaVoz.style.display === 'flex' && areaTexto.style.display === 'flex') areaTexto.style.display = 'none';
+    atualizarCinemaDuplo();
+    document.querySelectorAll('#lista-layouts .cartao-layout[data-layout]').forEach((c) => c.classList.toggle('ativo', c.dataset.layout === id));
+    try { localStorage.setItem(CHAVE_LAYOUT, id); } catch (e) { /* sem armazenamento: vale só nesta sessão */ }
+    renderizarFesta();
+}
+
+// "Festa de voz": rostos grandes de quem está na sala (só desenha quando esse layout está ativo).
+function renderizarFesta() {
+    const alvo = document.getElementById('festa-voz');
+    if (!alvo) return;
+    alvo.textContent = '';
+    if (!document.body.classList.contains('layout-festa') || !vozConectada()) return;
+    const todos = [roomVoz.localParticipant, ...roomVoz.remoteParticipants.values()];
+    todos.forEach((p) => {
+        const ehVoce = p === roomVoz.localParticipant;
+        const nome = (p.name || p.identity || '?') + (ehVoce ? ' (você)' : '');
+        const mic = ehVoce ? microfoneAtivo : p.isMicrophoneEnabled === true;
+        const caixa = document.createElement('div');
+        caixa.className = 'festa-pessoa' + (identidadesFalando.has(p.identity) ? ' falando' : '') + (mic ? '' : ' mudo');
+        const av = document.createElement('span');
+        av.className = 'avatar-participante';
+        aplicarAvatar(av, p.identity, p.name || p.identity, avatarDoParticipante(p, ehVoce ? avatarUsuarioAtual : null));
+        const n = document.createElement('span');
+        n.className = 'nome-festa';
+        n.textContent = nome;
+        caixa.appendChild(av);
+        caixa.appendChild(n);
+        alvo.appendChild(caixa);
+    });
+}
+
+(function ligarLayouts() {
+    const lista = document.getElementById('lista-layouts');
+    if (lista) {
+        LAYOUTS.forEach((l) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'cartao-layout';
+            b.dataset.layout = l.id;
+            b.innerHTML = miniaturaLayout(l.id); // desenho fixo do próprio app (sem dados de fora)
+            const n = document.createElement('span');
+            n.className = 'nome-layout';
+            n.textContent = l.nome;
+            const d = document.createElement('span');
+            d.className = 'desc-layout';
+            d.textContent = l.desc;
+            b.appendChild(n);
+            b.appendChild(d);
+            b.addEventListener('click', () => aplicarLayout(l.id));
+            lista.appendChild(b);
+        });
+        // Atalho pra janela flutuante: ela combina com qualquer layout.
+        const fl = document.createElement('button');
+        fl.type = 'button';
+        fl.id = 'cartao-layout-flutuante';
+        fl.className = 'cartao-layout largo';
+        const n = document.createElement('span');
+        n.className = 'nome-layout';
+        n.textContent = 'Janela flutuante (sobre o jogo)';
+        const d = document.createElement('span');
+        d.className = 'desc-layout';
+        d.textContent = 'Liga/desliga o cartão da sala de voz por cima do jogo. Combina com qualquer layout; os ajustes estão no menu abaixo.';
+        fl.appendChild(n);
+        fl.appendChild(d);
+        fl.addEventListener('click', () => {
+            const caixa = document.getElementById('check-janela-flutuante');
+            if (caixa) caixa.click();
+        });
+        lista.appendChild(fl);
+    }
+    let salvo = 'classico';
+    try { salvo = localStorage.getItem(CHAVE_LAYOUT) || 'classico'; } catch (e) { /* usa o clássico */ }
+    aplicarLayout(salvo);
+})();
+
+// ---------- Janela flutuante (sala de voz por cima do jogo) ----------
+// Manda o estado da sala pro processo principal só quando muda de verdade. Ele limpa
+// e confere tudo antes de mostrar na janela flutuante.
+let ultimoEstadoFlutuante = '';
+let mensagemFlutuante = null; // última mensagem nova do chat (só aparece se a pessoa ligar)
+let avisoFlutuante = null;    // { id, texto } de quem entrou/saiu; some sozinho em 5 s
+let contadorAviso = 0, timerAvisoFlutuante = null;
+function registrarMensagemFlutuante(m) {
+    mensagemFlutuante = { autor: String(m.nome || '?').slice(0, 30), texto: String(m.texto || '').slice(0, 90) };
+    enviarEstadoFlutuante();
+}
+let entradaNaVozEm = 0;
+function avisarFlutuante(texto) {
+    if (Date.now() - entradaNaVozEm < 3000) return; // quem já estava na sala não conta como "entrou"
+    avisoFlutuante = { id: ++contadorAviso, texto: String(texto).slice(0, 60) };
+    clearTimeout(timerAvisoFlutuante);
+    timerAvisoFlutuante = setTimeout(() => { avisoFlutuante = null; enviarEstadoFlutuante(); }, 5000);
+    enviarEstadoFlutuante();
+}
+function enviarEstadoFlutuante() {
+    if (!window.electronAPI || !window.electronAPI.flutuanteEstado) return;
+    let estado = { naVoz: false };
+    if (vozConectada() && canalVozAtual) {
+        const todos = [roomVoz.localParticipant, ...roomVoz.remoteParticipants.values()];
+        estado = {
+            naVoz: true,
+            canal: canalVozAtual.nome,
+            total: todos.length,
+            microfone: microfoneAtivo,
+            surdo: surdoAtivo,
+            mensagem: mensagemFlutuante,
+            aviso: avisoFlutuante,
+            participantes: todos.slice(0, 12).map((p) => {
+                const ehVoce = p === roomVoz.localParticipant;
+                return {
+                    id: p.identity,
+                    nome: (p.name || p.identity || '?') + (ehVoce ? ' (você)' : ''),
+                    avatar: avatarDoParticipante(p, ehVoce ? avatarUsuarioAtual : null) || '',
+                    falando: identidadesFalando.has(p.identity),
+                    mic: ehVoce ? microfoneAtivo : p.isMicrophoneEnabled === true,
+                    voce: ehVoce,
+                    transmitindo: [...p.videoTrackPublications.values()].some((pub) => pub.source === LivekitClient.Track.Source.ScreenShare),
+                };
+            }),
+        };
+    }
+    const chave = JSON.stringify(estado);
+    if (chave === ultimoEstadoFlutuante) return;
+    ultimoEstadoFlutuante = chave;
+    window.electronAPI.flutuanteEstado(estado).catch(() => { ultimoEstadoFlutuante = ''; });
+}
+
+(function ligarJanelaFlutuante() {
+    const api = window.electronAPI;
+    if (!api || !api.flutuanteLer) return;
+    const caixa = document.getElementById('check-janela-flutuante');
+    const caixaAtalho = document.getElementById('check-flutuante-atalho');
+    const aviso = document.getElementById('aviso-flutuante-atalho');
+    const caixaClique = document.getElementById('check-flutuante-clique');
+    const caixaChat = document.getElementById('check-flutuante-chat');
+    const caixaAvisos = document.getElementById('check-flutuante-avisos');
+    const slider = document.getElementById('slider-flutuante-opacidade');
+    const valor = document.getElementById('valor-flutuante-opacidade');
+
+    function mostrar(o) {
+        if (!o) return;
+        if (caixa) caixa.checked = Boolean(o.ativa);
+        if (caixaAtalho) caixaAtalho.checked = Boolean(o.atalho);
+        if (caixaClique) caixaClique.checked = Boolean(o.clique);
+        if (caixaChat) caixaChat.checked = Boolean(o.chat);
+        if (caixaAvisos) caixaAvisos.checked = Boolean(o.avisos);
+        if (slider) slider.value = String(o.opacidade);
+        if (valor) valor.textContent = o.opacidade + '%';
+        // Só avisa se o atalho está ligado, a janela também, e mesmo assim não foi reservado.
+        const cartao = document.getElementById('cartao-layout-flutuante');
+        if (cartao) cartao.classList.toggle('ativo', Boolean(o.ativa));
+        if (aviso) aviso.style.display = (o.ativa && o.atalho && !o.atalhoFunciona) ? 'block' : 'none';
+    }
+    function mudar(opcoes) {
+        return api.flutuanteDefinir(opcoes).then((o) => {
+            mostrar(o);
+            ultimoEstadoFlutuante = ''; // garante que a janela receba o estado atual
+            enviarEstadoFlutuante();
+        }).catch(() => api.flutuanteLer().then(mostrar).catch(() => {}));
+    }
+
+    api.flutuanteLer().then(mostrar).catch(() => {});
+    if (caixa) caixa.addEventListener('change', () => mudar({ ativa: caixa.checked }));
+    if (caixaAtalho) caixaAtalho.addEventListener('change', () => mudar({ atalho: caixaAtalho.checked }));
+    if (caixaClique) caixaClique.addEventListener('change', () => mudar({ clique: caixaClique.checked }));
+    if (caixaChat) caixaChat.addEventListener('change', () => mudar({ chat: caixaChat.checked }));
+    if (caixaAvisos) caixaAvisos.addEventListener('change', () => mudar({ avisos: caixaAvisos.checked }));
+    if (slider) {
+        slider.addEventListener('input', () => { if (valor) valor.textContent = slider.value + '%'; });
+        slider.addEventListener('change', () => mudar({ opacidade: Number(slider.value) }));
+    }
+    // A pessoa clicou no × da própria janela flutuante.
+    api.aoFlutuanteMudou(() => { api.flutuanteLer().then(mostrar).catch(() => {}); });
+    // Botões da janela flutuante: fazem o mesmo que os botões do rodapé.
+    api.aoComandoFlutuante((comando) => {
+        if (comando === 'mic') document.getElementById('btn-microfone-rodape').click();
+        else if (comando === 'surdo') document.getElementById('btn-surdo-rodape').click();
+        else if (comando === 'sair') document.getElementById('btn-sair-voz').click();
+    });
+})();
 
 function atualizarSubMembrosVoz() {
     servidorAtual.canais.filter((c) => c.tipo === 'voz').forEach((canal) => {
@@ -2697,7 +3386,8 @@ function preencherIconeServidor(el, servidor) {
 
 function renderizarBarraServidores() {
     const barra = document.getElementById('barra-servidores');
-    barra.innerHTML = '';
+    // Limpa só os botões (a camada de imagem da barra, se houver, fica).
+    barra.querySelectorAll(':scope > :not(.camada-area)').forEach((el) => el.remove());
     const btnAmigos = document.createElement('button');
     btnAmigos.className = 'btn-servidor' + (amigosAbertos() ? ' ativo' : '');
     btnAmigos.title = 'Amigos e mensagens diretas';
@@ -3372,7 +4062,14 @@ document.getElementById('slider-fundo-desfoque').addEventListener('input', (even
     if (video[0]) destino('cfg-painel-video').appendChild(video[0]); // tamanho na tela
     if (video[1]) destino('cfg-painel-video').appendChild(video[1]); // qualidade do que envia
     if (video[2]) destino('cfg-painel-discord').appendChild(video[2]); // Discord
-    document.querySelectorAll('#aba-visual > .secao-config').forEach((el) => destino('cfg-painel-aparencia').appendChild(el));
+    // "Sons do app" tem aba própria: leva o conteúdo (mesmos ids) e tira a caixa que abria/fechava.
+    const grupoSons = document.getElementById('grupo-sons');
+    if (grupoSons) {
+        const conteudoSons = grupoSons.querySelector(':scope > .secao-config');
+        if (conteudoSons) destino('cfg-painel-som').appendChild(conteudoSons);
+        grupoSons.remove();
+    }
+    document.querySelectorAll('#aba-visual > .grupo-config, #aba-visual > .secao-config').forEach((el) => destino('cfg-painel-aparencia').appendChild(el));
 })();
 
 // ---------- Preferências de áudio (guardadas só neste PC) ----------
@@ -3535,7 +4232,7 @@ function abrirConfig(secao) {
     preencherControlesAudio();
     let ultima = 'conta';
     try { ultima = localStorage.getItem('estrivisor_config_secao') || 'conta'; } catch (e) {}
-    const valida = ['conta', 'voz', 'video', 'aparencia', 'discord', 'sobre'];
+    const valida = ['conta', 'voz', 'video', 'aparencia', 'som', 'discord', 'sobre'];
     irParaSecaoConfig(valida.includes(secao) ? secao : (valida.includes(ultima) ? ultima : 'conta'));
     modalConfig().style.display = 'flex';
     window.electronAPI.versaoApp().then((v) => { document.getElementById('cfg-versao').textContent = 'versão ' + v; }).catch(() => {});

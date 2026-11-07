@@ -112,7 +112,22 @@ function criarSessoes({ arquivo = null, agora = () => Date.now(), log = console 
     return [...mapa.values()];
   }
 
-  return { criar, validar, revogar, revogarDe, todos };
+  // Números pro painel do administrador (cada sessão é um PC onde alguém entrou).
+  // O "último uso" é atualizado no máximo 1x por hora, então "usadas" é aproximado.
+  function estatisticas() {
+    const t = agora();
+    const validas = dados.sessoes.filter((s) => s.expiraEm > t);
+    const usadasEm = (dias) => validas.filter((s) => t - (s.ultimoUso || 0) <= dias * 24 * 60 * 60 * 1000).length;
+    return {
+      validas: validas.length,
+      pessoas: new Set(validas.map((s) => s.usuario)).size,
+      usadas7d: usadasEm(7),
+      usadas30d: usadasEm(30),
+      criadas30d: validas.filter((s) => t - (s.criadaEm || 0) <= 30 * 24 * 60 * 60 * 1000).length,
+    };
+  }
+
+  return { criar, validar, revogar, revogarDe, todos, estatisticas };
 }
 
 module.exports = { criarSessoes, VALIDADE_MS };

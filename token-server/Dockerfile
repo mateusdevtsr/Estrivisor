@@ -5,6 +5,8 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 COPY *.js ./
+# Página do painel de monitoramento (https://api.SEU-DOMINIO/painel).
+COPY painel-web ./painel-web
 # Roda como o usuário "node" (sem poderes de administrador dentro do container).
 # A pasta de dados (./dados no notebook) precisa pertencer a esse usuário (uid 1000).
 USER node

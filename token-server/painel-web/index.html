@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="color-scheme" content="light dark">
+<title>Painel do Estrivisor</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2314151a'/%3E%3Crect x='7' y='17' width='4' height='8' rx='1.5' fill='%23ff4d4d'/%3E%3Crect x='14' y='11' width='4' height='14' rx='1.5' fill='%23ff4d4d'/%3E%3Crect x='21' y='7' width='4' height='18' rx='1.5' fill='%23ff4d4d'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/painel/painel.css">
+<script src="/painel/painel.js" defer data-cfasync="false"></script>
+</head>
+<body>
+
+<!-- Aparece só se o script do painel não rodar (navegador sem JavaScript, ou algo no caminho bloqueando). -->
+<div id="sem-script" class="entrar">
+  <div class="entrar-cartao">
+    <div class="marca"><span class="marca-ponto"></span>Estrivisor <span class="marca-sub">Painel</span></div>
+    <h1>Carregando o painel…</h1>
+    <p>Se esta mensagem não sumir em alguns segundos, o navegador não está rodando o script do painel. Confira se o JavaScript está ligado. Na Cloudflare, o "Rocket Loader" precisa ficar desligado para este endereço.</p>
+  </div>
+</div>
+
+<div id="tela-entrar" class="entrar" hidden>
+  <div class="entrar-cartao">
+    <div class="marca"><span class="marca-ponto"></span>Estrivisor <span class="marca-sub">Painel</span></div>
+    <h1>Painel de monitoramento</h1>
+    <p>Números de uso, downloads e saúde do servidor. Só o administrador do Estrivisor entra aqui.</p>
+    <a class="botao botao-principal" href="/painel/entrar">Entrar com o Discord</a>
+    <p class="dica" id="entrar-dica"></p>
+  </div>
+</div>
+
+<div id="app" hidden>
+  <header class="topo">
+    <div class="topo-linha">
+      <div class="marca"><span class="marca-ponto"></span>Estrivisor <span class="marca-sub">Painel</span></div>
+      <div class="topo-acoes">
+        <span id="atualizado" class="atualizado" aria-live="polite"></span>
+        <button id="btn-atualizar" class="botao botao-leve" type="button">Atualizar</button>
+        <button id="btn-tema" class="botao botao-leve" type="button">Tema: automático</button>
+        <span class="eu"><img id="eu-avatar" alt="" width="26" height="26"><span id="eu-nome"></span></span>
+        <button id="btn-sair" class="botao botao-leve" type="button">Sair</button>
+      </div>
+    </div>
+    <nav class="abas" aria-label="Seções do painel">
+      <a href="#agora">Agora</a>
+      <a href="#pessoas">Pessoas</a>
+      <a href="#mensagens">Mensagens</a>
+      <a href="#chamadas">Chamadas</a>
+      <a href="#downloads">Downloads</a>
+      <a href="#versoes">Versões</a>
+      <a href="#servidores">Servidores</a>
+      <a href="#saude">Saúde</a>
+      <a href="#moderacao">Moderação</a>
+    </nav>
+  </header>
+
+  <div class="filtros">
+    <span class="filtros-rotulo" id="rotulo-periodo">Período</span>
+    <div class="segmentado" role="radiogroup" aria-labelledby="rotulo-periodo" id="periodo">
+      <button type="button" role="radio" data-dias="7" aria-checked="false">7 dias</button>
+      <button type="button" role="radio" data-dias="30" aria-checked="true">30 dias</button>
+      <button type="button" role="radio" data-dias="90" aria-checked="false">90 dias</button>
+    </div>
+    <span class="espaco"></span>
+    <button id="btn-csv" class="botao botao-leve" type="button">Baixar CSV do período</button>
+  </div>
+
+  <main id="conteudo">
+    <div id="erro-carga" class="erro-carga" role="alert" hidden></div>
+    <p id="aviso-coleta" class="aviso-topo" hidden></p>
+
+    <section class="secao" id="agora" aria-labelledby="h-agora">
+      <h2 id="h-agora">Agora</h2>
+      <p class="secao-sub">Quem está usando neste momento (atualiza sozinho a cada minuto).</p>
+      <div class="kpis" id="kpis-agora"></div>
+      <div class="grade-graficos">
+        <div class="cartao largo" id="g-24h"></div>
+      </div>
+    </section>
+
+    <section class="secao" id="pessoas" aria-labelledby="h-pessoas">
+      <h2 id="h-pessoas">Pessoas</h2>
+      <p class="secao-sub">Ativa = abriu o app e falou com o servidor naquele dia.</p>
+      <div class="kpis" id="kpis-pessoas"></div>
+      <div class="grade-graficos">
+        <div class="cartao" id="g-ativos"></div>
+        <div class="cartao" id="g-novos"></div>
+      </div>
+    </section>
+
+    <section class="secao" id="mensagens" aria-labelledby="h-mensagens">
+      <h2 id="h-mensagens">Mensagens</h2>
+      <p class="secao-sub">Só a quantidade. O painel nunca mostra o que foi escrito.</p>
+      <div class="kpis" id="kpis-mensagens"></div>
+      <div class="grade-graficos">
+        <div class="cartao largo" id="g-mensagens"></div>
+        <div class="cartao" id="g-horas"></div>
+        <div class="cartao" id="g-semana"></div>
+      </div>
+    </section>
+
+    <section class="secao" id="chamadas" aria-labelledby="h-chamadas">
+      <h2 id="h-chamadas">Chamadas e transmissões</h2>
+      <p class="secao-sub">Tempo somado de todas as pessoas em canais de voz (medido a cada minuto).</p>
+      <div class="kpis" id="kpis-chamadas"></div>
+      <div class="grade-graficos">
+        <div class="cartao" id="g-voz"></div>
+        <div class="cartao" id="g-pico-voz"></div>
+      </div>
+    </section>
+
+    <section class="secao" id="downloads" aria-labelledby="h-downloads">
+      <h2 id="h-downloads">Downloads</h2>
+      <p class="secao-sub" id="downloads-sub">Números das versões no GitHub.</p>
+      <div class="kpis" id="kpis-downloads"></div>
+      <div class="grade-graficos">
+        <div class="cartao" id="g-downloads-versao"></div>
+        <div class="cartao" id="g-downloads-dia"></div>
+      </div>
+    </section>
+
+    <section class="secao" id="versoes" aria-labelledby="h-versoes">
+      <h2 id="h-versoes">Versões do app em uso</h2>
+      <p class="secao-sub" id="versoes-sub">Última versão usada por cada pessoa nos últimos 30 dias.</p>
+      <div class="grade-graficos">
+        <div class="cartao" id="g-versoes"></div>
+        <div class="cartao" id="c-aparelhos"></div>
+      </div>
+    </section>
+
+    <section class="secao" id="servidores" aria-labelledby="h-servidores">
+      <h2 id="h-servidores">Servidores</h2>
+      <p class="secao-sub">Os servidores criados no Estrivisor.</p>
+      <div class="kpis" id="kpis-servidores"></div>
+      <div class="grade-graficos">
+        <div class="cartao largo" id="t-servidores"></div>
+      </div>
+    </section>
+
+    <section class="secao" id="saude" aria-labelledby="h-saude">
+      <h2 id="h-saude">Saúde do servidor</h2>
+      <p class="secao-sub">O notebook que roda o servidor e o servidor de voz (LiveKit).</p>
+      <div class="kpis" id="kpis-saude"></div>
+      <div class="grade-graficos">
+        <div class="cartao" id="g-pedidos"></div>
+        <div class="cartao" id="c-arquivos"></div>
+      </div>
+    </section>
+
+    <section class="secao" id="moderacao" aria-labelledby="h-moderacao">
+      <h2 id="h-moderacao">Moderação e acesso</h2>
+      <p class="secao-sub">Para agir (liberar, punir, resolver denúncias), use Configurações → Administração no app.</p>
+      <div class="kpis" id="kpis-moderacao"></div>
+    </section>
+  </main>
+
+  <footer id="rodape"></footer>
+</div>
+
+<div id="dica" class="dica-flutuante" role="status" hidden></div>
+</body>
+</html>

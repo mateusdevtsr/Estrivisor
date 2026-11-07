@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <!-- Só roda script e estilo do próprio app; fotos só do Discord. Sem rede para o resto. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src https://cdn.discordapp.com data:; base-uri 'none'; form-action 'none'">
+    <title>Estrivisor (sala de voz)</title>
+    <link rel="stylesheet" href="flutuante.css">
+</head>
+<body>
+    <div class="cartao">
+        <div class="topo">
+            <span class="ponto"></span>
+            <span class="titulo" id="titulo">Sala de voz</span>
+            <button type="button" class="x" id="btn-esconder" title="Esconder esta janela (para mostrar de novo: Configurações > Visual)" aria-label="Esconder a janela flutuante">×</button>
+        </div>
+        <div class="lista" id="lista"></div>
+        <div class="msg" id="msg" hidden><b id="msg-autor"></b> <span id="msg-texto"></span></div>
+        <div class="aviso" id="aviso" hidden></div>
+        <div class="botoes">
+            <button type="button" id="btn-mic" title="Microfone">🎤</button>
+            <button type="button" id="btn-surdo" title="Silenciar o áudio recebido">🔊</button>
+            <span class="espaco"></span>
+            <button type="button" id="btn-sair" class="sair" title="Sair da sala de voz" aria-label="Sair da sala de voz">📞</button>
+        </div>
+    </div>
+    <script src="flutuante-tela.js"></script>
+</body>
+</html>

@@ -1,6 +1,7 @@
 #!/bin/bash
 # Backup semanal dos dados do Estrivisor: cópia local (4 últimas) + cópia na VPS (8 últimas).
 # Rodado todo domingo às 4h pelo /etc/cron.d/estrivisor-backup (como root).
+# Também escreve backups/status.txt (data, local=ok, vps=ok|erro), que o painel mostra.
 set -e
 cd /home/mateus/estrivisor
 mkdir -p backups
@@ -9,6 +10,18 @@ tar czf "$ARQ" dados
 chown -R mateus:mateus backups
 ls -1t backups/dados-*.tar.gz | tail -n +5 | xargs -r rm --
 echo "$(date '+%F %T') cópia local ok: $ARQ"
+
+# Situação do último backup, pro painel (escreve num arquivo temporário e troca, pra nunca ficar pela metade).
+# Se não conseguir escrever o status, o backup segue mesmo assim (o status é só informativo).
+INICIO="$(date '+%F %T')"
+status() {
+  {
+    printf 'data=%s\nlocal=ok\nvps=%s\n' "$INICIO" "$1" > backups/status.tmp &&
+      mv backups/status.tmp backups/status.txt &&
+      chown mateus:mateus backups/status.txt
+  } 2>/dev/null || true
+}
+status pendente
 
 # Cópia para fora do notebook. Se falhar, a cópia local continua valendo e o erro vai pro log.
 DESTINO="${DESTINO_VPS:-estbackup@livekit.estrivisor.com.br}"
@@ -25,10 +38,12 @@ enviar() {
 for tentativa in 1 2 3; do
   if enviar; then
     echo "$(date '+%F %T') cópia na VPS ok"
+    status ok
     exit 0
   fi
   echo "$(date '+%F %T') tentativa $tentativa de 3 falhou" >&2
   [ "$tentativa" -lt 3 ] && sleep 30
 done
 echo "$(date '+%F %T') ERRO: não consegui copiar para a VPS" >&2
+status erro
 exit 1

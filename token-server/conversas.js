@@ -162,7 +162,23 @@ function criarConversas({ arquivo = null, agora = () => Date.now(), log = consol
     return n;
   }
 
-  return { enviar, listar, editar, apagar, contexto, ultimaSeq, apagarConversa, apagarPrefixo, exportarDe, apagarDe, gravarAgora };
+  // ---- Estatísticas (painel do administrador): só números, o texto das mensagens não sai daqui ----
+  // Chama fn(chave, ts) pra cada mensagem guardada.
+  function percorrer(fn) {
+    for (const [chave, c] of Object.entries(dados.conversas)) for (const m of c.msgs) fn(chave, m.ts);
+  }
+  // enviadas = soma dos números de sequência (conta também as que já saíram do limite por conversa).
+  function totais() {
+    let enviadas = 0; let guardadas = 0; let conversasCanal = 0; let conversasDm = 0;
+    for (const [chave, c] of Object.entries(dados.conversas)) {
+      enviadas += c.seq || 0;
+      guardadas += c.msgs.length;
+      if (chave.startsWith('d:')) conversasDm++; else conversasCanal++;
+    }
+    return { enviadas, guardadas, conversasCanal, conversasDm };
+  }
+
+  return { enviar, listar, editar, apagar, contexto, ultimaSeq, apagarConversa, apagarPrefixo, exportarDe, apagarDe, gravarAgora, percorrer, totais };
 }
 
 module.exports = { criarConversas, ErroConversa, MAX_MENSAGENS, MAX_TEXTO };

@@ -3,6 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
 const { AccessToken, RoomServiceClient } = require('livekit-server-sdk');
+const { salaLotada } = require('./lotacao');
 
 const PORT = process.env.PORT || 8080;
 const API_KEY = process.env.LIVEKIT_API_KEY;
@@ -25,6 +26,8 @@ const ACESSO_RESTRITO = process.env.ACESSO_RESTRITO !== '0';
 const VERSAO_TERMOS = 2;
 // EXIGIR_ACEITE=1: quem não aceitou os termos não consegue usar o servidor (ligue depois que todos atualizarem o app).
 const EXIGIR_ACEITE = process.env.EXIGIR_ACEITE === '1';
+// Máximo de pessoas por canal de voz (0 = sem limite).
+const MAX_POR_SALA = process.env.MAX_POR_SALA === undefined ? 10 : Number.parseInt(process.env.MAX_POR_SALA, 10);
 const ADMINS = (process.env.ADMIN_DISCORD_IDS || '').split(',').map((s) => s.trim()).filter(Boolean)
   .map((id) => (/^\d+$/.test(id) ? `discord:${id}` : id));
 
@@ -52,6 +55,9 @@ const { criarAmigos, ErroAmigos } = require('./amigos');
 const { criarAcesso } = require('./acesso');
 const { criarModeracao, ErroModeracao } = require('./moderacao');
 const { criarChaves, ErroChave } = require('./chaves');
+const { criarMetricas } = require('./metricas');
+const { criarDownloads } = require('./downloads');
+const { criarPainel } = require('./painel');
 
 const ARQUIVO_DADOS = process.env.DATA_FILE || '/data/servidores.json';
 const repo = criarRepositorio({ arquivo: ARQUIVO_DADOS });
@@ -68,15 +74,38 @@ const moderacao = criarModeracao({
 });
 const amigos = criarAmigos({ arquivo: process.env.AMIGOS_FILE || path.join(path.dirname(ARQUIVO_DADOS), 'amigos.json') });
 const chaves = criarChaves({ arquivo: process.env.CHAVES_FILE || path.join(path.dirname(ARQUIVO_DADOS), 'chaves.json') });
+// Estatísticas de uso pro painel (/painel) e os downloads do app no GitHub.
+const metricas = criarMetricas({ arquivo: process.env.METRICAS_FILE || path.join(path.dirname(ARQUIVO_DADOS), 'metricas.json') });
+const downloads = criarDownloads({ repo: (process.env.GITHUB_REPO || 'mateusdevtsr/Estrivisor').trim() });
 
 if (ACESSO_RESTRITO && acesso.semear([...sessoes.todos(), ...repo.todosUsuarios(), ...amigos.todos()])) {
   console.log('[acesso] primeira vez com acesso restrito: quem já usava o Estrivisor foi liberado. Veja com: node autorizar.js listar');
+}
+// Primeira vez com estatísticas: quem já usava o Estrivisor não conta como "pessoa nova".
+{
+  // (quem foi liberado na migração para o acesso restrito não tem uma data real de entrada)
+  const desde = new Map(acesso.listar().autorizados.map((a) => [a.usuario, a.por === 'migracao' ? null : a.desde]));
+  const todos = new Set([...sessoes.todos(), ...repo.todosUsuarios(), ...amigos.todos()].map((p) => p.usuario).concat([...desde.keys()]));
+  if (metricas.semear([...todos].map((u) => ({ usuario: u, desde: desde.get(u) })))) {
+    console.log(`[metricas] começando as estatísticas (${todos.size} pessoas que já usavam).`);
+  }
 }
 if (ACESSO_RESTRITO && !ADMINS.length) {
   console.warn('[aviso] ADMIN_DISCORD_IDS não definido: ninguém consegue liberar pessoas pelo app (use autorizar.js).');
 }
 
 const app = express();
+app.disable('x-powered-by'); // não anuncia qual programa roda o servidor
+// Contagem de pedidos e de erros por minuto (pro painel). O /saude (o Docker confere a cada 30 s) não entra.
+let pedidosNoMinuto = 0;
+let errosNoMinuto = 0;
+app.use((req, res, next) => {
+  if (req.path !== '/saude') {
+    pedidosNoMinuto++;
+    res.on('finish', () => { if (res.statusCode >= 500) errosNoMinuto++; });
+  }
+  next();
+});
 // Os ícones dos servidores viajam em base64 (até ~40 mil caracteres), então o limite sobe um pouco.
 app.use(express.json({ limit: '200kb' }));
 
@@ -99,7 +128,8 @@ function versaoAntiga(enviada, minima) {
   return false;
 }
 app.use((req, res, next) => {
-  if (!APP_VERSAO_MINIMA || req.path === '/saude') return next();
+  // O painel abre no navegador (não manda versão do app), então fica de fora desta checagem.
+  if (!APP_VERSAO_MINIMA || req.path === '/saude' || req.path === '/painel' || req.path.startsWith('/painel/')) return next();
   if (versaoAntiga(req.get('x-app-versao'), APP_VERSAO_MINIMA)) {
     return res.status(426).json({ erro: `Esta versão do Estrivisor é antiga demais. Atualize para a ${APP_VERSAO_MINIMA} ou mais nova (baixe de estrivisor.com.br).`, codigo: 'atualizar' });
   }
@@ -174,6 +204,7 @@ function rota(fn, { semAceite = false } = {}) {
     try {
       const { usuario, sessao } = identidadeDe(req, { semAceite });
       acesso.marcarVisto(usuario);
+      metricas.atividade(usuario, req.get('x-app-versao')); // conta a pessoa como ativa hoje (e a versão do app dela)
       if (sessao) amigos.registrar(usuario, sessao.perfil); // mantém nome e foto no diretório de amigos
       await fn(req, res, usuario, sessao);
     } catch (err) {
@@ -244,12 +275,15 @@ app.post('/auth/discord', async (req, res) => {
       return res.status(403).json({ erro: mensagemDaSituacao(sit), codigo: 'punido' });
     }
     if (sit.estado !== 'ok') {
+      const jaPediu = acesso.listar().pedidos.some((p) => p.usuario === usuario);
       if (!acesso.registrarPedido(usuario, perfil)) {
         return res.status(403).json({ erro: 'Seu acesso ainda não foi liberado e a fila de pedidos está cheia. Fale direto com o dono do Estrivisor.', codigo: 'sem-acesso' });
       }
+      if (!jaPediu) metricas.contar('pedidosAcesso');
       return res.status(403).json({ erro: 'Seu acesso ainda não foi liberado. O pedido foi enviado ao dono do Estrivisor: avise ele para liberar você e depois entre de novo.', codigo: 'sem-acesso' });
     }
     const { chave } = sessoes.criar({ usuario, tipo: 'discord', perfil });
+    metricas.contar('logins');
     res.json({ sessao: chave, conta: contaPublica(usuario, 'discord', perfil) });
   } catch (err) {
     if (err instanceof ErroDiscord) return res.status(401).json({ erro: err.message });
@@ -302,9 +336,30 @@ async function criarToken(usuario, sala, nome, avatar) {
   return at.toJwt();
 }
 
+// Chamadas ao LiveKit com prazo: se ele travar, o servidor não fica esperando pra sempre.
+const PRAZO_LIVEKIT_MS = Number(process.env.PRAZO_LIVEKIT_MS) || 8000;
+function comPrazo(promessa, ms = PRAZO_LIVEKIT_MS) {
+  let relogio;
+  const prazo = new Promise((_, falhar) => { relogio = setTimeout(() => falhar(new Error('LiveKit demorou demais para responder')), ms); });
+  return Promise.race([promessa, prazo]).finally(() => clearTimeout(relogio));
+}
+
+async function exigirVagaNaSala(sala, usuario) {
+  let participantes;
+  try {
+    participantes = await comPrazo(roomService.listParticipants(sala));
+  } catch (e) {
+    return; // sala vazia ou LiveKit fora do ar: não barra
+  }
+  if (salaLotada(participantes, usuario, MAX_POR_SALA)) {
+    metricas.contar('salasCheias');
+    throw new ErroRegra(409, `Este canal está cheio (máximo de ${MAX_POR_SALA} pessoas). Tente de novo quando alguém sair.`);
+  }
+}
+
 async function donoEstaNaSala(sala, dono) {
   try {
-    const participantes = await roomService.listParticipants(sala);
+    const participantes = await comPrazo(roomService.listParticipants(sala));
     return participantes.some((p) => p.identity === dono);
   } catch (e) {
     return false; // sala vazia ou LiveKit fora do ar: entra direto
@@ -340,9 +395,12 @@ app.post('/token', rota(async (req, res, usuario, sessao) => {
   // A aprovação só vale se o canal pedir E o dono estiver lá dentro (senão ninguém esperaria à toa).
   const precisaAprovacao = canal.tipo === 'voz' && canal.aprovacao && servidor.dono !== usuario && await donoEstaNaSala(sala, servidor.dono);
   if (!precisaAprovacao) {
+    await exigirVagaNaSala(sala, usuario);
+    const token = await criarToken(usuario, sala, nomeExibicao, avatarSeguro);
+    metricas.contar('entradasVoz');
     // A url vai junto: o app usa o LiveKit que o servidor indicar (assim dá pra trocar de VPS
     // pro notebook só mexendo no server.env, sem lançar versão nova do app).
-    return res.json({ token: await criarToken(usuario, sala, nomeExibicao, avatarSeguro), url: LIVEKIT_URL });
+    return res.json({ token, url: LIVEKIT_URL });
   }
 
   if (!pendentesPorSala.has(sala)) pendentesPorSala.set(sala, new Map());
@@ -388,9 +446,11 @@ app.post('/rooms/:sala/decidir', rota(async (req, res, usuario) => {
   const pedido = pendentes && pendentes.get(solicitacaoId);
   if (!pedido) throw new ErroRegra(404, 'Pedido não encontrado (pode ter expirado).');
   if (decisao === 'aprovado') {
+    await exigirVagaNaSala(sala, pedido.usuario); // se encheu enquanto esperava, o dono recebe o aviso e o pedido continua pendente
     try {
       pedido.token = await criarToken(pedido.usuario, sala, pedido.nome, pedido.avatar);
       pedido.status = 'aprovado';
+      metricas.contar('entradasVoz');
     } catch (err) {
       console.error('Erro ao gerar token de aprovação:', err);
       pedido.status = 'negado';
@@ -497,6 +557,7 @@ app.get('/conta/dados', rota((req, res, usuario, sessao) => {
     pedidosDeAmizade: { recebidos: lista.recebidos.map((a) => ({ nome: a.nome })), enviados: lista.enviados.map((a) => ({ nome: a.nome })) },
     qualidadeDaTransmissao: (() => { const n = chaves.nivelDe(usuario, acesso.ehAdmin(usuario)); return { nivel: n.nome, ate: n.ate }; })(),
     acesso: acesso.dadosDe(usuario),
+    estatisticasDeUso: metricas.dadosDe(usuario),
     denunciasQueEnviei: moderacao.denunciasDe(usuario),
     avisos: [
       'Mensagens de outras pessoas não estão neste arquivo, só as que você escreveu.',
@@ -524,6 +585,7 @@ app.delete('/conta/dados', rota(async (req, res, usuario, sessao) => {
   tirarPresencaDeTodos(usuario);
   const mensagens = conversas.apagarDe(usuario);
   amigos.apagarDe(usuario);
+  metricas.apagarDe(usuario);
   chaves.apagarDe(usuario);
   acesso.apagarDe(usuario);
   moderacao.registrar({ por: usuario, acao: 'apagou-a-propria-conta', detalhe: `${mensagens} mensagens apagadas` });
@@ -548,7 +610,9 @@ app.get('/servidores', rota((req, res, usuario) => res.json({ servidores: repo.l
 
 app.post('/servidores', rota((req, res, usuario) => {
   const { nome, icone, cor, nomeUsuario } = req.body || {};
-  res.status(201).json({ servidor: repo.criarServidor({ usuario, nomeUsuario, nome, icone, cor }) });
+  const servidor = repo.criarServidor({ usuario, nomeUsuario, nome, icone, cor });
+  metricas.contar('servidoresCriados');
+  res.status(201).json({ servidor });
 }));
 
 app.get('/servidores/:id', rota((req, res, usuario) => res.json({ servidor: repo.obter(req.params.id, usuario) })));
@@ -636,7 +700,10 @@ app.post('/convites/usar', rota((req, res, usuario) => {
   }
   const { codigo, nomeUsuario } = req.body || {};
   try {
-    res.json({ servidor: repo.usarConvite({ usuario, nomeUsuario, codigo }) });
+    const antes = repo.servidoresDe(usuario).length;
+    const servidor = repo.usarConvite({ usuario, nomeUsuario, codigo });
+    if (repo.servidoresDe(usuario).length > antes) metricas.contar('convitesUsados'); // quem já era membro não conta
+    res.json({ servidor });
   } catch (err) {
     if (err instanceof ErroRegra && err.status === 404) registrarErroConvite(usuario);
     throw err;
@@ -665,6 +732,20 @@ function tirarPresencaDeTodos(usuario) {
 function tirarPresenca(servidorId, usuario) {
   const mapa = presenca.get(servidorId);
   if (mapa) mapa.delete(usuario);
+}
+
+// Pro painel: quantas pessoas estão com o app aberto agora, no total e em cada servidor.
+function presencaAgora() {
+  const limite = Date.now() - TTL_PRESENCA_MS;
+  let total = 0;
+  for (const t of visto.values()) if (t > limite) total++;
+  const porServidor = new Map();
+  for (const [sid, mapa] of presenca) {
+    let n = 0;
+    for (const p of mapa.values()) if (p.ultimo > limite) n++;
+    if (n) porServidor.set(sid, n);
+  }
+  return { online: total, porServidor };
 }
 
 function listarOnline(servidorId) {
@@ -766,17 +847,22 @@ app.post('/servidores/:id/canais/:canalId/mensagens', rota((req, res, usuario, s
   const msg = conversas.enviar(chaveCanal(req.params.id, req.params.canalId), {
     usuario, nome: nomeDoAutor(req, sessao, usuario), avatar: sessao ? (sessao.perfil.avatar || '') : '', texto: (req.body || {}).texto,
   });
+  metricas.contar('msgCanal');
   res.status(201).json({ mensagem: mensagemPublica(msg) });
 }));
 
 app.patch('/servidores/:id/canais/:canalId/mensagens/:seq', rota((req, res, usuario) => {
   exigirCanalTexto(req.params.id, req.params.canalId, usuario);
-  res.json({ mensagem: mensagemPublica(conversas.editar(chaveCanal(req.params.id, req.params.canalId), inteiro(req.params.seq), usuario, (req.body || {}).texto)) });
+  const msg = conversas.editar(chaveCanal(req.params.id, req.params.canalId), inteiro(req.params.seq), usuario, (req.body || {}).texto);
+  metricas.contar('msgEditadas');
+  res.json({ mensagem: mensagemPublica(msg) });
 }));
 
 app.delete('/servidores/:id/canais/:canalId/mensagens/:seq', rota((req, res, usuario) => {
   const servidor = exigirCanalTexto(req.params.id, req.params.canalId, usuario);
-  res.json(conversas.apagar(chaveCanal(req.params.id, req.params.canalId), inteiro(req.params.seq), usuario, servidor.souDono));
+  const r = conversas.apagar(chaveCanal(req.params.id, req.params.canalId), inteiro(req.params.seq), usuario, servidor.souDono);
+  metricas.contar('msgApagadas');
+  res.json(r);
 }));
 
 // ---- Amigos ----
@@ -812,12 +898,14 @@ app.post('/amigos/pedir', rota((req, res, usuario, sessao) => {
   }
   if (!alvo) throw new ErroRegra(404, 'Não encontrei ninguém com esse código.');
   const resultado = amigos.pedir(usuario, alvo);
+  if (resultado === 'amigos') metricas.contar('amizades');
   res.json({ resultado, pessoa: amigos.pessoa(alvo) });
 }));
 
 app.post('/amigos/aceitar', rota((req, res, usuario, sessao) => {
   exigirSessao(sessao);
   amigos.aceitar(usuario, idPessoa((req.body || {}).usuario));
+  metricas.contar('amizades');
   res.json({ ok: true });
 }));
 
@@ -845,17 +933,22 @@ app.post('/dm/:outro/mensagens', rota((req, res, usuario, sessao) => {
   const msg = conversas.enviar(chaveDm(usuario, req.params.outro), {
     usuario, nome: nomeDoAutor(req, sessao, usuario), avatar: sessao.perfil.avatar || '', texto: (req.body || {}).texto,
   });
+  metricas.contar('msgDm');
   res.status(201).json({ mensagem: mensagemPublica(msg) });
 }));
 
 app.patch('/dm/:outro/mensagens/:seq', rota((req, res, usuario, sessao) => {
   exigirSessao(sessao); exigirAmigo(usuario, req.params.outro);
-  res.json({ mensagem: mensagemPublica(conversas.editar(chaveDm(usuario, req.params.outro), inteiro(req.params.seq), usuario, (req.body || {}).texto)) });
+  const msg = conversas.editar(chaveDm(usuario, req.params.outro), inteiro(req.params.seq), usuario, (req.body || {}).texto);
+  metricas.contar('msgEditadas');
+  res.json({ mensagem: mensagemPublica(msg) });
 }));
 
 app.delete('/dm/:outro/mensagens/:seq', rota((req, res, usuario, sessao) => {
   exigirSessao(sessao); exigirAmigo(usuario, req.params.outro);
-  res.json(conversas.apagar(chaveDm(usuario, req.params.outro), inteiro(req.params.seq), usuario, false));
+  const r = conversas.apagar(chaveDm(usuario, req.params.outro), inteiro(req.params.seq), usuario, false);
+  metricas.contar('msgApagadas');
+  res.json(r);
 }));
 
 
@@ -908,6 +1001,7 @@ app.post('/denuncias', rota((req, res, usuario, sessao) => {
   moderacao.denunciar({
     de: usuario, deNome: eu, alvo, alvoNome: nomeDe(alvo), motivo: b.motivo, detalhe: limparTexto(b.detalhe, 500), origem, contexto,
   });
+  metricas.contar('denuncias');
   res.json({ ok: true });
 }));
 
@@ -1142,21 +1236,95 @@ setInterval(() => {
   }
 }, 60000).unref();
 
+// ============================================================
+// Painel de monitoramento (no navegador): https://api.SEU-DOMINIO/painel
+// ============================================================
+// PAINEL_REDIRECT_URI = https://api.SEU-DOMINIO/painel/retorno (cadastrado também no Discord
+// Developer Portal > OAuth2 > Redirects). Sem ela, o painel abre mas o login fica desligado.
+const PAINEL_REDIRECT_URI = String(process.env.PAINEL_REDIRECT_URI || '').trim();
+if (PAINEL_REDIRECT_URI && !/^https:\/\/[A-Za-z0-9.-]+\/painel\/retorno$/.test(PAINEL_REDIRECT_URI)) {
+  console.warn('[aviso] PAINEL_REDIRECT_URI deveria ser https://api.SEU-DOMINIO/painel/retorno (o login do painel pode falhar).');
+}
+app.use('/painel', criarPainel({
+  metricas, conversas, sessoes, repo, acesso, amigos, moderacao, chaves, downloads,
+  ehAdmin: (u) => acesso.ehAdmin(u),
+  contaDoCodigo,
+  buscarDiscord: () => buscarNoDiscord,
+  clientId: DISCORD_CLIENT_ID, clientSecret: DISCORD_CLIENT_SECRET, redirectUri: PAINEL_REDIRECT_URI,
+  ipDe,
+  auditar: (usuario, nome, acao, detalhe) => moderacao.registrar({ por: usuario, porNome: nome, acao, detalhe }),
+  nomeConhecido,
+  presencaAgora,
+  acessoRestrito: ACESSO_RESTRITO, exigirAceite: EXIGIR_ACEITE, versaoTermos: VERSAO_TERMOS,
+  versaoMinima: APP_VERSAO_MINIMA, maxPorSala: MAX_POR_SALA,
+  pastaDados: path.dirname(ARQUIVO_DADOS),
+  pastaBackups: String(process.env.BACKUP_DIR || '').trim() || null,
+}));
+
+// Uma foto por minuto pro painel: quem está com o app aberto, quantos estão em chamada e
+// quantos estão transmitindo a tela (perguntando ao LiveKit). Também mede se o LiveKit responde.
+let fotografando = false;
+async function fotografar() {
+  if (fotografando) return; // a anterior ainda não terminou (LiveKit lento): pula esta
+  fotografando = true;
+  try {
+    const requisicoes = pedidosNoMinuto; const erros = errosNoMinuto;
+    pedidosNoMinuto = 0; errosNoMinuto = 0;
+    let voz = 0; let salas = 0; let telas = 0; let livekitOk = true; let latencia = null;
+    const inicio = Date.now();
+    try {
+      const rooms = await comPrazo(roomService.listRooms());
+      latencia = Date.now() - inicio;
+      const comGente = (rooms || []).filter((r) => Number(r.numParticipants) > 0);
+      salas = comGente.length;
+      voz = comGente.reduce((n, r) => n + Number(r.numParticipants || 0), 0);
+      for (const r of comGente.slice(0, 50)) {
+        try {
+          const participantes = await comPrazo(roomService.listParticipants(r.name));
+          telas += participantes.filter((p) => (p.tracks || []).some((f) => faixaEhDe(f, FAIXA.TELA) && !f.muted)).length;
+        } catch (e) { /* a sala fechou no meio */ }
+      }
+    } catch (e) {
+      livekitOk = false;
+    }
+    metricas.amostra({ online: presencaAgora().online, voz, salas, telas, livekitOk, latencia, requisicoes, erros });
+  } finally {
+    fotografando = false;
+  }
+}
+
+// Pedido com JSON quebrado ou grande demais: responde curto, sem mostrar detalhes internos.
+// (Fica por último, depois de todas as rotas.)
+app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
+  if (err && err.type === 'entity.parse.failed') return res.status(400).json({ erro: 'Pedido inválido.' });
+  if (err && err.type === 'entity.too.large') return res.status(413).json({ erro: 'Pedido grande demais.' });
+  console.error('Erro interno:', err);
+  res.status(500).json({ erro: 'Erro interno do servidor.' });
+});
+
 module.exports = {
-  app, repo, sessoes, conversas, amigos, acesso, moderacao, chaves,
+  app, repo, sessoes, conversas, amigos, acesso, moderacao, chaves, metricas, downloads,
   _trocarRoomService: (novo) => { roomService = novo; },
   _trocarBuscaDiscord: (nova) => { buscarNoDiscord = nova; },
+  _fotografar: fotografar,
 };
 
 // Ao desligar (docker stop / reiniciar), grava na hora o que ainda estava esperando pra ir pro disco.
 function gravarTudoEsair() {
-  try { conversas.gravarAgora(); amigos.gravarAgora(); } catch (e) { console.error(e); }
+  try { conversas.gravarAgora(); amigos.gravarAgora(); metricas.gravarAgora(); } catch (e) { console.error(e); }
   process.exit(0);
 }
 
 if (require.main === module) {
   process.on('SIGTERM', gravarTudoEsair);
   process.on('SIGINT', gravarTudoEsair);
+  // Estatísticas: foto a cada minuto e o total de downloads do GitHub a cada 3 horas.
+  const tirarFoto = () => { fotografar().catch((e) => console.error('[metricas] foto falhou:', e && e.message)); };
+  setTimeout(tirarFoto, 5 * 1000).unref();
+  setInterval(tirarFoto, 60 * 1000).unref();
+  const anotarDownloads = () => downloads.atualizar().then((d) => { if (d.ok) metricas.registrarDownloads(d.total.instalador); }).catch(() => {});
+  setTimeout(anotarDownloads, 3 * 1000).unref();
+  setInterval(anotarDownloads, 3 * 60 * 60 * 1000).unref();
   app.listen(PORT, () => {
     console.log(`Servidor do Estrivisor ativo na porta ${PORT} (login obrigatório)`);
   });

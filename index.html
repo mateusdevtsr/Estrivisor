@@ -15,6 +15,14 @@
             --texto-fraco: #8a919a;
             --sinal: #ff4d4d;
             --acento: #ffb020;
+            /* Ajustados em Configurações > Aparência > Cores e estilo (estilo.js) */
+            --botao: #262b31;
+            --campo: #0e1013;
+            --painel-rgb: 20,23,27;
+            --painel2-rgb: 24,27,31;
+            --raio: 6px;
+            --raio-grande: 10px;
+            --raio-avatar: 50%;
         }
         * { box-sizing: border-box; }
         body {
@@ -29,13 +37,13 @@
         button {
             padding: 8px 12px; border-radius: 6px; border: none; font-size: 13px;
             font-weight: 600; cursor: pointer; transition: 0.15s ease; color: var(--texto);
-            background: #262b31; font-family: inherit;
+            background: var(--botao); font-family: inherit;
         }
-        button:hover:not(:disabled) { background: #31373e; }
+        button:hover:not(:disabled) { background: color-mix(in srgb, var(--botao) 82%, white); }
         button:disabled { opacity: 0.4; cursor: not-allowed; }
         input, select, textarea {
             padding: 9px 11px; border-radius: 6px; border: 1px solid var(--borda);
-            background: #0e1013; color: var(--texto); font-size: 13px; outline: none;
+            background: var(--campo); color: var(--texto); font-size: 13px; outline: none;
             font-family: inherit; width: 100%;
         }
         input:focus, select:focus { border-color: var(--sinal); }
@@ -50,8 +58,8 @@
         }
         body.com-fundo .fundo-app { display: block; }
         /* Com foto, as colunas ficam translúcidas (menus e janelinhas continuam opacos, pra leitura). */
-        body.com-fundo { --painel-vidro: rgba(20,23,27,0.80); --painel2-vidro: rgba(24,27,31,0.86); }
-        body.com-fundo .coluna-principal { background: rgba(0,0,0,0.22); }
+        body.com-fundo, body.com-fundo-anim { --painel-vidro: rgba(var(--painel-rgb),0.80); --painel2-vidro: rgba(var(--painel2-rgb),0.86); }
+        body.com-fundo .coluna-principal, body.com-fundo-anim .coluna-principal { background: rgba(0,0,0,0.22); }
 
         /* ---------- Layout de 3 colunas ---------- */
         .app { display: flex; height: 100vh; position: relative; z-index: 1; }
@@ -406,6 +414,133 @@
         .aba-direita.ativa { color: var(--texto); border-bottom-color: var(--sinal); }
         .conteudo-aba { flex: 1; overflow-y: auto; padding: 14px 10px; }
 
+
+        /* ---------- Layouts (Configurações > Visual > Layouts). O padrão é o "Clássico". ---------- */
+        /* Espelhado: todas as barras ficam à direita */
+        body.layout-espelhado .coluna-principal { order: 0; }
+        body.layout-espelhado .coluna-membros { order: 1; }
+        body.layout-espelhado .coluna-canais { order: 2; border-right: none; border-left: 1px solid var(--borda); }
+        body.layout-espelhado .barra-servidores { order: 3; border-right: none; border-left: 1px solid var(--borda); }
+        body.layout-espelhado .btn-servidor.ativo::before { left: auto; right: -11px; border-radius: 4px 0 0 4px; }
+
+        /* Compacto e Cinema: barras da esquerda só com ícones (o nome aparece ao passar o mouse) */
+        body.layout-compacto .barra-servidores, body.layout-cinema .barra-servidores { width: 56px; gap: 6px; }
+        body.layout-compacto .btn-servidor, body.layout-cinema .btn-servidor,
+        body.layout-compacto .icone-servidor, body.layout-cinema .icone-servidor { width: 38px; height: 38px; font-size: 14px; }
+        body.layout-compacto .btn-servidor.ativo::before, body.layout-cinema .btn-servidor.ativo::before { left: -9px; top: 8px; height: 22px; }
+        body.layout-compacto .coluna-canais, body.layout-cinema .coluna-canais { width: 64px; }
+        body.layout-compacto .cabecalho-servidor, body.layout-cinema .cabecalho-servidor { padding: 14px 0; justify-content: center; }
+        body.layout-compacto .cabecalho-servidor .ponto, body.layout-cinema .cabecalho-servidor .ponto,
+        body.layout-compacto #nome-servidor-cabecalho, body.layout-cinema #nome-servidor-cabecalho { display: none; }
+        body.layout-compacto .lista-canais, body.layout-cinema .lista-canais { padding: 8px 6px; }
+        body.layout-compacto .secao-canais, body.layout-cinema .secao-canais { margin-bottom: 10px; }
+        body.layout-compacto .titulo-secao-canais, body.layout-cinema .titulo-secao-canais { justify-content: center; padding: 2px 0; }
+        body.layout-compacto .titulo-secao-canais > span, body.layout-cinema .titulo-secao-canais > span { display: none; }
+        body.layout-compacto .item-canal, body.layout-cinema .item-canal { justify-content: center; padding: 9px 0; font-size: 15px; position: relative; }
+        body.layout-compacto .item-canal > span:nth-child(n+2):not(.badge-nl), body.layout-cinema .item-canal > span:nth-child(n+2):not(.badge-nl) { display: none; }
+        body.layout-compacto .item-canal .badge-nl, body.layout-cinema .item-canal .badge-nl { position: absolute; top: -2px; right: 0; margin: 0; min-width: 14px; padding: 0 4px; font-size: 9px; }
+        body.layout-compacto .sub-membros-voz, body.layout-cinema .sub-membros-voz { display: none; }
+        body.layout-compacto .painel-usuario, body.layout-cinema .painel-usuario { padding: 8px 4px; align-items: center; }
+        body.layout-compacto .info-usuario-rodape, body.layout-cinema .info-usuario-rodape,
+        body.layout-compacto .texto-canal-servidor, body.layout-cinema .texto-canal-servidor { display: none; }
+        body.layout-compacto .cartao-usuario, body.layout-cinema .cartao-usuario { flex-direction: column; gap: 6px; }
+        body.layout-compacto .grupo-icone, body.layout-cinema .grupo-icone { flex-wrap: wrap; justify-content: center; gap: 0; }
+        body.layout-compacto .painel-usuario .icone-rodape, body.layout-cinema .painel-usuario .icone-rodape, body.layout-compacto .seta-rodape, body.layout-cinema .seta-rodape { padding: 4px 3px; font-size: 13px; }
+        body.layout-compacto .linha-topo-status-voz, body.layout-cinema .linha-topo-status-voz { flex-direction: column; gap: 6px; }
+        body.layout-compacto .status-voz-persistente, body.layout-cinema .status-voz-persistente { padding: 6px 2px; }
+        body.layout-compacto .fileira-icones-voz.visivel, body.layout-cinema .fileira-icones-voz.visivel { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; width: 100%; }
+        body.layout-compacto .fileira-icones-voz button, body.layout-cinema .fileira-icones-voz button { padding: 6px 0; font-size: 13px; }
+        body.layout-compacto .painel-soundboard, body.layout-cinema .painel-soundboard { flex-direction: column; }
+        /* Compacto: o chat usa a largura toda */
+        body.layout-compacto .mensagem-chat { max-width: none; }
+        /* Cinema: a transmissão ganha o espaço; coluna da direita mais estreita */
+        body.layout-cinema .coluna-membros { width: 220px; }
+        body.layout-cinema .grade-video { padding: 8px; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); }
+        body.layout-cinema .cabecalho-canal { height: 44px; }
+        /* Cinema com chat: transmissão à esquerda e o chat do canal de texto aberto à direita */
+        body.cinema-duplo .coluna-principal { display: grid; grid-template-columns: minmax(0, 1fr) 320px; grid-template-rows: auto minmax(0, 1fr); }
+        body.cinema-duplo .cabecalho-canal { grid-column: 1 / -1; }
+        body.cinema-duplo .area-voz { grid-column: 1; grid-row: 2; }
+        body.cinema-duplo .area-texto { grid-column: 2; grid-row: 2; border-left: 1px solid var(--borda); }
+        body.cinema-duplo .mensagem-chat { max-width: none; }
+
+        /* Duas telas: assiste duas transmissões lado a lado, cada uma ocupando metade */
+        body.layout-duas .grade-video:not(.modo-foco) { grid-template-columns: 1fr 1fr; grid-auto-rows: minmax(0, 1fr); align-content: stretch; }
+        body.layout-duas .grade-video:not(.modo-foco) .tile-video { aspect-ratio: unset; min-height: 0; }
+        body.layout-duas .grade-video:has(.tile-video:only-child):not(.modo-foco) { grid-template-columns: 1fr; }
+
+        /* Festa de voz: rostos grandes de quem está na sala */
+        .festa-voz { display: none; }
+        body.layout-festa .festa-voz { display: flex; flex: 1; min-height: 0; flex-wrap: wrap; align-content: center; justify-content: center; gap: 30px; padding: 24px 40px; overflow: auto; }
+        body.layout-festa .area-voz:has(.tile-video) .festa-voz { flex: 0 0 auto; gap: 14px; padding: 10px 16px; }
+        body.layout-festa .grade-video:has(.placeholder-vazio) { display: none; }
+        .festa-pessoa { display: flex; flex-direction: column; align-items: center; gap: 8px; max-width: 140px; font-weight: 600; font-size: 14px; }
+        .festa-pessoa .avatar-participante { width: 104px; height: 104px; font-size: 40px; transition: box-shadow 0.12s; }
+        .festa-pessoa .nome-festa { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .festa-pessoa.falando .avatar-participante { box-shadow: 0 0 0 4px #3bd671, 0 0 18px #3bd67199; }
+        .festa-pessoa.mudo .avatar-participante { opacity: 0.55; }
+        .festa-pessoa.mudo .nome-festa::after { content: " 🔇"; font-weight: 400; }
+        body.layout-festa .area-voz:has(.tile-video) .festa-pessoa .avatar-participante { width: 48px; height: 48px; font-size: 18px; }
+        body.layout-festa .area-voz:has(.tile-video) .festa-pessoa { flex-direction: row; max-width: 200px; font-size: 13px; }
+
+        /* Estilo personalizado: cantos e formato dos ícones (só valem se a pessoa mudou do padrão) */
+        body.raio-custom button, body.raio-custom input, body.raio-custom select, body.raio-custom textarea,
+        body.raio-custom .item-canal, body.raio-custom .item-membro, body.raio-custom .cartao-layout,
+        body.raio-custom .menu-contexto, body.raio-custom .item-menu { border-radius: var(--raio); }
+        body.raio-custom .tile-video, body.raio-custom .grupo-config, body.raio-custom .status-voz-persistente,
+        body.raio-custom .campo-mensagem-wrap textarea { border-radius: var(--raio-grande); }
+        body.avatar-custom .avatar-participante, body.avatar-custom .avatar-mensagem, body.avatar-custom .mini-avatar,
+        body.avatar-custom .icone-servidor, body.avatar-custom .btn-servidor:hover .icone-servidor,
+        body.avatar-custom .btn-servidor.ativo .icone-servidor, body.avatar-custom .festa-pessoa .avatar-participante { border-radius: var(--raio-avatar); }
+        input[type=color] { width: 52px; height: 34px; padding: 2px; cursor: pointer; flex-shrink: 0; }
+        .lista-temas { display: flex; flex-wrap: wrap; gap: 6px; }
+        .chip-tema { display: flex; align-items: center; gap: 6px; padding: 6px 10px; font-size: 12px; border: 1px solid var(--borda); background: rgba(255,255,255,0.02); }
+        .chip-tema.ativo { border-color: var(--sinal); box-shadow: inset 0 0 0 1px var(--sinal); }
+        .chip-tema .amostra { display: inline-flex; }
+        .chip-tema .amostra i { width: 12px; height: 12px; border-radius: 50%; margin-left: -3px; border: 1px solid rgba(255,255,255,0.2); }
+        .chip-tema .amostra i:first-child { margin-left: 0; }
+        .linha-cores { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; }
+        .linha-cores label { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12.5px; color: var(--texto-fraco); }
+
+        /* Imagens e animações por área: a camada fica atrás do conteúdo da área e acima da cor dela */
+        .alvo-imagem { position: relative; isolation: isolate; }
+        .camada-area { position: absolute; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
+        .camada-area.fixa { position: fixed; z-index: 0; }
+        .camada-area > img, .camada-area > video { width: 100%; height: 100%; display: block; object-fit: var(--ajuste-img, cover); }
+        .camada-area > .escura { position: absolute; inset: 0; background: rgba(0,0,0,var(--escuro, 0.4)); }
+        .linha-area { display: flex; flex-direction: column; gap: 6px; padding: 10px 0; border-top: 1px solid var(--borda); }
+        .linha-area:first-child { border-top: none; padding-top: 0; }
+        .linha-area .nome-area { font-size: 13px; font-weight: 700; }
+        .linha-area .botoes-area { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+        .linha-area .botoes-area button { padding: 6px 10px; font-size: 12px; }
+        .linha-area .opcoes-area { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; align-items: center; }
+        .linha-area .opcoes-area select { padding: 6px 8px; font-size: 12px; }
+
+        /* Sons do app */
+        .linha-som { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--borda); flex-wrap: wrap; }
+        .linha-som:first-child { border-top: none; }
+        .linha-som .texto-som { flex: 1; min-width: 150px; }
+        .linha-som .nome-som { font-size: 13px; font-weight: 600; }
+        .linha-som .botoes-som { display: flex; gap: 6px; align-items: center; }
+        .linha-som .botoes-som button { padding: 5px 9px; font-size: 12px; }
+
+        /* Menu de escolha de layout */
+        .lista-layouts { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; padding: 4px 14px 14px; }
+        .cartao-layout { display: flex; flex-direction: column; gap: 6px; text-align: left; padding: 8px; border-radius: 8px; border: 1px solid var(--borda); background: rgba(255,255,255,0.02); color: var(--texto); cursor: pointer; font: inherit; }
+        .cartao-layout:hover { background: rgba(255,255,255,0.06); }
+        .cartao-layout.ativo { border-color: var(--sinal); box-shadow: inset 0 0 0 1px var(--sinal); }
+        .cartao-layout svg { width: 100%; height: auto; display: block; border-radius: 4px; background: #0b0d10; }
+        .cartao-layout .nome-layout { font-size: 12.5px; font-weight: 700; }
+        .cartao-layout .desc-layout { font-size: 11px; line-height: 1.35; color: var(--texto-fraco); }
+        .cartao-layout.largo { grid-column: 1 / -1; }
+        .grupo-config { border: 1px solid var(--borda); border-radius: 10px; margin-bottom: 10px; background: rgba(255,255,255,0.02); }
+        .grupo-config > summary { list-style: none; cursor: pointer; padding: 11px 14px; font-size: 12px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--texto); display: flex; align-items: center; justify-content: space-between; user-select: none; }
+        .grupo-config > summary::-webkit-details-marker { display: none; }
+        .grupo-config > summary::after { content: "▸"; color: var(--texto-fraco); transition: transform 0.15s; }
+        .grupo-config[open] > summary::after { transform: rotate(90deg); }
+        .grupo-config > summary:hover { background: rgba(255,255,255,0.04); border-radius: 10px; }
+        .grupo-config > summary:focus-visible { outline: 2px solid var(--acento, #ffb020); outline-offset: -2px; }
+        .grupo-config > .secao-config { padding: 4px 14px 14px; margin: 0; border-bottom: none; }
         .secao-config { display: flex; flex-direction: column; gap: 8px; padding-bottom: 16px; margin-bottom: 16px; border-bottom: 1px solid var(--borda); }
         .secao-config:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
         .titulo-config { font-size: 11px; font-weight: 700; color: var(--texto-fraco); letter-spacing: 0.05em; text-transform: uppercase; }
@@ -718,6 +853,8 @@
                     <div id="lista-pendentes-voz"><div style="color:var(--texto-fraco);font-size:12.5px;">Ninguém esperando.</div></div>
                 </div>
 
+                <div class="festa-voz" id="festa-voz"></div>
+
                 <div class="grade-video" id="grade-video">
                     <div class="placeholder-vazio"><div class="icone">▢</div>Nenhuma transmissão ativa neste canal</div>
                 </div>
@@ -810,8 +947,101 @@
             </div>
 
             <div class="conteudo-aba" id="aba-visual" style="display:none;">
+                <!-- Cada grupo abre e fecha com um clique no título. -->
+                <details class="grupo-config" id="grupo-layouts">
+                    <summary>Layouts</summary>
+                    <div class="dica-config" style="padding:0 14px 8px;">Escolha como o app fica organizado. Vale só para você e fica salvo neste computador.</div>
+                    <div class="lista-layouts" id="lista-layouts"></div>
+                </details>
+
+                <details class="grupo-config" id="grupo-sons">
+                    <summary>Sons do app</summary>
+                    <div class="secao-config">
+                        <div class="dica-config">Avisos sonoros de mensagens, de gente entrando e saindo da sala, do microfone e mais. Cada som pode ser desligado ou trocado por um arquivo seu (MP3, WAV ou OGG de até 1 MB e 6 segundos). Fica só neste computador.</div>
+                        <label class="opcao-discord"><input type="checkbox" id="check-sons-ativo" checked> <span>Tocar os sons do app</span></label>
+                        <div class="rotulo-config">Volume dos sons</div>
+                        <div class="linha-slider" style="display:flex;">
+                            <input type="range" id="slider-sons" min="0" max="100" step="5" value="60">
+                            <span id="valor-sons">60%</span>
+                        </div>
+                        <div id="lista-sons"></div>
+                    </div>
+                </details>
+
+                <details class="grupo-config" id="grupo-imagens">
+                    <summary>Imagens e animações</summary>
+                    <div class="secao-config">
+                        <div class="dica-config">Ponha uma imagem atrás de cada parte do app. Aceita PNG, JPG, WebP, AVIF, <b>GIF e WebP animados</b> e vídeos curtos em loop (MP4 ou WebM, sem som). Até 30 MB cada. Fica só neste computador. Animações gastam um pouco de processador: se o PC pesar, use imagem parada ou remova.</div>
+                        <div id="lista-areas-imagem"></div>
+                    </div>
+                </details>
+
+                <details class="grupo-config" id="grupo-estilo">
+                    <summary>Cores e estilo</summary>
+                    <div class="secao-config">
+                        <div class="dica-config">Muda só a aparência no seu computador. Se algo ficar ruim de ler, é só restaurar o padrão no fim.</div>
+                        <div class="rotulo-config">Tema</div>
+                        <div class="lista-temas" id="lista-temas"></div>
+                        <div class="rotulo-config">Cores (mexer em uma vira o tema "Personalizado")</div>
+                        <div class="linha-cores">
+                            <label>Destaque <input type="color" id="cor-sinal"></label>
+                            <label>Fundo <input type="color" id="cor-bg"></label>
+                            <label>Painéis <input type="color" id="cor-painel"></label>
+                            <label>Texto <input type="color" id="cor-texto"></label>
+                        </div>
+                        <div class="rotulo-config">Fonte</div>
+                        <select id="select-fonte"></select>
+                        <div class="rotulo-config">Tamanho da interface</div>
+                        <div class="linha-slider" style="display:flex;">
+                            <input type="range" id="slider-zoom" min="80" max="150" step="5" value="100">
+                            <span id="valor-zoom">100%</span>
+                        </div>
+                        <div class="rotulo-config">Arredondamento dos cantos</div>
+                        <div class="linha-slider" style="display:flex;">
+                            <input type="range" id="slider-raio" min="0" max="20" step="1" value="6">
+                            <span id="valor-raio">6 px</span>
+                        </div>
+                        <div class="rotulo-config">Formato das fotos de perfil e ícones</div>
+                        <select id="select-avatar">
+                            <option value="circulo">Círculo</option>
+                            <option value="arredondado">Arredondado</option>
+                            <option value="quadrado">Quadrado</option>
+                        </select>
+                        <button type="button" id="btn-restaurar-estilo">Restaurar o padrão</button>
+                    </div>
+                </details>
+
+                <details class="grupo-config" id="grupo-flutuante">
+                    <summary>Janela flutuante</summary>
+                    <div class="secao-config">
+                        <div class="dica-config">Um cartão pequeno por cima do jogo com quem está na sala de voz (quem fala fica destacado) e os botões de microfone, áudio e sair. Só aparece enquanto você está numa sala, e já abre sozinho ao entrar. Arraste pelo topo para mudar de lugar. Em jogo de tela cheia "exclusiva" o Windows pode escondê-la; em janela sem bordas ela aparece normalmente.</div>
+                        <label class="opcao-discord" title="Mostra a sala de voz por cima de outros programas e jogos.">
+                            <input type="checkbox" id="check-janela-flutuante"> <span>Mostrar a sala de voz por cima do jogo</span>
+                        </label>
+                        <label class="opcao-discord" title="Com a janela flutuante ligada, Ctrl+Shift+F esconde e mostra ela de qualquer programa.">
+                            <input type="checkbox" id="check-flutuante-atalho" checked> <span>Atalho Ctrl+Shift+F para esconder/mostrar</span>
+                        </label>
+                        <div class="dica-config" id="aviso-flutuante-atalho" style="display:none;">Não consegui reservar o Ctrl+Shift+F (outro programa já usa). A janela funciona normalmente, só sem o atalho.</div>
+                        <label class="opcao-discord" title="Mostra na janela flutuante a última mensagem nova do chat que você está vendo. Fica desligado por padrão: se você transmite a tela inteira, quem assiste pode ver essa mensagem.">
+                            <input type="checkbox" id="check-flutuante-chat"> <span>Mostrar a última mensagem do chat</span>
+                        </label>
+                        <label class="opcao-discord" title="Mostra um aviso rápido quando alguém entra ou sai da sala de voz.">
+                            <input type="checkbox" id="check-flutuante-avisos" checked> <span>Avisar quando alguém entrar ou sair</span>
+                        </label>
+                        <label class="opcao-discord" title="O mouse atravessa a janela e vai direto para o jogo (ela só mostra). Use Ctrl+Shift+G para voltar ao normal e poder clicar nos botões dela.">
+                            <input type="checkbox" id="check-flutuante-clique"> <span>Deixar o clique passar direto (Ctrl+Shift+G alterna)</span>
+                        </label>
+                        <div class="rotulo-config">Transparência da janela (quanto aparece)</div>
+                        <div class="linha-slider" style="display:flex;">
+                            <input type="range" id="slider-flutuante-opacidade" min="30" max="100" step="5" value="100">
+                            <span id="valor-flutuante-opacidade">100%</span>
+                        </div>
+                    </div>
+                </details>
+
+                <details class="grupo-config" id="grupo-fundo">
+                    <summary>Foto de fundo</summary>
                 <div class="secao-config">
-                    <div class="titulo-config">Foto de fundo</div>
                     <div class="dica-config">Aparece só no seu computador. A foto é reduzida (até 1920 px) e guardada dentro do app, então fica leve.</div>
                     <div class="linha-botoes-fundo">
                         <button id="btn-escolher-fundo">Escolher foto</button>
@@ -832,6 +1062,7 @@
                     </div>
                     <div class="dica-config">Se o texto ficar difícil de ler, aumente o escurecimento.</div>
                 </div>
+                </details>
             </div>
         </div>
     </div>
@@ -893,6 +1124,7 @@
             <button class="cfg-item" data-cfg="voz">🎙️ Voz e áudio</button>
             <button class="cfg-item" data-cfg="video">🖥️ Vídeo e transmissão</button>
             <button class="cfg-item" data-cfg="aparencia">🎨 Aparência</button>
+            <button class="cfg-item" data-cfg="som">🔔 Som</button>
             <button class="cfg-item" data-cfg="discord">🎮 Discord</button>
             <button class="cfg-item" data-cfg="acesso" id="cfg-item-acesso" style="display:none;">🛡️ Administração <span id="cfg-badge-acesso" class="cfg-badge-acesso" style="display:none;"></span></button>
             <div class="cfg-nav-sep"></div>
@@ -970,6 +1202,10 @@
 
             <section class="cfg-painel" id="cfg-painel-aparencia">
                 <h2>Aparência</h2>
+            </section>
+
+            <section class="cfg-painel" id="cfg-painel-som">
+                <h2>Som</h2>
             </section>
 
             <section class="cfg-painel" id="cfg-painel-discord">
@@ -1189,6 +1425,9 @@
     </div>
 
     <script src="./node_modules/livekit-client/dist/livekit-client.umd.js"></script>
+    <script src="./estilo.js"></script>
+    <script src="./areas.js"></script>
+    <script src="./sons.js"></script>
     <script src="./estrivisor-app.js"></script>
 </body>
 </html>

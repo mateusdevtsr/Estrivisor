@@ -7,16 +7,27 @@ const path = require('path');
 //
 //   fecharParaBandeja:    ao clicar no X, o app continua rodando na bandeja do sistema
 //   avisoBandejaMostrado: já mostramos o aviso "continua aberto na bandeja" uma vez
-const PADRAO = { fecharParaBandeja: true, avisoBandejaMostrado: false };
+//   flutuanteAtiva:       janela pequena por cima do jogo com a sala de voz (Configurações > Visual)
+//   flutuanteAtalho:      atalho de teclado (Ctrl+Shift+F) pra mostrar/esconder a janela flutuante
+//   flutuanteOpacidade:   quanto da janela flutuante aparece (30 a 100, em %)
+//   flutuanteClique:      o clique atravessa a janela flutuante (ela só mostra, não responde ao mouse)
+//   flutuanteChat:        mostra a última mensagem do chat na janela flutuante
+//   flutuanteAvisos:      avisa na janela flutuante quando alguém entra ou sai da sala
+const PADRAO = { fecharParaBandeja: true, avisoBandejaMostrado: false, flutuanteAtiva: false, flutuanteAtalho: true, flutuanteOpacidade: 100, flutuanteClique: false, flutuanteChat: false, flutuanteAvisos: true };
+// Valores numéricos aceitos (com limites); qualquer outro tipo ou fora do limite é ignorado.
+const LIMITES = { flutuanteOpacidade: [30, 100] };
+const valorValido = (chave, v) => (LIMITES[chave]
+  ? Number.isInteger(v) && v >= LIMITES[chave][0] && v <= LIMITES[chave][1]
+  : typeof v === 'boolean');
 const NOME_ARQUIVO = 'configuracao.json';
 
 function lerConfiguracao(pasta) {
   const config = { ...PADRAO };
   try {
     const dados = JSON.parse(fs.readFileSync(path.join(pasta, NOME_ARQUIVO), 'utf8'));
-    // Só aceita as chaves conhecidas e só valores verdadeiro/falso; o resto é ignorado.
+    // Só aceita as chaves conhecidas, com o tipo certo (e dentro dos limites); o resto é ignorado.
     for (const chave of Object.keys(PADRAO)) {
-      if (typeof dados[chave] === 'boolean') config[chave] = dados[chave];
+      if (valorValido(chave, dados[chave])) config[chave] = dados[chave];
     }
   } catch (e) {
     // Sem arquivo (primeira vez) ou arquivo ilegível: usa o padrão.
@@ -27,7 +38,7 @@ function lerConfiguracao(pasta) {
 function salvarConfiguracao(pasta, parcial) {
   const config = { ...lerConfiguracao(pasta) };
   for (const chave of Object.keys(PADRAO)) {
-    if (parcial && typeof parcial[chave] === 'boolean') config[chave] = parcial[chave];
+    if (parcial && valorValido(chave, parcial[chave])) config[chave] = parcial[chave];
   }
   try {
     fs.mkdirSync(pasta, { recursive: true });

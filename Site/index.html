@@ -4,150 +4,158 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Estrivisor</title>
-<meta name="description" content="Voz e tela compartilhada, só entre amigos. Aplicativo para Windows com salas de voz, chat e compartilhamento de tela. Crie servidores com seus amigos. Acesso por convite.">
-<meta name="color-scheme" content="dark">
+<meta name="description" content="Aplicativo para Windows com salas de voz, chat e compartilhamento de tela. Crie servidores com seus amigos. Acesso por convite.">
+<meta name="color-scheme" content="light">
 <style>
   :root {
-    --fundo: #17141b;
-    --superficie: #221d29;
-    --superficie-2: #2b2533;
-    --linha: #3a3244;
-    --texto: #f3eef6;
-    --fraco: #a79db3;
-    --sinal: #ff4d4d;
-    --falando: #5be37d;
+    --papel: #e8ebf5;
+    --papel-2: #dce1f1;
+    --tinta: #181b3a;
+    --fraco: #4f5578;
+    --linha: #c3c9e0;
+    --acento: #4b3df2;
+    --acento-escuro: #3a2ed0;
     --fonte: "Bahnschrift", "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
   }
   * { box-sizing: border-box; }
-  html { background: var(--fundo); }
-  body {
-    margin: 0; color: var(--texto); background: var(--fundo);
-    font-family: var(--fonte); font-size: 17px; line-height: 1.6;
-    -webkit-font-smoothing: antialiased;
-  }
+  html { background: var(--papel); scroll-behavior: smooth; }
+  body { margin: 0; color: var(--tinta); background: var(--papel); font-family: var(--fonte); font-size: 17px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
   a { color: inherit; }
-  :focus-visible { outline: 3px solid var(--texto); outline-offset: 3px; border-radius: 4px; }
-
-  .pagina { max-width: 1160px; margin: 0 auto; padding: 0 24px; }
+  :focus-visible { outline: 3px solid var(--acento); outline-offset: 3px; border-radius: 4px; }
+  .pagina { max-width: 1180px; margin: 0 auto; padding: 0 28px; }
 
   /* ---------- Topo ---------- */
-  .topo { display: flex; align-items: center; justify-content: space-between; padding: 28px 0 0; }
-  .marca { font-size: 22px; font-weight: 700; letter-spacing: 0.01em; text-decoration: none; }
-  .marca i { font-style: normal; color: var(--sinal); }
+  .topo { display: flex; align-items: center; justify-content: space-between; padding: 26px 0 0; }
+  .marca { font-size: 24px; font-weight: 700; letter-spacing: -0.01em; text-decoration: none; display: inline-flex; align-items: center; gap: 10px; }
+  .marca .logo { width: 30px; height: 30px; border-radius: 9px; background: var(--tinta); position: relative; flex: none; }
+  .marca .logo::before { content: ""; position: absolute; left: 7px; right: 7px; top: 12px; height: 6px; border-radius: 3px; background: #4be3a0; }
   .topo a.contato { color: var(--fraco); font-size: 15px; text-decoration: none; }
-  .topo a.contato:hover { color: var(--texto); }
+  .topo a.contato:hover { color: var(--tinta); text-decoration: underline; text-underline-offset: 4px; }
 
   /* ---------- Abertura ---------- */
-  .abertura { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: 56px; align-items: center; padding: 72px 0 88px; }
-  .abertura h1 {
-    margin: 0 0 20px; font-size: clamp(40px, 5.6vw, 68px); line-height: 1.02; font-weight: 700;
-    letter-spacing: -0.02em; font-stretch: 85%;
-  }
-  .abertura p.lead { margin: 0 0 36px; color: var(--fraco); font-size: 19px; max-width: 30em; }
+  .abertura { display: grid; grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr); gap: 56px; align-items: center; padding: 64px 0 88px; }
+  .abertura h1 { margin: 0 0 22px; font-size: clamp(42px, 5.8vw, 76px); line-height: 0.98; font-weight: 800; letter-spacing: -0.025em; font-stretch: 80%; text-wrap: balance; }
+  .abertura p.lead { margin: 0 0 34px; color: var(--fraco); font-size: 19px; max-width: 29em; }
 
-  .acesso { border-left: 3px solid var(--sinal); padding: 4px 0 4px 20px; max-width: 30em; }
+  .acesso { background: #fff; border: 1px solid var(--linha); border-radius: 16px; padding: 22px 24px 24px; max-width: 32em; box-shadow: 0 1px 0 rgba(24,27,58,.04); }
   .aceite { display: flex; gap: 12px; align-items: flex-start; margin: 0 0 18px; color: var(--fraco); font-size: 15px; line-height: 1.5; cursor: pointer; }
-  .aceite input { flex: none; width: 20px; height: 20px; margin: 2px 0 0; accent-color: var(--sinal); cursor: pointer; }
-  .aceite b { color: var(--texto); }
-  .aceite a { color: var(--texto); text-underline-offset: 3px; }
-  .baixar {
-    display: inline-block; background: var(--sinal); color: #1a0d0d; font: inherit; font-weight: 700; font-size: 18px;
-    padding: 14px 28px; border-radius: 8px; text-decoration: none; transition: transform .12s ease, filter .12s ease;
-  }
-  .baixar:hover { filter: brightness(1.08); transform: translateY(-1px); }
-  .baixar.travado { background: var(--superficie-2); color: var(--fraco); pointer-events: none; transform: none; }
+  .aceite input { flex: none; width: 20px; height: 20px; margin: 2px 0 0; accent-color: var(--acento); cursor: pointer; }
+  .aceite b { color: var(--tinta); }
+  .aceite a { color: var(--tinta); text-underline-offset: 3px; }
+  .baixar { display: inline-block; background: var(--acento); color: #fff; font: inherit; font-weight: 700; font-size: 18px; padding: 14px 30px; border-radius: 999px; text-decoration: none; transition: background .12s ease, transform .12s ease; }
+  .baixar:hover { background: var(--acento-escuro); transform: translateY(-1px); }
+  .baixar.travado { background: var(--papel-2); color: #6b7194; pointer-events: none; transform: none; }
   .dica-download { margin: 12px 0 0; color: var(--fraco); font-size: 14px; }
 
-  /* ---------- Prévia do app ---------- */
+  /* ---------- Janela do app (peça principal) ---------- */
+  .palco { min-width: 0; }
   .janela {
-    display: grid; grid-template-columns: 190px minmax(0, 1fr); background: var(--superficie); border: 1px solid var(--linha);
-    border-radius: 12px; overflow: hidden; box-shadow: 0 30px 80px -30px rgba(0,0,0,.7); min-height: 380px;
+    --j-fundo: #14161f; --j-painel: #1c1f2b; --j-linha: #2b2f40; --j-texto: #eef0f7; --j-fraco: #959bb2; --j-acento: #7a6cff;
+    --j-tela-1: #34276b; --j-tela-2: #8a3b6a; --j-tela-3: #e8734f;
+    background: var(--j-fundo); color: var(--j-texto); border-radius: 16px; overflow: hidden;
+    box-shadow: 0 2px 0 rgba(24,27,58,.06), 0 40px 80px -36px rgba(24,27,58,.55);
+    transition: background .25s ease; font-size: 14px; line-height: 1.4;
   }
-  .j-lado { background: #1c1822; padding: 16px 14px; border-right: 1px solid var(--linha); display: flex; flex-direction: column; gap: 14px; }
-  .j-servidor { font-weight: 700; font-size: 15px; }
-  .j-canal { color: var(--fraco); font-size: 13px; }
-  .j-pessoas { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
-  .j-pessoas li { display: flex; align-items: center; gap: 10px; font-size: 14px; }
-  .av { position: relative; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; font-weight: 700; color: #1a1420; flex: none; }
+  .janela[data-tema="oceano"] { --j-fundo: #0f1b24; --j-painel: #15262f; --j-linha: #234150; --j-acento: #3cc5e8; --j-tela-1: #0c3b57; --j-tela-2: #1b7f93; --j-tela-3: #7ad9b7; }
+  .janela[data-tema="floresta"] { --j-fundo: #121a14; --j-painel: #18231b; --j-linha: #29402f; --j-acento: #6fdc7f; --j-tela-1: #1e3d2a; --j-tela-2: #5c8a3c; --j-tela-3: #e6c75a; }
+  .janela[data-tema="brasa"] { --j-fundo: #1e1411; --j-painel: #2a1b16; --j-linha: #46302a; --j-acento: #ff8a4c; --j-tela-1: #4a1d1d; --j-tela-2: #b8442f; --j-tela-3: #ffc067; }
+  .j-barra-topo { display: flex; align-items: center; justify-content: space-between; padding: 9px 14px; background: var(--j-painel); border-bottom: 1px solid var(--j-linha); font-size: 12px; color: var(--j-fraco); }
+  .j-barra-topo .ctl { letter-spacing: 0.35em; }
+  .j-corpo { display: grid; grid-template-columns: 52px 160px minmax(0, 1fr); min-height: 360px; }
+  .j-trilho { background: var(--j-painel); border-right: 1px solid var(--j-linha); padding: 12px 0; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .j-trilho span { width: 32px; height: 32px; border-radius: 50%; background: var(--j-linha); display: block; }
+  .j-trilho span:first-child { background: var(--j-acento); border-radius: 11px; }
+  .j-lado { padding: 14px 12px; border-right: 1px solid var(--j-linha); display: flex; flex-direction: column; gap: 12px; }
+  .j-servidor { font-weight: 700; }
+  .j-canal { color: var(--j-fraco); font-size: 12.5px; }
+  .j-canal b { color: var(--j-texto); font-weight: 600; }
+  .j-pessoas { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  .j-pessoas button { all: unset; box-sizing: border-box; width: 100%; display: flex; align-items: center; gap: 10px; padding: 5px 6px; border-radius: 8px; cursor: pointer; }
+  .j-pessoas button:hover { background: var(--j-linha); }
+  .j-pessoas button:focus-visible { outline: 2px solid var(--j-acento); }
+  .av { position: relative; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; color: #14161f; flex: none; }
   .av.a { background: #ffb86b; } .av.b { background: #8ec5ff; } .av.c { background: #c7a4ff; }
-  .falando .av::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; border: 2px solid var(--falando); animation: pulso 1.6s ease-out infinite; }
-  @keyframes pulso { 0% { transform: scale(.88); opacity: 1; } 70%, 100% { transform: scale(1.18); opacity: 0; } }
-  .j-palco { display: flex; flex-direction: column; padding: 16px; gap: 12px; min-width: 0; }
-  .j-tela {
-    position: relative; flex: 1; min-height: 220px; border-radius: 8px; overflow: hidden; border: 1px solid var(--linha);
-    background:
-      linear-gradient(180deg, rgba(23,20,27,0) 40%, rgba(23,20,27,.85) 100%),
-      repeating-linear-gradient(90deg, rgba(255,255,255,.04) 0 1px, transparent 1px 36px),
-      repeating-linear-gradient(0deg, rgba(255,255,255,.04) 0 1px, transparent 1px 36px),
-      linear-gradient(135deg, #3d2c63 0%, #8a3b5e 55%, #e0704f 100%);
-  }
-  .j-tela .selo { position: absolute; top: 12px; left: 12px; background: rgba(23,20,27,.8); border-radius: 6px; padding: 4px 10px; font-size: 13px; display: flex; align-items: center; gap: 8px; }
-  .j-tela .selo::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--sinal); }
-  .j-tela .alvo { position: absolute; left: 50%; top: 46%; width: 54px; height: 54px; margin: -27px 0 0 -27px; border: 2px solid rgba(255,255,255,.7); border-radius: 50%; }
-  .j-tela .alvo::before, .j-tela .alvo::after { content: ""; position: absolute; background: rgba(255,255,255,.7); }
+  .falando .av::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; border: 2px solid #4be3a0; animation: pulso 1.6s ease-out infinite; }
+  @keyframes pulso { 0% { transform: scale(.88); opacity: 1; } 70%, 100% { transform: scale(1.2); opacity: 0; } }
+  .j-palco { display: flex; flex-direction: column; padding: 14px; gap: 12px; min-width: 0; }
+  .j-tela { position: relative; flex: 1; min-height: 210px; border-radius: 10px; overflow: hidden; border: 1px solid var(--j-linha);
+    background: linear-gradient(180deg, rgba(20,22,31,0) 40%, rgba(20,22,31,.8) 100%),
+      repeating-linear-gradient(90deg, rgba(255,255,255,.05) 0 1px, transparent 1px 36px),
+      repeating-linear-gradient(0deg, rgba(255,255,255,.05) 0 1px, transparent 1px 36px),
+      linear-gradient(135deg, var(--j-tela-1) 0%, var(--j-tela-2) 55%, var(--j-tela-3) 100%); }
+  .j-tela .selo { position: absolute; top: 12px; left: 12px; background: rgba(20,22,31,.78); border-radius: 6px; padding: 4px 10px; font-size: 12.5px; display: flex; align-items: center; gap: 8px; }
+  .j-tela .selo::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #ff5a4f; }
+  .j-tela .alvo { position: absolute; left: 50%; top: 46%; width: 50px; height: 50px; margin: -25px 0 0 -25px; border: 2px solid rgba(255,255,255,.75); border-radius: 50%; }
+  .j-tela .alvo::before, .j-tela .alvo::after { content: ""; position: absolute; background: rgba(255,255,255,.75); }
   .j-tela .alvo::before { left: 50%; top: -10px; bottom: -10px; width: 2px; margin-left: -1px; }
   .j-tela .alvo::after { top: 50%; left: -10px; right: -10px; height: 2px; margin-top: -1px; }
-  .j-barra { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #1c1822; border: 1px solid var(--linha); border-radius: 8px; padding: 8px 12px; font-size: 13px; color: var(--fraco); }
-  .j-barra .eu { display: flex; align-items: center; gap: 10px; color: var(--texto); }
-  .ms { color: var(--falando); font-weight: 700; }
+  .j-rodape { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--j-painel); border: 1px solid var(--j-linha); border-radius: 10px; padding: 8px 12px; font-size: 12.5px; color: var(--j-fraco); }
+  .j-rodape .eu { display: flex; align-items: center; gap: 10px; color: var(--j-texto); }
+  .ms { color: #4be3a0; font-weight: 700; }
 
-  /* ---------- O que é ---------- */
-  .tres { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--linha); border-bottom: 1px solid var(--linha); }
-  .tres > div { padding: 32px 28px 34px 0; }
-  .tres > div + div { padding-left: 28px; border-left: 1px solid var(--linha); }
-  .tres h2 { margin: 0 0 8px; font-size: 21px; line-height: 1.2; }
-  .tres p { margin: 0; color: var(--fraco); font-size: 16px; }
+  .temas { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; margin: 18px 0 0; color: var(--fraco); font-size: 15px; }
+  .temas button { font: inherit; font-size: 14px; color: var(--tinta); background: #fff; border: 1px solid var(--linha); border-radius: 999px; padding: 6px 14px 6px 10px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; }
+  .temas button i { width: 14px; height: 14px; border-radius: 50%; display: block; }
+  .temas button:hover { border-color: var(--tinta); }
+  .temas button[aria-pressed="true"] { border-color: var(--tinta); box-shadow: inset 0 0 0 1px var(--tinta); }
+
+  /* ---------- O que faz ---------- */
+  .recursos { border-top: 1px solid var(--linha); }
+  .recurso { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); gap: 40px; padding: 30px 0; border-bottom: 1px solid var(--linha); }
+  .recurso h2 { margin: 0; font-size: 26px; line-height: 1.15; font-stretch: 88%; letter-spacing: -0.01em; }
+  .recurso p { margin: 0; color: var(--fraco); font-size: 17px; max-width: 40em; }
 
   /* ---------- Como entrar ---------- */
-  .entrar { padding: 80px 0 40px; display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); gap: 56px; }
-  .entrar h2 { margin: 0; font-size: clamp(28px, 3.4vw, 40px); line-height: 1.1; letter-spacing: -0.01em; font-stretch: 88%; }
-  .entrar .nota { margin: 14px 0 0; color: var(--fraco); font-size: 16px; max-width: 22em; }
+  .entrar-faixa { background: var(--tinta); color: #eef0f7; margin-top: 88px; }
+  .entrar { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); gap: 56px; padding: 80px 0 64px; }
+  .entrar h2 { margin: 0; font-size: clamp(30px, 3.6vw, 44px); line-height: 1.08; letter-spacing: -0.015em; font-stretch: 85%; }
+  .entrar .nota { margin: 14px 0 0; color: #b7bdd8; font-size: 16px; max-width: 22em; }
   .passos { list-style: none; counter-reset: p; margin: 0; padding: 0; }
-  .passos li { counter-increment: p; position: relative; padding: 0 0 26px 56px; color: var(--fraco); }
-  .passos li::before {
-    content: counter(p); position: absolute; left: 0; top: 0; width: 36px; height: 36px; border-radius: 50%;
-    display: grid; place-items: center; font-weight: 700; color: var(--texto); border: 1px solid var(--linha); background: var(--superficie);
-  }
-  .passos li:not(:last-child)::after { content: ""; position: absolute; left: 17px; top: 42px; bottom: 6px; width: 1px; background: var(--linha); }
-  .passos b { display: block; color: var(--texto); font-size: 18px; margin-bottom: 2px; }
+  .passos li { counter-increment: p; position: relative; padding: 0 0 26px 58px; color: #b7bdd8; }
+  .passos li::before { content: counter(p); position: absolute; left: 0; top: 0; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; color: var(--tinta); background: #4be3a0; }
+  .passos li:not(:last-child)::after { content: ""; position: absolute; left: 18px; top: 44px; bottom: 6px; width: 2px; background: #343968; }
+  .passos b { display: block; color: #fff; font-size: 18px; margin-bottom: 2px; }
 
   /* ---------- Rodapé ---------- */
-  footer { border-top: 1px solid var(--linha); margin-top: 48px; padding: 28px 0 56px; color: var(--fraco); font-size: 14px; display: flex; flex-wrap: wrap; gap: 8px 28px; justify-content: space-between; }
+  footer { background: var(--tinta); border-top: 1px solid #2c3160; color: #aab0cf; font-size: 14px; }
+  footer .pagina { padding-top: 26px; padding-bottom: 48px; display: flex; flex-wrap: wrap; gap: 8px 28px; justify-content: space-between; }
   footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
   footer a { text-underline-offset: 3px; }
 
   /* ---------- Telas menores ---------- */
-  @media (max-width: 940px) {
-    .abertura { grid-template-columns: 1fr; gap: 44px; padding: 48px 0 56px; }
+  @media (max-width: 960px) {
+    .abertura { grid-template-columns: 1fr; gap: 44px; padding: 44px 0 56px; }
     .entrar { grid-template-columns: 1fr; gap: 28px; padding-top: 56px; }
+    .recurso { grid-template-columns: 1fr; gap: 8px; padding: 24px 0; }
   }
   @media (max-width: 720px) {
     body { font-size: 16px; }
     .pagina { padding: 0 18px; }
-    .tres { grid-template-columns: 1fr; }
-    .tres > div, .tres > div + div { padding: 24px 0; border-left: 0; }
-    .tres > div + div { border-top: 1px solid var(--linha); }
-    .janela { grid-template-columns: 1fr; }
-    .j-lado { border-right: 0; border-bottom: 1px solid var(--linha); }
-    .j-pessoas { flex-direction: row; flex-wrap: wrap; gap: 14px; }
+    .j-corpo { grid-template-columns: 1fr; }
+    .j-trilho { display: none; }
+    .j-lado { border-right: 0; border-bottom: 1px solid var(--j-linha); }
+    .j-pessoas { flex-direction: row; flex-wrap: wrap; }
+    .j-pessoas button { width: auto; }
+    .entrar-faixa { margin-top: 56px; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .falando .av::after { animation: none; opacity: .8; }
-    .baixar { transition: none; }
+    .falando .av::after { animation: none; opacity: .85; }
+    .baixar, .janela { transition: none; }
+    html { scroll-behavior: auto; }
   }
 </style>
 </head>
 <body>
 <div class="pagina">
   <header class="topo">
-    <a class="marca" href="./">Estri<i>visor</i></a>
+    <a class="marca" href="./"><span class="logo" aria-hidden="true"></span>Estrivisor</a>
     <a class="contato" href="mailto:estrivisor@gmail.com">estrivisor@gmail.com</a>
   </header>
 
   <main>
     <section class="abertura">
       <div>
-        <h1>Voz e tela compartilhada, só entre amigos.</h1>
+        <h1>Voz e tela compartilhada para você e seus amigos.</h1>
         <p class="lead">Salas de voz, chat de texto e transmissão de tela em um só aplicativo para Windows. Crie servidores com vários canais, adicione amigos, troque mensagens diretas e entre com a sua conta do Discord. O aplicativo se atualiza sozinho.</p>
 
         <div class="acesso">
@@ -161,43 +169,68 @@
         </div>
       </div>
 
-      <div class="janela" role="img" aria-label="Prévia do aplicativo: uma sala de voz com três pessoas, uma delas falando, e uma tela compartilhada.">
-        <div class="j-lado" aria-hidden="true">
-          <div>
-            <div class="j-servidor">Sala do grupo</div>
-            <div class="j-canal">Canal de voz: Geral</div>
+      <div class="palco">
+        <div class="janela" id="janela" data-tema="noite">
+          <div class="j-barra-topo" aria-hidden="true"><span>Estrivisor</span><span class="ctl">– ▢ ×</span></div>
+          <div class="j-corpo">
+            <div class="j-trilho" aria-hidden="true"><span></span><span></span><span></span></div>
+            <div class="j-lado">
+              <div>
+                <div class="j-servidor">Sala do grupo</div>
+                <div class="j-canal">Canal de voz: <b>Geral</b></div>
+              </div>
+              <ul class="j-pessoas" id="pessoas">
+                <li class="falando"><button type="button" aria-pressed="true" aria-label="Ana, falando. Clique para silenciar"><span class="av a">A</span>Ana</button></li>
+                <li><button type="button" aria-pressed="false" aria-label="Beto. Clique para fazê-lo falar"><span class="av b">B</span>Beto</button></li>
+                <li><button type="button" aria-pressed="false" aria-label="Caio. Clique para fazê-lo falar"><span class="av c">C</span>Caio</button></li>
+              </ul>
+            </div>
+            <div class="j-palco" aria-hidden="true">
+              <div class="j-tela"><span class="selo">Beto está transmitindo</span><span class="alvo"></span></div>
+              <div class="j-rodape">
+                <span class="eu"><span class="av a" style="width:24px;height:24px;font-size:11px">A</span>Ana</span>
+                <span>Conexão: <span class="ms">42 ms</span></span>
+              </div>
+            </div>
           </div>
-          <ul class="j-pessoas">
-            <li class="falando"><span class="av a">A</span>Ana</li>
-            <li><span class="av b">B</span>Beto</li>
-            <li><span class="av c">C</span>Caio</li>
-          </ul>
         </div>
-        <div class="j-palco" aria-hidden="true">
-          <div class="j-tela"><span class="selo">Beto está transmitindo</span><span class="alvo"></span></div>
-          <div class="j-barra">
-            <span class="eu"><span class="av a" style="width:24px;height:24px;font-size:11px">A</span>Ana</span>
-            <span>Conexão: <span class="ms">42 ms</span></span>
-          </div>
+        <div class="temas" role="group" aria-label="Cor do aplicativo">
+          <span>Cor do app:</span>
+          <button type="button" data-tema="noite" aria-pressed="true"><i style="background:#7a6cff"></i>Noite</button>
+          <button type="button" data-tema="oceano" aria-pressed="false"><i style="background:#3cc5e8"></i>Oceano</button>
+          <button type="button" data-tema="floresta" aria-pressed="false"><i style="background:#6fdc7f"></i>Floresta</button>
+          <button type="button" data-tema="brasa" aria-pressed="false"><i style="background:#ff8a4c"></i>Brasa</button>
         </div>
       </div>
     </section>
 
-    <section class="tres" aria-label="O que o Estrivisor faz">
-      <div>
+    <section class="recursos" aria-label="O que o Estrivisor faz">
+      <div class="recurso">
         <h2>Voz limpa</h2>
-        <p>Cancelamento de eco, supressão de ruído e escolha de microfone e fone, como numa chamada de verdade.</p>
+        <p>Eco e ruído de fundo ficam de fora, e você escolhe qual microfone e qual fone usar. É como uma ligação de verdade, só que com todo mundo na mesma sala.</p>
       </div>
-      <div>
+      <div class="recurso">
         <h2>Tela ao vivo</h2>
-        <p>Mostre a tela inteira ou só uma janela para quem está na sala, com o som do que você está jogando.</p>
+        <p>Transmita a tela inteira ou só uma janela, com o som do jogo junto. Quem está na sala assiste na hora, e vocês continuam conversando por voz e por texto.</p>
       </div>
-      <div>
+      <div class="recurso">
+        <h2>Sala por cima do jogo</h2>
+        <p>Ative uma janelinha que fica por cima do jogo e mostra quem está na sala e quem está falando. Dá para ligar o microfone, silenciar o áudio ou sair da sala ali mesmo, sem minimizar nada.</p>
+      </div>
+      <div class="recurso">
+        <h2>Do seu jeito</h2>
+        <p>Troque cores, layout, fontes e o formato dos avatares, ponha imagens de fundo (até GIFs) e escolha os sons de mensagem e de entrada na sala. Cada um deixa o Estrivisor com a própria cara, e o que você muda não aparece para os outros.</p>
+      </div>
+      <div class="recurso">
         <h2>Só quem você conhece</h2>
-        <p>Cada pessoa entra por convite e é liberada pelo administrador. Não é um lugar aberto.</p>
+        <p>Cada pessoa entra por convite e só usa o app depois de ser liberada pelo administrador. Não é um lugar aberto: você sabe quem está na sala.</p>
       </div>
     </section>
+  </main>
+</div>
 
+<div class="entrar-faixa">
+  <div class="pagina">
     <section class="entrar" id="como-entrar">
       <div>
         <h2>Como entrar</h2>
@@ -210,17 +243,19 @@
         <li><b>Aceite os termos no aplicativo.</b>Leia até o fim e confirme que tem 18 anos ou mais. Depois é só entrar numa sala.</li>
       </ol>
     </section>
-  </main>
+  </div>
+</div>
 
-  <footer>
+<footer>
+  <div class="pagina">
     <span>Estrivisor é um projeto independente, sem ligação com o Discord.</span>
     <nav>
       <a href="termos.html">Termos de uso</a>
       <a href="privacidade.html">Política de privacidade</a>
       <a href="mailto:estrivisor@gmail.com">Contato</a>
     </nav>
-  </footer>
-</div>
+  </div>
+</footer>
 
 <script>
   var URL_EXE = 'https://github.com/mateusdevtsr/Estrivisor/releases/latest/download/Estrivisor-Setup.exe';
@@ -233,6 +268,25 @@
     botao.setAttribute('aria-disabled', String(!ok));
     botao.href = ok ? URL_EXE : '#';
     dica.textContent = ok ? 'Para Windows 10 e 11. Instala em um clique e se atualiza sozinho.' : 'Marque a caixa para liberar o download.';
+  });
+
+  // Prévia: clique numa pessoa para ela "falar"; os botões de cor trocam o tema da janela.
+  var janela = document.getElementById('janela');
+  document.querySelectorAll('#pessoas li').forEach(function (li) {
+    var b = li.querySelector('button');
+    var nome = li.textContent.trim();
+    b.addEventListener('click', function () {
+      var fala = !li.classList.contains('falando');
+      li.classList.toggle('falando', fala);
+      b.setAttribute('aria-pressed', String(fala));
+      b.setAttribute('aria-label', nome + (fala ? ', falando. Clique para silenciar' : '. Clique para fazê-lo falar'));
+    });
+  });
+  document.querySelectorAll('.temas button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      janela.setAttribute('data-tema', b.dataset.tema);
+      document.querySelectorAll('.temas button').forEach(function (o) { o.setAttribute('aria-pressed', String(o === b)); });
+    });
   });
 </script>
 </body>

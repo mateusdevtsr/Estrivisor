@@ -171,7 +171,10 @@ function criarAmigos({ arquivo = null, agora = () => Date.now(), log = console, 
     return n;
   }
 
-  return { apagarDe, todos, registrar, existe, meuCodigo, trocarCodigo, porCodigo, saoAmigos, amigosDe, pedir, aceitar, recusar, remover, listar, pessoa, gravarAgora };
+  // Números pro painel do administrador.
+  const contagem = () => ({ pessoas: Object.keys(dados.usuarios).length, amizades: dados.amizades.length, pedidos: dados.pedidos.length });
+
+  return { contagem, apagarDe, todos, registrar, existe, meuCodigo, trocarCodigo, porCodigo, saoAmigos, amigosDe, pedir, aceitar, recusar, remover, listar, pessoa, gravarAgora };
 }
 
 module.exports = { criarAmigos, ErroAmigos, normalizarCodigo };

@@ -1,0 +1,90 @@
+/* Janela flutuante: cartão translúcido por cima do jogo. As cores seguem as do app. */
+:root {
+    --painel: rgba(20, 23, 27, 0.88);
+    --borda: #2c3238;
+    --texto: #e8eaed;
+    --texto-fraco: #8a919a;
+    --sinal: #ff4d4d;
+    --acento: #ffb020;
+}
+* { box-sizing: border-box; }
+html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
+    background: transparent;
+    font-family: -apple-system, "Segoe UI", Inter, sans-serif;
+    font-size: 13px; color: var(--texto);
+    user-select: none; -webkit-user-select: none;
+}
+.cartao {
+    position: relative;
+    width: 100%; height: 100%;
+    display: flex; flex-direction: column; gap: 6px;
+    padding: 10px;
+    background: var(--painel);
+    border: 1px solid var(--borda);
+    border-radius: 14px;
+    overflow: hidden;
+}
+.topo {
+    height: 22px; flex-shrink: 0;
+    display: flex; align-items: center; gap: 8px;
+    color: var(--texto-fraco); font-size: 11px; letter-spacing: 0.04em;
+    -webkit-app-region: drag;       /* arrastar a janela pelo topo */
+}
+.ponto { width: 8px; height: 8px; border-radius: 50%; background: var(--acento); flex-shrink: 0; }
+.titulo { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: uppercase; }
+.x {
+    -webkit-app-region: no-drag;
+    width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px;
+    background: transparent; color: var(--texto-fraco); font-size: 16px; line-height: 1; cursor: pointer;
+}
+.x:hover { background: #262b31; color: var(--texto); }
+
+.lista { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.linha {
+    height: 34px; flex-shrink: 0;
+    display: flex; align-items: center; gap: 8px;
+    padding: 0 4px; border-radius: 8px;
+}
+.avatar {
+    width: 26px; height: 26px; flex-shrink: 0; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 12px; color: #fff; overflow: hidden;
+}
+.avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.linha.falando .avatar { box-shadow: 0 0 0 2px var(--acento); }
+.nome { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.linha.falando .nome { color: #fff; font-weight: 600; }
+.marca { flex-shrink: 0; font-size: 11px; color: var(--texto-fraco); }
+.marca.mudo { color: var(--sinal); }
+.marca.tela { color: var(--acento); }
+.vazio { color: var(--texto-fraco); padding: 8px 4px; }
+
+.botoes {
+    height: 34px; flex-shrink: 0;
+    display: flex; align-items: center; gap: 6px;
+    padding-top: 6px; border-top: 1px solid var(--borda);
+}
+.botoes .espaco { flex: 1; }
+.botoes button {
+    width: 36px; height: 28px; padding: 0; border: 0; border-radius: 7px;
+    background: #262b31; color: var(--texto); font-size: 14px; cursor: pointer;
+}
+.botoes button:hover { background: #303640; }
+.botoes button.mudo { background: #4a2326; }
+.botoes button.sair { background: var(--sinal); }
+.botoes button.sair:hover { background: #ff6b6b; }
+.msg {
+    flex-shrink: 0; height: 36px; padding: 6px 8px; border-radius: 8px; background: rgba(255,255,255,0.05);
+    font-size: 12px; line-height: 1.25; color: var(--texto-fraco); overflow: hidden;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+.msg b { color: var(--texto); font-weight: 600; }
+.aviso {
+    position: absolute; left: 10px; right: 10px; top: 36px; z-index: 2;
+    padding: 7px 10px; border-radius: 8px; background: #1d3a29; border: 1px solid #3bd671; color: #d8ffe6;
+    font-size: 12px; font-weight: 600; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.aviso.saiu { background: #3a2323; border-color: var(--sinal); color: #ffe0e0; }
+.aviso[hidden], .msg[hidden] { display: none; }
+button:focus-visible { outline: 2px solid var(--acento); outline-offset: 1px; }
