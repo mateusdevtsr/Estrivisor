@@ -600,7 +600,8 @@ function confirmarModalTexto() {
         texto = document.getElementById('modal-texto-input').value
             .replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
     }
-    if (!texto) return mostrarNotificacao(modalMultilinha ? 'Escreva alguma coisa.' : 'Digite um nome.');
+    const marcadoVazio = document.getElementById('modal-texto-check-linha').style.display !== 'none' && document.getElementById('modal-texto-check').checked;
+    if (!texto && !marcadoVazio) return mostrarNotificacao(modalMultilinha ? 'Escreva alguma coisa.' : 'Digite um nome.');
     fecharModalTexto({ texto, marcado: document.getElementById('modal-texto-check').checked });
 }
 
@@ -707,6 +708,69 @@ function atualizarBadges() {
     if (amigosAbertos()) renderizarAmigos();
 }
 
+// ---------- Reações e prévia de links no chat ----------
+let seletorReacaoAberto = null;
+function fecharSeletorReacao() {
+    if (seletorReacaoAberto) { seletorReacaoAberto.remove(); seletorReacaoAberto = null; }
+}
+function abrirSeletorReacao(botao, aoEscolher) {
+    fecharSeletorReacao();
+    const caixa = document.createElement('div');
+    caixa.className = 'seletor-reacao';
+    window.Social.EMOJIS_REACAO.forEach((emoji) => {
+        const b = document.createElement('button');
+        b.textContent = emoji;
+        b.addEventListener('click', () => { fecharSeletorReacao(); aoEscolher(emoji); });
+        caixa.appendChild(b);
+    });
+    document.body.appendChild(caixa);
+    const r = botao.getBoundingClientRect();
+    const larg = caixa.offsetWidth, alt = caixa.offsetHeight;
+    caixa.style.left = Math.max(8, Math.min(window.innerWidth - larg - 8, r.right - larg)) + 'px';
+    caixa.style.top = (r.bottom + alt + 8 > window.innerHeight ? Math.max(8, r.top - alt - 4) : r.bottom + 4) + 'px';
+    seletorReacaoAberto = caixa;
+}
+document.addEventListener('click', (e) => { if (seletorReacaoAberto && !seletorReacaoAberto.contains(e.target)) fecharSeletorReacao(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') fecharSeletorReacao(); });
+
+const CHAVE_PREVIA_LINKS = 'estrivisor_previa_links';
+function previaLinksLigada() {
+    try { return localStorage.getItem(CHAVE_PREVIA_LINKS) !== '0'; } catch (e) { return true; }
+}
+const cachePrevias = new Map(); // url -> Promise da prévia (ou null)
+function buscarPrevia(url) {
+    if (cachePrevias.has(url)) return cachePrevias.get(url);
+    if (cachePrevias.size >= 150) cachePrevias.delete(cachePrevias.keys().next().value);
+    const p = api('POST', '/previa', { url })
+        .then((d) => window.Social.previaValida(d && d.previa))
+        .catch(() => { cachePrevias.delete(url); return null; }); // sem internet/erro: tenta de novo da próxima vez
+    cachePrevias.set(url, p);
+    return p;
+}
+function anexarPreviaDoLink(corpoEl, texto) {
+    if (!previaLinksLigada()) return;
+    const url = window.Social.primeiroLink(texto);
+    if (!url) return;
+    buscarPrevia(url).then((previa) => {
+        if (!previa || !corpoEl.isConnected) return;
+        const card = document.createElement('div');
+        card.className = 'previa-link';
+        card.title = 'Abrir link';
+        const site = document.createElement('div'); site.className = 'previa-site'; site.textContent = previa.site || previa.dominio;
+        card.appendChild(site);
+        if (previa.titulo) { const t = document.createElement('div'); t.className = 'previa-titulo'; t.textContent = previa.titulo; card.appendChild(t); }
+        if (previa.descricao) { const d = document.createElement('div'); d.className = 'previa-desc'; d.textContent = previa.descricao; card.appendChild(d); }
+        card.addEventListener('click', () => confirmarAbrirLink(url));
+        const barra = corpoEl.querySelector('.reacoes-mensagem');
+        corpoEl.insertBefore(card, barra || null);
+    });
+}
+{
+    const caixa = document.getElementById('check-previa-links');
+    caixa.checked = previaLinksLigada();
+    caixa.addEventListener('change', () => { try { localStorage.setItem(CHAVE_PREVIA_LINKS, caixa.checked ? '1' : '0'); } catch (e) { /* vale só até fechar */ } });
+}
+
 // ---------- Controlador de chat (serve pros canais e pras mensagens diretas) ----------
 function criarChat({ container, input, aoSemAcesso }) {
     let cfg = null;              // { caminho, chaveLida, podeModerar }
@@ -747,11 +811,29 @@ function criarChat({ container, input, aoSemAcesso }) {
         preencherTextoComLinks(textoEl, String(m.texto || '').slice(0, 2000));
         if (m.editadoEm) { const ed = document.createElement('span'); ed.className = 'editada'; ed.textContent = '(editada)'; textoEl.appendChild(ed); }
         aplicarAvatar(el.querySelector('.avatar-mensagem'), m.usuario, m.nome || '?', urlAvatarSegura(m.avatar));
+        const corpoEl = el.querySelector('.corpo-mensagem');
+        anexarPreviaDoLink(corpoEl, m.texto);
+        const barraReacoes = document.createElement('div');
+        barraReacoes.className = 'reacoes-mensagem';
+        window.Social.resumoReacoes(m.reacoes, obterIdentidadeUsuario()).forEach((r) => {
+            const chip = document.createElement('button');
+            chip.className = 'reacao-chip' + (r.minha ? ' minha' : '');
+            chip.title = r.minha ? 'Tirar a sua reação' : 'Reagir também';
+            chip.innerHTML = '<span class="emo"></span><span class="qtd"></span>';
+            chip.querySelector('.emo').textContent = r.emoji;
+            chip.querySelector('.qtd').textContent = String(r.qtd);
+            chip.addEventListener('click', () => reagir(m, r.emoji));
+            barraReacoes.appendChild(chip);
+        });
+        corpoEl.appendChild(barraReacoes);
 
         const podeApagar = ehEu || (cfg && cfg.podeModerar());
-        if (!ehEu || podeApagar) {
+        {
             const acoes = document.createElement('div');
             acoes.className = 'acoes-mensagem';
+            const bReagir = document.createElement('button'); bReagir.textContent = '😀'; bReagir.title = 'Reagir';
+            bReagir.addEventListener('click', (e) => { e.stopPropagation(); abrirSeletorReacao(bReagir, (emoji) => reagir(m, emoji)); });
+            acoes.appendChild(bReagir);
             if (!ehEu) {
                 const b = document.createElement('button'); b.textContent = '🚩'; b.title = 'Denunciar';
                 b.addEventListener('click', () => denunciarMensagem(m, cfg && cfg.caminho));
@@ -818,7 +900,7 @@ function criarChat({ container, input, aoSemAcesso }) {
         if (meu !== token) return;
         const minimo = r.mensagens.length ? r.mensagens[0].seq : r.ultimaSeq + 1;
         const lista = msgs.filter((m) => m.seq < minimo).concat(r.mensagens);
-        const assin = (l) => l.map((m) => m.seq + ':' + (m.editadoEm || 0)).join(',');
+        const assin = (l) => l.map((m) => m.seq + ':' + (m.editadoEm || 0) + ':' + window.Social.assinaturaReacoes(m.reacoes)).join(',');
         if (assin(lista) === assin(msgs)) return;
         const fundo = noFundo();
         msgs = lista;
@@ -881,6 +963,15 @@ function criarChat({ container, input, aoSemAcesso }) {
         if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); enviar(); }
     });
 
+    async function reagir(m, emoji) {
+        const meu = token;
+        try {
+            const d = await api('POST', `${cfg.caminho}/${m.seq}/reacao`, { emoji });
+            if (meu !== token) return;
+            const i = msgs.findIndex((x) => x.seq === m.seq);
+            if (i >= 0) { msgs[i] = d.mensagem; const fundo = noFundo(); desenharTudo(); if (fundo) descerAoFim(); }
+        } catch (err) { mostrarNotificacao('Não consegui reagir: ' + err.message); }
+    }
     async function editar(m) {
         const r = await pedirTexto({ titulo: 'Editar mensagem', dica: 'Enter confirma; Shift+Enter quebra a linha.', valor: m.texto, max: 2000, multilinha: true });
         if (!r || !r.texto.trim() || r.texto === m.texto) return;
@@ -1023,6 +1114,10 @@ async function entrarCanalVoz(canal) {
         });
         roomVoz = sala;
         registrarEventosDaVoz(sala);
+        registrarArquivosNaSala(sala);
+        registrarEspectadoresNaSala(sala);
+        registrarDesenhoNaSala(sala);
+        registrarCinemaNaSala(sala);
 
         await sala.connect(url, token);
         if (minhaTentativa !== tentativaVoz) { try { sala.disconnect(); } catch (e) {} return; }
@@ -1071,6 +1166,7 @@ function registrarEventosDaVoz(sala) {
         if (track.kind === 'video' && (track.source === LivekitClient.Track.Source.ScreenShare || track.source === LivekitClient.Track.Source.Camera)) {
             const el = track.attach();
             adicionarTile(track.sid, el, participante.name || participante.identity, false, { identidade: participante.identity, origem: track.source === LivekitClient.Track.Source.ScreenShare ? 'tela' : 'camera' });
+            avisarQueEstouVendo('entrou', participante.identity, track.source === LivekitClient.Track.Source.ScreenShare ? 'tela' : 'camera');
         } else if (track.kind === 'audio') {
             const el = track.attach();
             const tipo = track.source === LivekitClient.Track.Source.Microphone ? 'microfone' : 'compartilhamento';
@@ -1103,7 +1199,12 @@ function registrarEventosDaVoz(sala) {
     // Sem conferir "atual()": a limpeza dos elementos de áudio/vídeo tem que acontecer sempre.
     sala.on(E.TrackUnsubscribed, (track, publication, participante) => {
         const removidos = track.detach();
-        if (track.kind === 'video') removerTile(track.sid);
+        if (track.kind === 'video') {
+            removerTile(track.sid);
+            if (track.source === LivekitClient.Track.Source.ScreenShare || track.source === LivekitClient.Track.Source.Camera) {
+                avisarQueEstouVendo('saiu', participante.identity, track.source === LivekitClient.Track.Source.ScreenShare ? 'tela' : 'camera');
+            }
+        }
         if (track.kind === 'audio') {
             const tipo = track.source === LivekitClient.Track.Source.Microphone ? 'microfone' : 'compartilhamento';
             const entrada = elementosAudioPorIdentidade.get(participante.identity);
@@ -1112,8 +1213,8 @@ function registrarEventosDaVoz(sala) {
         atualizarListaMembros();
     });
 
-    sala.on(E.ParticipantConnected, (p) => { if (atual()) { if (Date.now() - entradaNaVozEm >= 3000) tocarSomApp('entrou'); avisarFlutuante(`${(p && (p.name || p.identity)) || 'Alguém'} entrou`); atualizarListaMembros(); atualizarSubMembrosVoz(); } });
-    sala.on(E.ParticipantDisconnected, (p) => { if (atual()) { if (Date.now() - entradaNaVozEm >= 3000) tocarSomApp('saiu'); avisarFlutuante(`${(p && (p.name || p.identity)) || 'Alguém'} saiu`); atualizarListaMembros(); atualizarSubMembrosVoz(); } });
+    sala.on(E.ParticipantConnected, (p) => { if (atual()) { if (Date.now() - entradaNaVozEm >= 3000) tocarSomApp('entrou'); avisarFlutuante(`${(p && (p.name || p.identity)) || 'Alguém'} entrou`); aoEntrarParticipanteCinema(p); atualizarListaMembros(); atualizarSubMembrosVoz(); } });
+    sala.on(E.ParticipantDisconnected, (p) => { if (atual()) { if (Date.now() - entradaNaVozEm >= 3000) tocarSomApp('saiu'); avisarFlutuante(`${(p && (p.name || p.identity)) || 'Alguém'} saiu`); aoSairParticipanteArquivos(p && p.identity); aoSairParticipanteCinema(p && p.identity); tirarEspectador(p && p.identity); if (p && p.identity) desenhos.removerAutor(p.identity); atualizarListaMembros(); atualizarSubMembrosVoz(); } });
     sala.on(E.ActiveSpeakersChanged, (falantes) => {
         if (!atual()) return;
         identidadesFalando = new Set(falantes.map(p => p.identity));
@@ -1181,6 +1282,10 @@ async function sairCanalVoz() {
     // Ao sair da voz a transmissão também acabou — volta os botões ao normal.
     marcarTransmissao(false);
     tiles.clear();
+    limparArquivosDaChamada();
+    espectadores.limpar(); atualizarChipEspectadores();
+    desenhos.limparTudo();
+    encerrarCinemaLocal();
     document.getElementById('fileira-icones-voz').classList.remove('visivel');
     document.getElementById('status-usuario-rodape').style.display = 'none';
     document.getElementById('painel-soundboard').style.display = 'none';
@@ -1630,7 +1735,7 @@ async function iniciarTransmissao() {
         const trackBruta = publicacao.videoTrack.mediaStreamTrack;
         if (trackBruta) trackBruta.contentHint = 'motion';
         const el = publicacao.videoTrack.attach();
-        adicionarTile(idTileLocal, el, roomVoz.localParticipant.name || roomVoz.localParticipant.identity, true);
+        adicionarTile(idTileLocal, el, roomVoz.localParticipant.name || roomVoz.localParticipant.identity, true, { identidade: roomVoz.localParticipant.identity, origem: 'tela' });
         iniciarDiagnostico(publicacao);
     }
     atualizarListaMembros();
@@ -1765,6 +1870,7 @@ async function alternarMicrofone(btn) {
     try {
         microfoneAtivo = !microfoneAtivo;
         await roomVoz.localParticipant.setMicrophoneEnabled(microfoneAtivo, microfoneAtivo ? opcoesCapturaMicrofone() : undefined, microfoneAtivo ? opcoesPublicacaoAudio() : undefined);
+        if (microfoneAtivo) await aplicarFiltroRuidoNaChamada();
         if (btn) {
             btn.textContent = microfoneAtivo ? '🎤 Desativar microfone' : '🎤 Ativar microfone';
             btn.classList.toggle('ativo', microfoneAtivo);
@@ -1873,7 +1979,7 @@ document.getElementById('btn-camera-rodape').addEventListener('click', async () 
         if (cameraAtiva && publicacao && publicacao.videoTrack) {
             idTileCamera = publicacao.trackSid;
             const el = publicacao.videoTrack.attach();
-            adicionarTile(idTileCamera, el, roomVoz.localParticipant.name || roomVoz.localParticipant.identity, true);
+            adicionarTile(idTileCamera, el, roomVoz.localParticipant.name || roomVoz.localParticipant.identity, true, { identidade: roomVoz.localParticipant.identity, origem: 'camera' });
         } else if (!cameraAtiva && idTileCamera) {
             // O evento TrackUnsubscribed só dispara pra faixas dos OUTROS —
             // o tile da própria câmera a gente remove na mão.
@@ -1963,8 +2069,135 @@ async function tocarSomNaChamada(tipo) {
     }, (duracaoTotal + 0.3) * 1000);
 }
 
-document.querySelectorAll('#painel-soundboard button').forEach(btn => {
+document.querySelectorAll('#painel-soundboard button[data-som]').forEach(btn => {
     btn.addEventListener('click', () => tocarSomNaChamada(btn.dataset.som));
+});
+
+// ---------- Sons do servidor (soundboard compartilhado) ----------
+// Cada servidor tem uma lista de sons curtos que qualquer membro toca na chamada (o servidor guarda os arquivos).
+let sonsDoServidor = [];            // lista do servidor aberto
+let sonsServidorId = null;
+const cacheSons = new Map();        // "servidor/id" -> Promise<Uint8Array dos bytes do arquivo>
+let tocandoSomServidor = false;
+
+function desenharSonsDoServidor() {
+    const caixa = document.getElementById('sons-servidor');
+    caixa.innerHTML = '';
+    if (sonsServidorId !== servidorAtual.id) return; // lista de outro servidor: espera carregar a certa
+    const eu = obterIdentidadeUsuario();
+    const souDono = servidorAtual.souDono === true;
+    sonsDoServidor.forEach((som) => {
+        const linha = document.createElement('div');
+        linha.className = 'som-linha';
+        const tocar = document.createElement('button');
+        tocar.className = 'tocar'; tocar.type = 'button';
+        tocar.textContent = '🔊 ' + som.nome;
+        tocar.title = `${som.nome} · enviado por ${som.porNome || '?'} · ${som.segundos.toFixed(1).replace('.', ',')} s`;
+        tocar.addEventListener('click', () => tocarSomDoServidor(som));
+        linha.appendChild(tocar);
+        if (som.por === eu || souDono) {
+            const ap = document.createElement('button');
+            ap.className = 'apagar'; ap.type = 'button'; ap.textContent = '✕'; ap.title = 'Apagar este som do servidor';
+            ap.addEventListener('click', () => apagarSomDoServidor(som));
+            linha.appendChild(ap);
+        }
+        caixa.appendChild(linha);
+    });
+}
+async function carregarSonsDoServidor() {
+    const id = servidorAtual.id;
+    if (!id) { sonsDoServidor = []; desenharSonsDoServidor(); return; }
+    try {
+        const d = await api('GET', `/servidores/${id}/sons`);
+        if (id !== servidorAtual.id) return;
+        sonsDoServidor = window.SomBoard.validarLista(d); sonsServidorId = id;
+        desenharSonsDoServidor();
+    } catch (e) { /* servidor antigo ou sem internet: fica a lista que já tinha */ }
+}
+document.getElementById('btn-soundboard-rodape').addEventListener('click', () => {
+    if (document.getElementById('painel-soundboard').style.display === 'flex') carregarSonsDoServidor();
+});
+
+function bytesDoSom(som) {
+    const chave = servidorAtual.id + '/' + som.id;
+    if (!cacheSons.has(chave)) {
+        if (cacheSons.size >= 40) cacheSons.delete(cacheSons.keys().next().value);
+        cacheSons.set(chave, api('GET', `/servidores/${servidorAtual.id}/sons/${som.id}`)
+            .then((d) => window.SomBoard.deBase64(String(d.dados || '')))
+            .catch((e) => { cacheSons.delete(chave); throw e; }));
+    }
+    return cacheSons.get(chave);
+}
+
+// Decodifica o arquivo e toca de duas formas ao mesmo tempo: numa faixa publicada na sala (todo mundo ouve)
+// e no seu próprio alto-falante (a faixa publicada não volta pra você).
+async function tocarSomDoServidor(som) {
+    if (!vozConectada()) return mostrarNotificacao('Entre num canal de voz primeiro.');
+    if (tocandoSomServidor) return;
+    tocandoSomServidor = true;
+    const sala = roomVoz;
+    let ctx = null, faixa = null;
+    try {
+        const bytes = await bytesDoSom(som);
+        ctx = new AudioContext();
+        const buffer = await ctx.decodeAudioData(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+        const destino = ctx.createMediaStreamDestination();
+        const fonte = ctx.createBufferSource();
+        fonte.buffer = buffer;
+        const ganho = ctx.createGain(); ganho.gain.value = 0.9;
+        fonte.connect(ganho); ganho.connect(destino);
+        const local = ctx.createGain(); local.gain.value = 0.5;
+        fonte.connect(local); local.connect(ctx.destination);
+        faixa = destino.stream.getAudioTracks()[0];
+        await sala.localParticipant.publishTrack(faixa, { name: 'soundboard' });
+        fonte.start();
+        await new Promise((r) => setTimeout(r, (Math.min(buffer.duration, window.SomBoard.MAX_SEGUNDOS + 0.5) + 0.3) * 1000));
+    } catch (err) {
+        mostrarNotificacao('Não consegui tocar o som: ' + (err && err.message ? err.message : 'erro desconhecido'));
+    } finally {
+        try { if (faixa) await sala.localParticipant.unpublishTrack(faixa); } catch (e) { /* já saiu da sala */ }
+        try { if (ctx) await ctx.close(); } catch (e) { /* ok */ }
+        tocandoSomServidor = false;
+    }
+}
+
+async function apagarSomDoServidor(som) {
+    const r = await pedirTexto({ titulo: `Apagar "${som.nome}"?`, dica: 'O som some para todo mundo do servidor.', semCampo: true, rotuloOk: 'Apagar' });
+    if (!r) return;
+    try {
+        await api('DELETE', `/servidores/${servidorAtual.id}/sons/${som.id}`);
+        cacheSons.delete(servidorAtual.id + '/' + som.id);
+        sonsDoServidor = sonsDoServidor.filter((x) => x.id !== som.id);
+        desenharSonsDoServidor();
+    } catch (err) { mostrarNotificacao('Não consegui apagar: ' + err.message); }
+}
+
+document.getElementById('btn-enviar-som').addEventListener('click', () => {
+    if (!servidorAtual.id) return mostrarNotificacao('Abra um servidor primeiro.');
+    document.getElementById('entrada-som').click();
+});
+document.getElementById('entrada-som').addEventListener('change', async (e) => {
+    const arquivo = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!arquivo) return;
+    const SB = window.SomBoard;
+    let problema = SB.problemaNoArquivo({ nome: arquivo.name, tamanho: arquivo.size });
+    if (problema) return mostrarNotificacao(problema);
+    let bytes, duracao;
+    try {
+        bytes = new Uint8Array(await arquivo.arrayBuffer());
+        const ctx = new AudioContext();
+        try { duracao = (await ctx.decodeAudioData(bytes.buffer.slice(0))).duration; } finally { ctx.close().catch(() => {}); }
+    } catch (err) { return mostrarNotificacao('Não consegui ler o áudio deste arquivo.'); }
+    problema = SB.problemaNoArquivo({ nome: arquivo.name, tamanho: arquivo.size }, duracao);
+    if (problema) return mostrarNotificacao(problema);
+    const r = await pedirTexto({ titulo: 'Nome do som', dica: `Todos do servidor poderão tocar na chamada (${duracao.toFixed(1).replace('.', ',')} s).`, valor: SB.nomeSugerido(arquivo.name), max: SB.MAX_NOME, rotuloOk: 'Enviar' });
+    if (!r) return;
+    try {
+        const d = await api('POST', `/servidores/${servidorAtual.id}/sons`, { nome: r.texto, dados: SB.paraBase64(bytes), segundos: Math.round(duracao * 10) / 10 });
+        mostrarNotificacao(`Som "${d.som.nome}" enviado!`, 'info');
+        carregarSonsDoServidor();
+    } catch (err) { mostrarNotificacao('Não consegui enviar o som: ' + err.message); }
 });
 
 document.getElementById('status-voz-persistente').addEventListener('click', () => {
@@ -1988,19 +2221,35 @@ function atualizarStatusVozPersistente() {
 async function alternarTesteMicrofone() {
     if (microfoneTesteAtivo) return pararTesteMicrofone();
     try {
-        const c = opcoesCapturaMicrofone();
-        streamTesteMic = await navigator.mediaDevices.getUserMedia({ audio: c });
+        streamTesteMic = await navigator.mediaDevices.getUserMedia({ audio: opcoesCapturaMicrofone() });
+        let streamOuvida = streamTesteMic;
+        if (filtroRuidoNecessario()) {
+            try {
+                cadeiaTesteMic = await window.Ruido.criarCadeia(streamTesteMic, opcoesFiltroRuido());
+                streamOuvida = cadeiaTesteMic.stream;
+            } catch (err) {
+                console.error('Filtro de ruído avançado:', err);
+                falhaFiltroRuido = true; cadeiaTesteMic = null;
+                mostrarNotificacao('Não consegui ligar a supressão de ruído avançada (' + err.message + '). Usando a comum.');
+                preencherControlesAudio();
+                streamTesteMic.getTracks().forEach(t => t.stop());
+                streamTesteMic = await navigator.mediaDevices.getUserMedia({ audio: opcoesCapturaMicrofone() });
+                streamOuvida = streamTesteMic;
+            }
+        }
         audioTesteMic = document.createElement('audio');
-        audioTesteMic.srcObject = streamTesteMic;
+        audioTesteMic.srcObject = streamOuvida;
         audioTesteMic.autoplay = true;
         if (prefsAudio.saidaId && audioTesteMic.setSinkId) { try { await audioTesteMic.setSinkId(prefsAudio.saidaId); } catch (e) {} }
         document.body.appendChild(audioTesteMic);
         microfoneTesteAtivo = true;
-        iniciarMedidorMicrofone(streamTesteMic);
+        iniciarMedidorMicrofone(streamOuvida); // a barra mostra o que sai do filtro, ou seja, o que os outros vão ouvir
     } catch (err) { mostrarNotificacao('Erro ao testar microfone: ' + err.message); }
     atualizarBotaoTesteConfig();
 }
+let cadeiaTesteMic = null;
 function pararTesteMicrofone() {
+    if (cadeiaTesteMic) { cadeiaTesteMic.parar(); cadeiaTesteMic = null; }
     if (streamTesteMic) streamTesteMic.getTracks().forEach(t => t.stop());
     if (audioTesteMic) audioTesteMic.remove();
     streamTesteMic = null; audioTesteMic = null; microfoneTesteAtivo = false;
@@ -2385,6 +2634,8 @@ function criarElementoTile(trackSid, info, grande) {
         caixa.appendChild(criarControleVolume(info.identidade, 'compartilhamento', { compacto: true }));
         tile.appendChild(caixa);
     }
+
+    if (info.identidade && info.origem && grande) ligarDesenhoNoTile(tile, info);
 
     if (tiles.size > 1) {
         tile.classList.add('clicavel');
@@ -3167,6 +3418,170 @@ function atualizarSubMembrosVoz() {
 }
 
 // ============================================================
+// Perfil, conquistas e resumo. Os números são medidos pelo SERVIDOR (tempo em chamada, mensagens...);
+// o app só pede e desenha. Opções (Configurações > Aparência > Perfil e estatísticas): perfil privado e registrar jogos.
+// ============================================================
+const CHAVE_PERFIL_PRIVADO = 'estrivisor_perfil_privado';
+const CHAVE_REGISTRAR_JOGOS = 'estrivisor_registrar_jogos';
+const lerFlag = (chave) => { try { return localStorage.getItem(chave) === '1'; } catch (e) { return false; } };
+const gravarFlag = (chave, v) => { try { localStorage.setItem(chave, v ? '1' : '0'); } catch (e) { /* vale só até fechar o app */ } };
+let perfilPrivado = lerFlag(CHAVE_PERFIL_PRIVADO);
+let registrarJogos = lerFlag(CHAVE_REGISTRAR_JOGOS);
+document.getElementById('check-perfil-privado').checked = perfilPrivado;
+document.getElementById('check-registrar-jogos').checked = registrarJogos;
+document.getElementById('check-perfil-privado').addEventListener('change', (e) => { perfilPrivado = e.target.checked; gravarFlag(CHAVE_PERFIL_PRIVADO, perfilPrivado); fazerPing(); });
+document.getElementById('check-registrar-jogos').addEventListener('change', (e) => { registrarJogos = e.target.checked; gravarFlag(CHAVE_REGISTRAR_JOGOS, registrarJogos); });
+
+// O que vai junto com o aviso de presença (o servidor só confere se faz sentido).
+function dadosDePerfilParaPing() {
+    const tela = transmitindoAgora && vozConectada();
+    let jogo;
+    if (tela && registrarJogos && fonteTransmitida && !/^screen:/.test(fonteTransmitida.id)) jogo = limparTituloJanela(fonteTransmitida.nome) || undefined;
+    return { transmitindo: tela, jogo, perfilPrivado };
+}
+
+function elemento(tag, classe, conteudo) {
+    const el = document.createElement(tag);
+    if (classe) el.className = classe;
+    if (conteudo !== undefined) el.textContent = conteudo;
+    return el;
+}
+function desenharPerfil(d) {
+    const P = window.Perfil;
+    document.getElementById('perfil-nome').textContent = d.perfil.nome;
+    document.getElementById('perfil-desde').textContent = 'No Estrivisor desde ' + new Date(d.perfil.desde).toLocaleDateString('pt-BR') + (d.perfil.meu && d.perfil.privado ? ' · perfil privado' : '');
+    aplicarAvatar(document.getElementById('perfil-avatar'), d.perfil.usuario, d.perfil.nome, urlAvatarSegura(d.perfil.avatar));
+    document.getElementById('perfil-resumo').style.display = d.perfil.meu ? '' : 'none';
+    const corpo = document.getElementById('perfil-corpo');
+    corpo.innerHTML = '';
+    const n = d.numeros;
+    const grade = elemento('div', 'perfil-grade');
+    [['🎙️ Em chamada', P.formatarDuracao(n.voz)], ['📺 Transmitindo', P.formatarDuracao(n.tela)], ['💬 Mensagens', String(n.msgs)],
+        ['😂 Reações dadas', String(n.reacoes)], ['🏃 Maior chamada', P.formatarDuracao(n.maiorSessao)], ['🔥 Dias seguidos', `${n.sequenciaAtual} (recorde ${n.maiorSequencia})`]].forEach(([rotulo, valor]) => {
+        const c = elemento('div', 'perfil-num'); c.appendChild(elemento('b', '', valor)); c.appendChild(elemento('span', '', rotulo)); grade.appendChild(c);
+    });
+    corpo.appendChild(grade);
+    const lista = (titulo, itens, vazio) => {
+        corpo.appendChild(elemento('div', 'perfil-sec', titulo));
+        if (!itens.length) { corpo.appendChild(elemento('div', 'perfil-vazio', vazio)); return; }
+        itens.forEach((i) => { const l = elemento('div', 'perfil-linha'); l.appendChild(elemento('span', '', i.nome)); l.appendChild(elemento('span', 'perfil-vazio', P.formatarDuracao(i.s))); corpo.appendChild(l); });
+    };
+    lista('MAIS TEMPO EM CHAMADA COM', d.topParceiros, 'Ainda sem dados.');
+    lista('JOGOS MAIS TRANSMITIDOS', d.topJogos, d.perfil.meu ? 'Nada ainda. Para registrar, ligue em Configurações > Aparência > Perfil e estatísticas.' : 'Nada registrado.');
+    const ganhas = d.conquistas.filter((c) => c.ganha).length;
+    corpo.appendChild(elemento('div', 'perfil-sec', `CONQUISTAS — ${ganhas} de ${d.conquistas.length}`));
+    const gc = elemento('div', 'conquistas-grade');
+    d.conquistas.slice().sort((a, b) => Number(b.ganha) - Number(a.ganha)).forEach((c) => {
+        const el = elemento('div', 'conquista' + (c.ganha ? ' ganha' : ''));
+        el.appendChild(elemento('span', 'ic', c.icone));
+        const txt = elemento('div');
+        txt.appendChild(elemento('b', '', c.titulo));
+        txt.appendChild(elemento('div', 'ds', c.desc));
+        if (!c.ganha) {
+            const fmt = (v) => (c.unidade === 'tempo' ? P.formatarDuracao(v) : String(v));
+            txt.appendChild(elemento('div', 'ds', `${fmt(c.valor)} de ${fmt(c.meta)}`));
+            const barra = elemento('div', 'barra'); const i = document.createElement('i'); i.style.width = Math.min(100, Math.round(c.valor / c.meta * 100)) + '%'; barra.appendChild(i); txt.appendChild(barra);
+        }
+        el.appendChild(txt); gc.appendChild(el);
+    });
+    corpo.appendChild(gc);
+}
+let perfilEmAbertura = 0;
+async function abrirPerfil(usuario) {
+    const meu = ++perfilEmAbertura;
+    try {
+        const d = window.Perfil.validarPerfil(await api('GET', `/perfil/${encodeURIComponent(usuario)}`));
+        if (meu !== perfilEmAbertura) return;
+        if (!d) throw new Error('Resposta inesperada do servidor.');
+        desenharPerfil(d);
+        document.getElementById('tela-perfil').style.display = 'flex';
+        document.getElementById('perfil-fechar').focus();
+    } catch (err) { mostrarNotificacao(err.status === 403 ? 'Esta pessoa deixou o perfil privado.' : 'Não consegui abrir o perfil: ' + err.message); }
+}
+function fecharPerfil() { perfilEmAbertura++; document.getElementById('tela-perfil').style.display = 'none'; }
+document.getElementById('perfil-fechar').addEventListener('click', fecharPerfil);
+document.getElementById('tela-perfil').addEventListener('click', (e) => { if (e.target.id === 'tela-perfil') fecharPerfil(); });
+document.getElementById('tela-perfil').addEventListener('keydown', (e) => { if (e.key === 'Escape') fecharPerfil(); });
+document.getElementById('avatar-usuario-exibido').style.cursor = 'pointer';
+document.getElementById('avatar-usuario-exibido').title = 'Ver o meu perfil';
+document.getElementById('avatar-usuario-exibido').addEventListener('click', () => abrirPerfil(obterIdentidadeUsuario()));
+
+let resumoEmAbertura = 0;
+async function mostrarResumo(periodo, nome) {
+    const meu = ++resumoEmAbertura;
+    const corpo = document.getElementById('resumo-corpo');
+    corpo.innerHTML = '';
+    corpo.appendChild(elemento('div', 'perfil-vazio', 'Carregando...'));
+    try {
+        const r = window.Perfil.validarResumo(await api('GET', `/perfil/${encodeURIComponent(obterIdentidadeUsuario())}/resumo?periodo=${periodo}`));
+        if (meu !== resumoEmAbertura) return;
+        if (!r) throw new Error('Resposta inesperada do servidor.');
+        corpo.innerHTML = '';
+        corpo.appendChild(elemento('div', 'resumo-quando', `Seu resumo de ${nome}`));
+        const m = window.Perfil.manchetes(r);
+        if (!m.length) corpo.appendChild(elemento('div', 'perfil-vazio', 'Nada por aqui ainda. Entre numa chamada ou mande uma mensagem!'));
+        m.forEach((x) => {
+            const c = elemento('div', 'manchete');
+            c.appendChild(elemento('span', 'ic', x.icone));
+            const t = elemento('div'); t.appendChild(elemento('b', '', x.titulo)); t.appendChild(elemento('span', '', x.texto)); c.appendChild(t);
+            corpo.appendChild(c);
+        });
+        if (!r.dadosCompletos && m.length) corpo.appendChild(elemento('div', 'perfil-vazio', 'As estatísticas começaram a ser contadas depois do início deste período, então o resumo pode estar incompleto.'));
+    } catch (err) {
+        if (meu !== resumoEmAbertura) return;
+        corpo.innerHTML = '';
+        corpo.appendChild(elemento('div', 'perfil-vazio', 'Não consegui carregar o resumo: ' + err.message));
+    }
+}
+function abrirResumo() {
+    const abas = document.getElementById('resumo-abas');
+    abas.innerHTML = '';
+    const lista = window.Perfil.periodos();
+    const escolher = (p, botao) => { abas.querySelectorAll('button').forEach((b) => b.classList.remove('ativa')); botao.classList.add('ativa'); mostrarResumo(p.id, p.nome); };
+    lista.forEach((p, i) => {
+        const b = elemento('button', '', p.rotulo); b.type = 'button';
+        b.addEventListener('click', () => escolher(p, b));
+        abas.appendChild(b);
+        if (i === 0) escolher(p, b);
+    });
+    document.getElementById('tela-resumo').style.display = 'flex';
+    document.getElementById('resumo-fechar').focus();
+}
+function fecharResumo() { resumoEmAbertura++; document.getElementById('tela-resumo').style.display = 'none'; }
+document.getElementById('perfil-resumo').addEventListener('click', abrirResumo);
+document.getElementById('resumo-fechar').addEventListener('click', fecharResumo);
+document.getElementById('tela-resumo').addEventListener('click', (e) => { if (e.target.id === 'tela-resumo') fecharResumo(); });
+document.getElementById('tela-resumo').addEventListener('keydown', (e) => { if (e.key === 'Escape') fecharResumo(); });
+
+// ============================================================
+// Status personalizado: uma frase curta que aparece embaixo do seu nome pra todo mundo do servidor.
+// Fica salvo neste computador e vai junto com o aviso de presença (a cada ~10 s).
+// ============================================================
+const CHAVE_STATUS = 'estrivisor_status_personalizado';
+let statusPersonalizado = '';
+try { statusPersonalizado = window.Social.limparStatus(localStorage.getItem(CHAVE_STATUS) || ''); } catch (e) { statusPersonalizado = ''; }
+function mostrarStatusPersonalizado() {
+    const el = document.getElementById('status-personalizado-rodape');
+    el.textContent = statusPersonalizado;
+    el.title = statusPersonalizado ? statusPersonalizado + ' (clique para mudar)' : 'Clique para definir o seu status';
+}
+async function editarStatusPersonalizado() {
+    const r = await pedirTexto({
+        titulo: 'Seu status', dica: 'Aparece embaixo do seu nome pra quem está no servidor. Ex.: "🎮 jogando Wardogs"',
+        valor: statusPersonalizado, max: window.Social.MAX_STATUS, rotuloCheckbox: 'Remover o meu status', rotuloOk: 'Salvar'
+    });
+    if (!r) return;
+    statusPersonalizado = r.marcado ? '' : window.Social.limparStatus(r.texto);
+    try { localStorage.setItem(CHAVE_STATUS, statusPersonalizado); } catch (e) { /* sem armazenamento: vale só até fechar o app */ }
+    mostrarStatusPersonalizado();
+    fazerPing(); // aparece pros outros na hora, sem esperar o próximo aviso
+}
+document.getElementById('status-personalizado-rodape').addEventListener('click', editarStatusPersonalizado);
+document.getElementById('nome-usuario-exibido').addEventListener('click', editarStatusPersonalizado);
+document.getElementById('nome-usuario-exibido').style.cursor = 'pointer';
+mostrarStatusPersonalizado();
+
+// ============================================================
 // Presença online: a cada ~10s o app avisa o servidor que está aberto (e em qual canal de voz).
 // Quem fica 1 minuto sem avisar some da lista. Não usa uma sala do LiveKit (que gastaria
 // minutos o dia todo). A resposta também diz se o servidor mudou (canal novo, nome, expulsão...).
@@ -3182,6 +3597,7 @@ function aplicarOnline(lista) {
         presencaParticipantes.set(String(p.usuario), {
             nome: String(p.nome || p.usuario).slice(0, 40),
             canalVoz: typeof p.canalVoz === 'string' ? p.canalVoz : null,
+            status: window.Social.limparStatus(p.status),
             avatar: urlAvatarSegura(p.avatar)
         });
     });
@@ -3197,6 +3613,8 @@ async function fazerPing() {
         const d = await api('POST', `/servidores/${id}/presenca`, {
             nome: nomeUsuarioAtual,
             avatar: avatarUsuarioAtual || undefined,
+            status: statusPersonalizado || undefined,
+            ...dadosDePerfilParaPing(),
             // Só diz que está no canal depois de conectar de verdade (não durante a espera ou após uma falha).
             canalVoz: vozConectada() && canalVozAtual ? canalVozAtual.id : null
         });
@@ -3221,19 +3639,53 @@ function pingarOutrosServidores() {
         api('POST', `/servidores/${s.id}/presenca`, {
             nome: nomeUsuarioAtual,
             avatar: avatarUsuarioAtual || undefined,
+            status: statusPersonalizado || undefined,
+            ...dadosDePerfilParaPing(),
             canalVoz: vozConectada() && canalVozAtual ? canalVozAtual.id : null
         }).then((d) => registrarUltimasServidor(s.id, d && d.ultimas)).catch(() => {});
     });
 }
 
+// Medalhas de cada membro, mostradas embaixo do nome nas listas da direita (o servidor guarda 1 min em cache).
+let conquistasMembros = new Map(); // usuario -> [{ icone, titulo }]
+let temporizadorConquistas = null;
+async function carregarConquistasMembros() {
+    const id = servidorAtual.id;
+    if (!id) return;
+    try {
+        const d = await api('GET', `/servidores/${id}/conquistas`);
+        if (id !== servidorAtual.id) return;
+        const mapa = new Map();
+        Object.entries((d && d.pessoas) || {}).slice(0, 60).forEach(([usuario, lista]) => {
+            const limpas = (Array.isArray(lista) ? lista : []).slice(0, 12)
+                .map((c) => ({ icone: String((c && c.icone) || '').slice(0, 8), titulo: String((c && c.titulo) || '').slice(0, 40) })).filter((c) => c.icone);
+            if (limpas.length) mapa.set(String(usuario), limpas);
+        });
+        conquistasMembros = mapa;
+        atualizarListaOnline();
+    } catch (e) { /* servidor antigo ou sem internet: fica sem as medalhas */ }
+}
+function linhaConquistas(usuario) {
+    const lista = conquistasMembros.get(String(usuario));
+    if (!lista) return null;
+    const el = document.createElement('span');
+    el.className = 'legenda-conquistas';
+    el.textContent = lista.slice(0, 6).map((c) => c.icone).join('') + (lista.length > 6 ? ` +${lista.length - 6}` : '');
+    el.title = lista.map((c) => `${c.icone} ${c.titulo}`).join('\n');
+    return el;
+}
 function iniciarPing() {
     pararPing();
     if (!servidorAtual.id) return;
     fazerPing();
     temporizadorPing = setInterval(fazerPing, 10000);
+    carregarConquistasMembros();
+    temporizadorConquistas = setInterval(carregarConquistasMembros, 60000);
 }
 function pararPing() {
     if (temporizadorPing) { clearInterval(temporizadorPing); temporizadorPing = null; }
+    if (temporizadorConquistas) { clearInterval(temporizadorConquistas); temporizadorConquistas = null; }
+    conquistasMembros = new Map();
 }
 
 // Usado quando entra/sai de um canal de voz: avisa na hora em vez de esperar o próximo ping.
@@ -3752,14 +4204,42 @@ function atualizarListaOnline() {
             <span class="info-membro">
                 <span>${escaparHtml(info.nome)}</span>
                 ${canal ? `<span class="legenda-canal-voz">🔊 ${escaparHtml(canal.nome)}</span>` : ''}
+                ${info.status ? `<span class="legenda-status" title="${escaparHtml(info.status)}">${escaparHtml(info.status)}</span>` : ''}
             </span>`;
         aplicarAvatar(item.querySelector('.avatar-participante'), identity, info.nome, info.avatar);
+        { const medalhas = linhaConquistas(identity); if (medalhas) item.querySelector('.info-membro').appendChild(medalhas); }
         if (identity !== obterIdentidadeUsuario()) {
             item.style.cursor = 'pointer';
             item.addEventListener('click', (e) => abrirMenuPessoa(e.clientX, e.clientY, identity, info.nome));
             item.addEventListener('contextmenu', (e) => { e.preventDefault(); abrirMenuPessoa(e.clientX, e.clientY, identity, info.nome); });
+        } else {
+            item.style.cursor = 'pointer';
+            item.title = 'Ver o meu perfil';
+            item.addEventListener('click', () => abrirPerfil(identity));
         }
         lista.appendChild(item);
+    });
+
+    // Quem é do servidor mas não está online agora (o próprio usuário não entra aqui).
+    const listaOff = document.getElementById('lista-offline');
+    const tituloOff = document.getElementById('titulo-offline');
+    listaOff.innerHTML = '';
+    const eu = obterIdentidadeUsuario();
+    const offline = (servidorAtual.membros || [])
+        .filter((m) => m && m.usuario !== eu && !presencaParticipantes.has(String(m.usuario)))
+        .sort((a, b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR', { sensitivity: 'base' }));
+    tituloOff.style.display = offline.length ? 'block' : 'none';
+    tituloOff.textContent = `OFFLINE — ${offline.length}`;
+    offline.forEach((m) => {
+        const nome = m.nome || m.usuario;
+        const item = document.createElement('div');
+        item.className = 'item-membro offline';
+        item.innerHTML = `<span class="avatar-participante"></span><span class="info-membro"><span>${escaparHtml(nome)}</span></span>`;
+        aplicarAvatar(item.querySelector('.avatar-participante'), String(m.usuario), nome, null);
+        { const medalhas = linhaConquistas(m.usuario); if (medalhas) item.querySelector('.info-membro').appendChild(medalhas); }
+        item.style.cursor = 'pointer';
+        item.addEventListener('click', () => abrirPerfil(String(m.usuario)));
+        listaOff.appendChild(item);
     });
 }
 
@@ -4062,6 +4542,8 @@ document.getElementById('slider-fundo-desfoque').addEventListener('input', (even
     if (video[0]) destino('cfg-painel-video').appendChild(video[0]); // tamanho na tela
     if (video[1]) destino('cfg-painel-video').appendChild(video[1]); // qualidade do que envia
     if (video[2]) destino('cfg-painel-discord').appendChild(video[2]); // Discord
+    if (video[3]) destino('cfg-painel-aparencia').appendChild(video[3]); // Mensagens (prévia de links)
+    if (video[4]) destino('cfg-painel-aparencia').appendChild(video[4]); // Perfil e estatísticas
     // "Sons do app" tem aba própria: leva o conteúdo (mesmos ids) e tira a caixa que abria/fechava.
     const grupoSons = document.getElementById('grupo-sons');
     if (grupoSons) {
@@ -4072,10 +4554,612 @@ document.getElementById('slider-fundo-desfoque').addEventListener('input', (even
     document.querySelectorAll('#aba-visual > .grupo-config, #aba-visual > .secao-config').forEach((el) => destino('cfg-painel-aparencia').appendChild(el));
 })();
 
+// ---------- Anotar na tela transmitida ----------
+// Caneta e seta que todo mundo da chamada vê sobre a transmissão e que somem sozinhas em alguns segundos.
+// As posições vão de 0 a 1 em relação à imagem, então batem em qualquer tamanho de janela (regras em desenho.js).
+const desenhos = window.Desenho.criarRegistro();
+let quadroDesenhoAtivo = 0;
+function iniciarLoopDesenho() {
+    if (quadroDesenhoAtivo) return;
+    const dpr = window.devicePixelRatio || 1;
+    const quadro = () => {
+        quadroDesenhoAtivo = 0;
+        const agora = Date.now();
+        let algum = false;
+        document.querySelectorAll('canvas.canvas-desenho').forEach((cv) => {
+            const w = cv.clientWidth, h = cv.clientHeight;
+            if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+            const ctx = cv.getContext('2d');
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            ctx.clearRect(0, 0, w, h);
+            const alvo = cv.dataset.alvo, origem = cv.dataset.origem;
+            const video = cv.parentElement && cv.parentElement.querySelector('video');
+            const ret = window.Desenho.retanguloDaImagem(w, h, video ? video.videoWidth : 0, video ? video.videoHeight : 0);
+            const ativos = desenhos.ativos(alvo, origem, agora);
+            if (ativos.length) algum = true;
+            ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+            ativos.forEach((t) => {
+                const pts = [];
+                for (let i = 0; i + 1 < t.pontos.length; i += 2) pts.push(window.Desenho.paraPixels(t.pontos[i], t.pontos[i + 1], ret));
+                if (!pts.length) return;
+                ctx.globalAlpha = t.alfa;
+                const cor = window.Desenho.corDoAutor(t.autor);
+                const tracar = (largura, estilo) => {
+                    ctx.lineWidth = largura; ctx.strokeStyle = estilo; ctx.fillStyle = estilo;
+                    if (t.modo === 'seta' && pts.length >= 2) {
+                        const [a, b] = [pts[0], pts[pts.length - 1]];
+                        const ang = Math.atan2(b[1] - a[1], b[0] - a[0]), cab = 16 + largura;
+                        ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+                        ctx.beginPath(); ctx.moveTo(b[0], b[1]);
+                        ctx.lineTo(b[0] - cab * Math.cos(ang - 0.45), b[1] - cab * Math.sin(ang - 0.45));
+                        ctx.lineTo(b[0] - cab * Math.cos(ang + 0.45), b[1] - cab * Math.sin(ang + 0.45));
+                        ctx.closePath(); ctx.fill();
+                    } else {
+                        ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+                        if (pts.length === 1) ctx.lineTo(pts[0][0] + 0.1, pts[0][1]);
+                        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+                        ctx.stroke();
+                    }
+                };
+                tracar(7, 'rgba(0,0,0,0.55)'); // contorno escuro para aparecer em qualquer fundo
+                tracar(4, cor);
+            });
+            ctx.globalAlpha = 1;
+        });
+        if (algum || desenhos.temAlgo()) quadroDesenhoAtivo = requestAnimationFrame(quadro);
+    };
+    quadroDesenhoAtivo = requestAnimationFrame(quadro);
+}
+
+function ligarDesenhoNoTile(tile, info) {
+    const D = window.Desenho;
+    const meuId = () => (roomVoz ? roomVoz.localParticipant.identity : '');
+    const cv = document.createElement('canvas');
+    cv.className = 'canvas-desenho'; cv.dataset.alvo = info.identidade; cv.dataset.origem = info.origem;
+    tile.appendChild(cv);
+
+    const barra = document.createElement('div'); barra.className = 'barra-desenho'; barra.style.display = 'none';
+    let modo = 'livre';
+    const botao = (rotulo, titulo, acao) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = rotulo; b.title = titulo; b.addEventListener('click', (e) => { e.stopPropagation(); acao(b); }); return b; };
+    const bLivre = botao('✏️ Livre', 'Desenhar à mão', () => definirModo('livre'));
+    const bSeta = botao('↗ Seta', 'Arrastar para apontar com uma seta', () => definirModo('seta'));
+    const bLimpar = botao('🧽 Limpar', 'Apaga os seus desenhos para todo mundo', () => {
+        desenhos.limpar(info.identidade, info.origem, meuId());
+        enviarDesenho({ modo: 'limpar', id: '', pontos: [] });
+    });
+    const bFechar = botao('✕', 'Sair do modo desenho', () => ligar(false));
+    function definirModo(m) { modo = m; bLivre.classList.toggle('ativo', m === 'livre'); bSeta.classList.toggle('ativo', m === 'seta'); }
+    barra.append(bLivre, bSeta, bLimpar, bFechar);
+    definirModo('livre');
+    tile.appendChild(barra);
+
+    const btn = document.createElement('button');
+    btn.className = 'btn-tela-cheia desenho'; btn.title = 'Desenhar na transmissão (todos veem)'; btn.textContent = '✏️';
+    btn.addEventListener('click', (e) => { e.stopPropagation(); ligar(barra.style.display === 'none'); });
+    tile.appendChild(btn);
+    function ligar(sim) { barra.style.display = sim ? 'flex' : 'none'; cv.classList.toggle('ativo', sim); btn.classList.toggle('ligado', sim); }
+
+    function enviarDesenho({ modo: m, id, pontos }) {
+        if (!vozConectada()) return;
+        roomVoz.localParticipant.sendText(D.criarMensagem({ alvo: info.identidade, origem: info.origem, modo: m, id, pontos }), { topic: D.TOPICO }).catch(() => {});
+    }
+
+    // Gesto: arrastar com o mouse desenha; os pontos vão em pedaços a cada ~100 ms.
+    let traco = null;
+    const posicao = (e) => {
+        const r = cv.getBoundingClientRect();
+        const video = tile.querySelector('video');
+        const ret = D.retanguloDaImagem(r.width, r.height, video ? video.videoWidth : 0, video ? video.videoHeight : 0);
+        const [nx, ny] = D.paraNormalizado(e.clientX - r.left, e.clientY - r.top, ret);
+        return [Math.min(1, Math.max(0, nx)), Math.min(1, Math.max(0, ny))];
+    };
+    const soltarPedaco = (final) => {
+        if (!traco) return;
+        if (traco.modo === 'seta') {
+            enviarDesenho({ modo: 'seta', id: traco.id, pontos: [...traco.inicio, ...traco.atual] });
+        } else {
+            while (traco.pendentes.length) {
+                const pedaco = traco.pendentes.splice(0, D.MAX_PONTOS_MSG - 2);
+                enviarDesenho({ modo: 'livre', id: traco.id, pontos: [...traco.ultimoEnviado, ...pedaco] });
+                traco.ultimoEnviado = pedaco.slice(-2);
+            }
+        }
+        if (final) { clearInterval(traco.timer); traco = null; }
+    };
+    cv.addEventListener('pointerdown', (e) => {
+        if (!cv.classList.contains('ativo') || e.button !== 0) return;
+        e.preventDefault(); e.stopPropagation();
+        cv.setPointerCapture(e.pointerId);
+        const p = posicao(e);
+        const id = Math.random().toString(36).slice(2, 10);
+        traco = { id, modo, inicio: p, atual: p, pendentes: [...p], ultimoEnviado: p, timer: setInterval(() => soltarPedaco(false), 100) };
+        desenhos.adicionar(info.identidade, info.origem, meuId(), modo, id, modo === 'seta' ? [...p, ...p] : [...p], Date.now());
+        iniciarLoopDesenho();
+    });
+    cv.addEventListener('pointermove', (e) => {
+        if (!traco) return;
+        const p = posicao(e);
+        if (traco.modo === 'seta') {
+            traco.atual = p;
+            desenhos.adicionar(info.identidade, info.origem, meuId(), 'seta', traco.id, [...traco.inicio, ...p], Date.now());
+        } else {
+            traco.pendentes.push(...p);
+            desenhos.adicionar(info.identidade, info.origem, meuId(), 'livre', traco.id, [...p], Date.now());
+        }
+        iniciarLoopDesenho();
+    });
+    const terminar = () => { if (traco) soltarPedaco(true); };
+    cv.addEventListener('pointerup', terminar);
+    cv.addEventListener('pointercancel', terminar);
+    cv.addEventListener('click', (e) => e.stopPropagation());
+}
+
+function registrarDesenhoNaSala(sala) {
+    sala.registerTextStreamHandler(window.Desenho.TOPICO, async (reader, quem) => {
+        if (sala !== roomVoz) return;
+        let m = null;
+        try { m = window.Desenho.lerMensagem(await reader.readAll()); } catch (e) { return; }
+        if (!m || !roomVoz.remoteParticipants.has(quem.identity)) return; // só gente que está na sala
+        if (m.modo === 'limpar') desenhos.limpar(m.alvo, m.origem, quem.identity);
+        else desenhos.adicionar(m.alvo, m.origem, quem.identity, m.modo, m.id, m.pontos, Date.now());
+        iniciarLoopDesenho();
+    });
+}
+
+// ---------- Sala de cinema sincronizada ----------
+// Cada um abre o MESMO arquivo no próprio PC; só mensagens curtas viajam (regras em cinema.js). Quem iniciou controla.
+let cinema = null; // { id, papel:'dono'|'convidado', dono, oferta, url, ultimo:{pos,tocando,em}, prontos:Set, timer }
+let conviteCinema = null; // { de, oferta }
+const elCinema = (id) => document.getElementById(id);
+
+function enviarCinema(tipo, campos, destino) {
+    if (!vozConectada()) return;
+    const opcoes = { topic: window.Cinema.TOPICO };
+    if (destino) opcoes.destinationIdentities = Array.isArray(destino) ? destino : [destino];
+    roomVoz.localParticipant.sendText(window.Cinema.criarMensagem(tipo, campos), opcoes).catch(() => {});
+}
+function atualizarBotaoCinema() { elCinema('btn-cinema-rodape').classList.toggle('ativo', !!cinema); }
+function atualizarTempoCinema() {
+    const v = elCinema('cinema-video');
+    elCinema('cinema-tempo').textContent = `${window.Cinema.formatarTempo(v.currentTime)} / ${window.Cinema.formatarTempo(v.duration)}`;
+    if (v.duration > 0 && document.activeElement !== elCinema('cinema-seek')) elCinema('cinema-seek').value = String(Math.round(v.currentTime / v.duration * 1000));
+    elCinema('cinema-play').textContent = v.paused ? '▶' : '⏸';
+}
+function atualizarStatusCinema() {
+    if (!cinema) return;
+    if (cinema.papel === 'dono') {
+        const total = roomVoz && roomVoz.remoteParticipants ? roomVoz.remoteParticipants.size : 0;
+        elCinema('cinema-status').textContent = total ? `Prontos: ${cinema.prontos.size} de ${total}` : 'Ninguém mais na chamada';
+    } else {
+        elCinema('cinema-status').textContent = `Quem controla: ${nomeDeParticipante(cinema.dono)}`;
+    }
+}
+function estadoDoDono() {
+    const v = elCinema('cinema-video');
+    enviarCinema('estado', { id: cinema.id, pos: v.currentTime, tocando: !v.paused && !v.ended });
+}
+function abrirSalaCinema() {
+    if (!cinema) return;
+    const dono = cinema.papel === 'dono';
+    const sala = elCinema('cinema-sala');
+    sala.classList.toggle('convidado', !dono);
+    elCinema('cinema-titulo').textContent = '🎬 ' + cinema.oferta.nome;
+    elCinema('cinema-fechar').textContent = dono ? 'Encerrar para todos' : 'Sair da sala';
+    sala.style.display = 'flex';
+    atualizarStatusCinema(); atualizarTempoCinema();
+}
+function carregarVideoLocal(arquivo) {
+    return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(arquivo);
+        const v = elCinema('cinema-video');
+        const limpar = () => { v.onloadedmetadata = null; v.onerror = null; clearTimeout(t); };
+        const t = setTimeout(() => { limpar(); URL.revokeObjectURL(url); reject(new Error('demorou demais para abrir o vídeo')); }, 15000);
+        v.onloadedmetadata = () => { limpar(); resolve({ url, duracao: v.duration }); };
+        v.onerror = () => { limpar(); URL.revokeObjectURL(url); reject(new Error('o app não consegue tocar este formato de vídeo (use mp4 com H.264, ou webm)')); };
+        v.src = url;
+    });
+}
+function ligarVideoCinema() {
+    const v = elCinema('cinema-video');
+    v.volume = Number(elCinema('cinema-volume').value) / 100;
+    ['timeupdate', 'pause', 'play', 'seeked'].forEach((ev) => v.addEventListener(ev, atualizarTempoCinema));
+    ['play', 'pause', 'seeked'].forEach((ev) => v.addEventListener(ev, () => { if (cinema && cinema.papel === 'dono') estadoDoDono(); }));
+}
+ligarVideoCinema();
+
+async function iniciarCinema(arquivo) {
+    const C = window.Cinema;
+    if (!vozConectada()) return mostrarNotificacao('Entre num canal de voz primeiro.');
+    if (cinema) { abrirSalaCinema(); return; }
+    if (!C.extensaoOk(arquivo.name)) return mostrarNotificacao('Escolha um vídeo (mp4, webm, mkv, mov...).');
+    try {
+        const { url, duracao } = await carregarVideoLocal(arquivo);
+        if (!vozConectada()) { URL.revokeObjectURL(url); return; }
+        const oferta = { nome: arquivo.name, tamanho: arquivo.size, duracao: Math.round(duracao * 10) / 10 };
+        cinema = { id: C.novoId(), papel: 'dono', dono: roomVoz.localParticipant.identity, oferta, url, ultimo: null, prontos: new Set(), timer: null };
+        enviarCinema('oferta', { id: cinema.id, ...oferta });
+        cinema.timer = setInterval(() => { if (cinema) { estadoDoDono(); atualizarStatusCinema(); } }, 2000);
+        atualizarBotaoCinema(); abrirSalaCinema();
+    } catch (err) { mostrarNotificacao('Não consegui abrir o vídeo: ' + err.message); }
+}
+async function entrarNoCinema(arquivo) {
+    const C = window.Cinema;
+    const convite = conviteCinema;
+    if (!convite || cinema) return;
+    try {
+        const { url, duracao } = await carregarVideoLocal(arquivo);
+        const r = C.arquivoCombina(convite.oferta, { nome: arquivo.name, tamanho: arquivo.size }, duracao);
+        if (!r.ok) { URL.revokeObjectURL(url); elCinema('cinema-video').removeAttribute('src'); return mostrarNotificacao(r.motivo); }
+        if (!vozConectada() || !roomVoz.remoteParticipants.has(convite.de)) { URL.revokeObjectURL(url); return mostrarNotificacao('A sessão de cinema já acabou.'); }
+        cinema = { id: convite.oferta.id, papel: 'convidado', dono: convite.de, oferta: convite.oferta, url, ultimo: null, prontos: new Set(), timer: null };
+        conviteCinema = null; elCinema('cinema-convite').style.display = 'none';
+        enviarCinema('pronto', { id: cinema.id }, convite.de);
+        atualizarBotaoCinema(); abrirSalaCinema();
+        if (r.nomeDiferente) mostrarNotificacao('O nome do arquivo é diferente, mas o tamanho e a duração batem. Tudo certo!', 'info');
+    } catch (err) { mostrarNotificacao('Não consegui abrir o vídeo: ' + err.message); }
+}
+function aplicarEstadoCinema(est) {
+    const v = elCinema('cinema-video');
+    const desde = Date.now() - est.em;
+    const a = window.Cinema.ajuste({ pos: v.currentTime, tocando: !v.paused }, { pos: est.pos, tocando: est.tocando }, desde);
+    if (a.seek !== null) v.currentTime = Math.min(Math.max(0, a.seek), v.duration || a.seek);
+    if (v.playbackRate !== a.taxa) v.playbackRate = a.taxa;
+    if (a.tocando && v.paused) v.play().catch(() => {});
+    if (!a.tocando && !v.paused) v.pause();
+}
+function encerrarCinemaLocal() {
+    if (cinema) {
+        if (cinema.timer) clearInterval(cinema.timer);
+        try { URL.revokeObjectURL(cinema.url); } catch (e) { /* ok */ }
+    }
+    cinema = null; conviteCinema = null;
+    const v = elCinema('cinema-video');
+    try { v.pause(); } catch (e) { /* ok */ }
+    v.removeAttribute('src'); v.playbackRate = 1; try { v.load(); } catch (e) { /* ok */ }
+    elCinema('cinema-sala').style.display = 'none';
+    elCinema('cinema-convite').style.display = 'none';
+    atualizarBotaoCinema();
+}
+function registrarCinemaNaSala(sala) {
+    sala.registerTextStreamHandler(window.Cinema.TOPICO, async (reader, quem) => {
+        if (sala !== roomVoz) return;
+        let m = null;
+        try { m = window.Cinema.lerMensagem(await reader.readAll()); } catch (e) { return; }
+        if (!m || !roomVoz.remoteParticipants.has(quem.identity)) return; // só gente que está na sala
+        if (m.t === 'oferta') {
+            if (cinema || conviteCinema) return; // já está numa sessão ou com um convite aberto
+            conviteCinema = { de: quem.identity, oferta: m };
+            elCinema('cinema-convite-texto').textContent = `🎬 ${nomeDeParticipante(quem.identity)} quer assistir "${m.nome}" (${formatarTamanhoArquivo(m.tamanho)}, ${window.Cinema.formatarTempo(m.duracao)}) com você. Você precisa ter o mesmo arquivo no seu computador.`;
+            elCinema('cinema-convite').style.display = 'block';
+            tocarSomApp('mensagem');
+        } else if (!cinema || m.id !== cinema.id) {
+            return;
+        } else if (m.t === 'pronto' && cinema.papel === 'dono') {
+            cinema.prontos.add(quem.identity); atualizarStatusCinema();
+            estadoDoDono(); // quem acabou de entrar já se alinha
+        } else if (m.t === 'estado' && cinema.papel === 'convidado' && quem.identity === cinema.dono) {
+            cinema.ultimo = { pos: m.pos, tocando: m.tocando, em: Date.now() };
+            aplicarEstadoCinema(cinema.ultimo);
+        } else if (m.t === 'fim' && cinema.papel === 'convidado' && quem.identity === cinema.dono) {
+            encerrarCinemaLocal();
+            mostrarNotificacao('A sessão de cinema foi encerrada.', 'info');
+        }
+    });
+}
+function aoEntrarParticipanteCinema(p) {
+    // Quem entra na chamada depois do começo também recebe o convite.
+    if (cinema && cinema.papel === 'dono' && p && p.identity) enviarCinema('oferta', { id: cinema.id, ...cinema.oferta }, p.identity);
+}
+function aoSairParticipanteCinema(identidade) {
+    if (!identidade) return;
+    if (cinema) {
+        if (cinema.papel === 'convidado' && cinema.dono === identidade) { encerrarCinemaLocal(); mostrarNotificacao('Quem controlava o cinema saiu da chamada. A sessão acabou.', 'info'); }
+        else if (cinema.papel === 'dono') { cinema.prontos.delete(identidade); atualizarStatusCinema(); }
+    } else if (conviteCinema && conviteCinema.de === identidade) { conviteCinema = null; elCinema('cinema-convite').style.display = 'none'; }
+}
+function formatarTamanhoArquivo(bytes) { return window.Arquivos.formatarTamanho(bytes); }
+
+elCinema('btn-cinema-rodape').addEventListener('click', () => {
+    if (cinema) return abrirSalaCinema();
+    if (!vozConectada()) return mostrarNotificacao('Entre num canal de voz primeiro.');
+    elCinema('entrada-cinema').click();
+});
+elCinema('entrada-cinema').addEventListener('change', (e) => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) iniciarCinema(f); });
+elCinema('cinema-convite-ok').addEventListener('click', () => { const i = document.createElement('input'); i.type = 'file'; i.accept = 'video/*,.mkv,.mp4,.webm,.m4v,.mov,.ogv'; i.addEventListener('change', () => { const f = i.files && i.files[0]; if (f) entrarNoCinema(f); }); i.click(); });
+elCinema('cinema-convite-nao').addEventListener('click', () => { conviteCinema = null; elCinema('cinema-convite').style.display = 'none'; });
+elCinema('cinema-minimizar').addEventListener('click', () => { elCinema('cinema-sala').style.display = 'none'; });
+elCinema('cinema-fechar').addEventListener('click', () => {
+    if (!cinema) return encerrarCinemaLocal();
+    if (cinema.papel === 'dono') enviarCinema('fim', { id: cinema.id });
+    encerrarCinemaLocal();
+});
+elCinema('cinema-play').addEventListener('click', () => {
+    if (!cinema || cinema.papel !== 'dono') return;
+    const v = elCinema('cinema-video');
+    if (v.paused) v.play().catch(() => {}); else v.pause();
+});
+elCinema('cinema-seek').addEventListener('input', () => {
+    if (!cinema || cinema.papel !== 'dono') return;
+    const v = elCinema('cinema-video');
+    if (v.duration > 0) v.currentTime = Number(elCinema('cinema-seek').value) / 1000 * v.duration;
+});
+elCinema('cinema-volume').addEventListener('input', () => { elCinema('cinema-video').volume = Number(elCinema('cinema-volume').value) / 100; });
+elCinema('cinema-tela-cheia').addEventListener('click', () => {
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    else elCinema('cinema-sala').requestFullscreen().catch(() => {});
+});
+elCinema('cinema-sala').addEventListener('keydown', (e) => { if (e.key === 'Escape' && !document.fullscreenElement) elCinema('cinema-sala').style.display = 'none'; });
+
+// ---------- Quem está vendo a minha transmissão ----------
+// Quem assiste manda uma mensagem curta a quem transmite; o selo verde mostra os nomes (regras em espectadores.js).
+const espectadores = window.Espectadores.criarRegistro();
+function avisarQueEstouVendo(acao, identidadeDoQueTransmite, origem) {
+    if (!vozConectada() || !identidadeDoQueTransmite) return;
+    roomVoz.localParticipant.sendText(window.Espectadores.criarMensagem(acao, origem), { topic: window.Espectadores.TOPICO, destinationIdentities: [identidadeDoQueTransmite] }).catch(() => {});
+}
+function atualizarChipEspectadores() {
+    const chip = document.getElementById('chip-espectadores');
+    if (!chip) return;
+    const nomes = espectadores.nomes();
+    chip.style.display = nomes.length ? 'inline-flex' : 'none';
+    chip.textContent = nomes.length ? '👁 ' + window.Espectadores.resumo(nomes) + (nomes.length === 1 ? ' está vendo' : ' estão vendo') : '';
+    chip.title = nomes.length ? 'Vendo a sua transmissão: ' + nomes.join(', ') : '';
+}
+function tirarEspectador(identidade) { if (identidade) { espectadores.removerPessoa(identidade); atualizarChipEspectadores(); } }
+function registrarEspectadoresNaSala(sala) {
+    sala.registerTextStreamHandler(window.Espectadores.TOPICO, async (reader, quem) => {
+        if (sala !== roomVoz) return;
+        let m = null;
+        try { m = window.Espectadores.lerMensagem(await reader.readAll()); } catch (e) { return; }
+        if (!m || !roomVoz.remoteParticipants.has(quem.identity)) return; // só gente que está na sala
+        if (m.acao === 'entrou') espectadores.entrou(quem.identity, nomeDeParticipante(quem.identity), m.origem);
+        else espectadores.saiu(quem.identity, m.origem);
+        atualizarChipEspectadores();
+    });
+}
+
+// ---------- Arquivos pela chamada ----------
+// Quem envia manda uma OFERTA; cada pessoa aceita ou recusa; só então o arquivo vai, e só pra quem aceitou.
+// As regras (limite, nome seguro, formato das mensagens) ficam em arquivos.js.
+const enviosArquivos = new Map();      // id -> { arquivo, resolvidos:Set, aceitantes:[], recusaram:[], card }
+const ofertasArquivos = new Map();     // id -> { de, oferta, card, timer }
+const arquivosEsperados = new Map();   // "identidade|nomeOriginal" -> id (só recebe o que a pessoa aceitou)
+const urlsArquivos = new Set();
+
+function nomeDeParticipante(identidade) {
+    const p = roomVoz && roomVoz.remoteParticipants && roomVoz.remoteParticipants.get(identidade);
+    return (p && p.name) || identidade || 'Alguém';
+}
+// Cartão na tela. Todo texto entra por textContent (nome de arquivo e de pessoa vêm de fora).
+function criarCartaoArquivo(titulo) {
+    const raiz = document.createElement('div'); raiz.className = 'cartao-arquivo';
+    const t = document.createElement('div'); t.className = 'ca-titulo'; t.textContent = titulo;
+    const info = document.createElement('div'); info.className = 'ca-info';
+    const aviso = document.createElement('div'); aviso.className = 'ca-aviso'; aviso.style.display = 'none';
+    const barra = document.createElement('div'); barra.className = 'ca-barra'; const preench = document.createElement('div'); barra.appendChild(preench);
+    const botoes = document.createElement('div'); botoes.className = 'ca-botoes';
+    raiz.append(t, info, aviso, barra, botoes);
+    document.getElementById('painel-arquivos').appendChild(raiz);
+    return {
+        raiz,
+        info(texto) { info.textContent = texto; },
+        aviso(texto) { aviso.textContent = texto; aviso.style.display = texto ? '' : 'none'; },
+        progresso(frac) { barra.style.display = frac == null ? 'none' : 'block'; if (frac != null) preench.style.width = Math.round(Math.max(0, Math.min(1, frac)) * 100) + '%'; },
+        botoes(lista) { botoes.replaceChildren(...lista.map(([rotulo, acao]) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = rotulo; b.addEventListener('click', acao); return b; })); },
+        remover() { raiz.remove(); }
+    };
+}
+function fecharCartaoDepois(card, ms) { setTimeout(() => card.remover(), ms); }
+
+async function oferecerArquivos(lista) {
+    if (!vozConectada()) { mostrarNotificacao('Entre num canal de voz para enviar arquivos.'); return; }
+    if (!roomVoz.remoteParticipants.size) { mostrarNotificacao('Não tem mais ninguém na chamada para receber.'); return; }
+    for (const arquivo of Array.from(lista)) {
+        const problema = window.Arquivos.problemaNoEnvio(arquivo);
+        if (problema) { mostrarNotificacao(window.Arquivos.nomeSeguro(arquivo && arquivo.name) + ': ' + problema); continue; }
+        const id = window.Arquivos.novoId();
+        const nome = window.Arquivos.nomeSeguro(arquivo.name);
+        const card = criarCartaoArquivo('📤 ' + nome);
+        card.info(window.Arquivos.formatarTamanho(arquivo.size) + ' — esperando alguém aceitar…');
+        const envio = { arquivo, resolvidos: new Set(), aceitantes: [], recusaram: [], enviados: [], falhas: [], andamento: '', card };
+        enviosArquivos.set(id, envio);
+        card.botoes([['Cancelar', () => { enviosArquivos.delete(id); card.remover(); }]]);
+        try {
+            await roomVoz.localParticipant.sendText(window.Arquivos.criarOferta({ id, nome: arquivo.name, tamanho: arquivo.size, tipo: arquivo.type }), { topic: window.Arquivos.TOPICOS.oferta });
+        } catch (err) { enviosArquivos.delete(id); card.remover(); mostrarNotificacao('Não consegui enviar a oferta: ' + err.message); continue; }
+        setTimeout(() => { // ninguém respondeu em 2 minutos
+            const e = enviosArquivos.get(id);
+            if (e && !e.aceitantes.length) { enviosArquivos.delete(id); card.info('Ninguém aceitou.'); card.botoes([]); fecharCartaoDepois(card, 4000); }
+        }, 120000);
+    }
+}
+
+// Resumo do envio no cartão: o que está indo, o que já foi, quem recusou e o que falhou.
+function atualizarCartaoEnvio(envio) {
+    const partes = [];
+    if (envio.andamento) partes.push(envio.andamento);
+    if (envio.enviados.length) partes.push('Enviado para: ' + envio.enviados.join(', '));
+    if (envio.recusaram.length) partes.push('Recusado por: ' + envio.recusaram.join(', '));
+    if (envio.falhas.length) partes.push('Falhou para: ' + envio.falhas.join(', '));
+    envio.card.info(partes.join(' · '));
+}
+
+// Alguém respondeu a uma oferta minha: se aceitou, mando o arquivo só pra essa pessoa.
+async function aoReceberRespostaArquivo(reader, quem) {
+    let r = null;
+    try { r = window.Arquivos.lerResposta(await reader.readAll()); } catch (e) { return; }
+    const envio = r && enviosArquivos.get(r.id);
+    if (!envio || envio.resolvidos.has(quem.identity)) return;
+    envio.resolvidos.add(quem.identity);
+    const nome = nomeDeParticipante(quem.identity);
+    if (!r.aceito) { envio.recusaram.push(nome); atualizarCartaoEnvio(envio); return; }
+    envio.aceitantes.push(nome);
+    const card = envio.card;
+    card.botoes([]);
+    card.progresso(0);
+    envio.andamento = 'Enviando para ' + nome + '…'; atualizarCartaoEnvio(envio);
+    try {
+        await roomVoz.localParticipant.sendFile(envio.arquivo, {
+            topic: window.Arquivos.TOPICOS.arquivo, mimeType: envio.arquivo.type || 'application/octet-stream',
+            destinationIdentities: [quem.identity], onProgress: (p) => { card.progresso(p); envio.andamento = 'Enviando para ' + nome + '… ' + Math.round(p * 100) + '%'; atualizarCartaoEnvio(envio); }
+        });
+        envio.enviados.push(nome); envio.andamento = '';
+        card.progresso(1); atualizarCartaoEnvio(envio);
+        fecharCartaoDepois(card, 8000);
+    } catch (err) { envio.falhas.push(nome); envio.andamento = ''; card.progresso(null); atualizarCartaoEnvio(envio); mostrarNotificacao('Falhou o envio para ' + nome + ': ' + err.message); }
+}
+
+// Alguém me ofereceu um arquivo.
+async function aoReceberOfertaArquivo(reader, quem) {
+    let oferta = null;
+    try { oferta = window.Arquivos.lerOferta(await reader.readAll()); } catch (e) { return; }
+    if (!oferta || !vozConectada() || quem.identity === roomVoz.localParticipant.identity) return;
+    const responder = (aceito) => roomVoz.localParticipant.sendText(window.Arquivos.criarResposta(oferta.id, aceito), { topic: window.Arquivos.TOPICOS.resposta, destinationIdentities: [quem.identity] }).catch(() => {});
+    if (ofertasArquivos.has(oferta.id) || ofertasArquivos.size >= window.Arquivos.MAX_OFERTAS_PENDENTES) { responder(false); return; }
+    const de = nomeDeParticipante(quem.identity);
+    const card = criarCartaoArquivo('📥 ' + oferta.nome);
+    card.info(de + ' quer te enviar este arquivo (' + window.Arquivos.formatarTamanho(oferta.tamanho) + ').');
+    if (window.Arquivos.extensaoPerigosa(oferta.nome)) card.aviso('⚠️ Este tipo de arquivo roda programas. Só aceite se você confia em ' + de + '.');
+    const item = { de: quem.identity, oferta, card, timer: null };
+    ofertasArquivos.set(oferta.id, item);
+    const encerrar = () => { clearTimeout(item.timer); ofertasArquivos.delete(oferta.id); arquivosEsperados.delete(quem.identity + '|' + oferta.nomeOriginal); };
+    const recusar = () => { responder(false); encerrar(); card.remover(); };
+    item.timer = setTimeout(() => { if (ofertasArquivos.has(oferta.id) && !item.aceita) recusar(); }, 120000);
+    card.botoes([['Aceitar', () => {
+        item.aceita = true;
+        arquivosEsperados.set(quem.identity + '|' + oferta.nomeOriginal, oferta.id);
+        card.botoes([['Cancelar', () => { recusar(); }]]);
+        card.info('Esperando o arquivo de ' + de + '…');
+        responder(true);
+    }], ['Recusar', recusar]]);
+    tocarSomApp('mensagem');
+    avisarFlutuante(de + ' quer te enviar um arquivo');
+}
+
+// Chegou o arquivo em si. Só é aceito se a pessoa tiver clicado em "Aceitar" para esse arquivo.
+async function aoReceberArquivo(reader, quem) {
+    const chave = quem.identity + '|' + reader.info.name;
+    const id = arquivosEsperados.get(chave);
+    const item = id && ofertasArquivos.get(id);
+    if (!item) { reader.readAll({ signal: AbortSignal.abort() }).catch(() => {}); return; }
+    arquivosEsperados.delete(chave);
+    clearTimeout(item.timer);
+    const { oferta, card } = item;
+    const pedacos = []; let total = 0;
+    try {
+        card.progresso(0);
+        for await (const pedaco of reader) {
+            total += pedaco.length;
+            if (total > oferta.tamanho) throw new Error('o arquivo é maior do que foi combinado');
+            pedacos.push(pedaco);
+            const p = oferta.tamanho ? total / oferta.tamanho : 1;
+            card.progresso(p); card.info('Recebendo… ' + Math.round(p * 100) + '%');
+        }
+        if (total !== oferta.tamanho) throw new Error('o arquivo chegou incompleto');
+    } catch (err) {
+        ofertasArquivos.delete(oferta.id);
+        card.progresso(null); card.info('Falhou o recebimento: ' + err.message); card.botoes([['Fechar', () => card.remover()]]);
+        return;
+    }
+    const url = URL.createObjectURL(new Blob(pedacos, { type: 'application/octet-stream' }));
+    urlsArquivos.add(url);
+    card.progresso(1);
+    card.info('Pronto: ' + window.Arquivos.formatarTamanho(total) + '. Nada foi aberto — clique em Salvar para escolher onde guardar.');
+    const fechar = () => { URL.revokeObjectURL(url); urlsArquivos.delete(url); ofertasArquivos.delete(oferta.id); card.remover(); };
+    card.botoes([['💾 Salvar', () => {
+        const a = document.createElement('a'); a.href = url; a.download = oferta.nome; document.body.appendChild(a); a.click(); a.remove();
+    }], ['Fechar', fechar]]);
+}
+
+function registrarArquivosNaSala(sala) {
+    const T = window.Arquivos.TOPICOS;
+    sala.registerTextStreamHandler(T.oferta, (r, q) => (sala === roomVoz ? aoReceberOfertaArquivo(r, q) : undefined));
+    sala.registerTextStreamHandler(T.resposta, (r, q) => (sala === roomVoz ? aoReceberRespostaArquivo(r, q) : undefined));
+    sala.registerByteStreamHandler(T.arquivo, (r, q) => (sala === roomVoz ? aoReceberArquivo(r, q) : undefined));
+}
+function limparArquivosDaChamada() {
+    ofertasArquivos.forEach((o) => clearTimeout(o.timer));
+    enviosArquivos.clear(); ofertasArquivos.clear(); arquivosEsperados.clear();
+    urlsArquivos.forEach((u) => URL.revokeObjectURL(u)); urlsArquivos.clear();
+    document.getElementById('painel-arquivos').replaceChildren();
+}
+// Quem ofereceu saiu da chamada: tira o cartão que não vai mais funcionar.
+function aoSairParticipanteArquivos(identidade) {
+    ofertasArquivos.forEach((o, id) => { if (o.de === identidade && !o.aceita) { clearTimeout(o.timer); ofertasArquivos.delete(id); o.card.remover(); } });
+}
+
+document.getElementById('btn-arquivo-rodape').addEventListener('click', () => document.getElementById('entrada-arquivo').click());
+document.getElementById('entrada-arquivo').addEventListener('change', (e) => { const l = Array.from(e.target.files || []); e.target.value = ''; if (l.length) oferecerArquivos(l); });
+// Arrastar arquivo para a janela: sempre impede o Electron de abrir o arquivo no lugar do app.
+const temArquivoNoArrasto = (e) => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
+document.addEventListener('dragover', (e) => { if (!temArquivoNoArrasto(e)) return; e.preventDefault(); if (vozConectada()) document.body.classList.add('arrastando-arquivo'); });
+document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) document.body.classList.remove('arrastando-arquivo'); });
+document.addEventListener('drop', (e) => {
+    if (!temArquivoNoArrasto(e)) return;
+    e.preventDefault(); document.body.classList.remove('arrastando-arquivo');
+    if (vozConectada()) oferecerArquivos(e.dataTransfer.files);
+    else mostrarNotificacao('Entre num canal de voz para enviar arquivos.');
+});
+
+// ---------- O que há de novo ----------
+// Aparece uma vez depois de cada atualização. Os textos ficam em novidades.js (só texto, sempre via textContent).
+const CHAVE_NOVIDADE_VISTA = 'estrivisor_novidade_vista';
+let versaoDoApp = '';
+function renderizarNovidades(lista) {
+    const corpo = document.getElementById('novidades-corpo');
+    corpo.replaceChildren();
+    const el = (tag, classe, texto) => { const e = document.createElement(tag); if (classe) e.className = classe; if (texto != null) e.textContent = texto; return e; };
+    lista.forEach((n) => {
+        corpo.appendChild(el('div', 'nov-versao', 'VERSÃO ' + n.versao));
+        corpo.appendChild(el('div', 'nov-resumo', n.titulo));
+        n.itens.forEach((it) => {
+            const linha = el('div', 'nov-item');
+            const txt = el('div');
+            txt.append(el('b', '', it.t), el('div', 'nov-desc', it.d), el('div', 'nov-como', '📍 ' + it.c));
+            linha.append(el('div', 'nov-icone', it.i), txt);
+            corpo.appendChild(linha);
+        });
+    });
+}
+function abrirNovidades(lista) {
+    if (!lista || !lista.length) return;
+    renderizarNovidades(lista);
+    document.getElementById('tela-novidades').style.display = 'flex';
+}
+function fecharNovidades() {
+    document.getElementById('tela-novidades').style.display = 'none';
+    if (versaoDoApp) { try { localStorage.setItem(CHAVE_NOVIDADE_VISTA, versaoDoApp); } catch (e) {} }
+}
+document.getElementById('novidades-fechar').addEventListener('click', fecharNovidades);
+document.getElementById('tela-novidades').addEventListener('keydown', (e) => { if (e.key === 'Escape') fecharNovidades(); });
+document.getElementById('cfg-ver-novidades').addEventListener('click', () => {
+    window.electronAPI.versaoApp().then((v) => {
+        const todas = window.Novidades.NOVIDADES.filter((n) => window.Novidades.compararVersoes(n.versao, v) <= 0).slice(0, 3);
+        abrirNovidades(todas.length ? todas : window.Novidades.NOVIDADES.slice(0, 1));
+    }).catch(() => abrirNovidades(window.Novidades.NOVIDADES.slice(0, 1)));
+});
+// Depois de entrar (sem nenhuma tela de login/termos aberta), mostra o que mudou desde a última vez.
+(async function mostrarNovidadesAposAtualizar() {
+    try { versaoDoApp = await window.electronAPI.versaoApp(); } catch (e) { return; }
+    if (!versaoDoApp) return;
+    let vista = null;
+    try { vista = localStorage.getItem(CHAVE_NOVIDADE_VISTA); } catch (e) {}
+    const lista = window.Novidades.novidadesParaMostrar(vista, versaoDoApp);
+    if (!lista.length) { if (vista !== versaoDoApp) { try { localStorage.setItem(CHAVE_NOVIDADE_VISTA, versaoDoApp); } catch (e) {} } return; }
+    let tentativas = 0;
+    const espera = setInterval(() => {
+        const telaAberta = Array.from(document.querySelectorAll('.tela-login')).some((t) => t.id !== 'tela-novidades' && getComputedStyle(t).display !== 'none');
+        if (++tentativas > 120) return clearInterval(espera); // desiste depois de ~4 min
+        if (telaAberta || (!servidorAtual.id && tentativas < 10)) return; // quem não tem servidor espera ~20 s e vê assim mesmo
+        clearInterval(espera);
+        abrirNovidades(lista);
+    }, 2000);
+})();
+
 // ---------- Preferências de áudio (guardadas só neste PC) ----------
 const CHAVE_PREFS_AUDIO = 'estrivisor_audio';
 const BITRATE_VOZ = { normal: 32000, alta: 64000, muito_alta: 96000 };
-const PREFS_AUDIO_PADRAO = { microfoneId: '', saidaId: '', eco: true, ruido: true, ganho: true, qualidade: 'alta', dtx: true, red: true };
+const PREFS_AUDIO_PADRAO = { microfoneId: '', saidaId: '', eco: true, ruido: true, ganho: true, qualidade: 'alta', dtx: true, red: true, ruidoAvancado: true, porta: false, limiarPorta: 12, efeito: 'nenhum' };
 let prefsAudio = { ...PREFS_AUDIO_PADRAO };
 
 function carregarPreferenciasAudio() {
@@ -4088,7 +5172,10 @@ function carregarPreferenciasAudio() {
         saidaId: typeof p.saidaId === 'string' ? p.saidaId.slice(0, 300) : '',
         eco: bool(p.eco, true), ruido: bool(p.ruido, true), ganho: bool(p.ganho, true),
         qualidade: BITRATE_VOZ[p.qualidade] ? p.qualidade : 'alta',
-        dtx: bool(p.dtx, true), red: bool(p.red, true)
+        dtx: bool(p.dtx, true), red: bool(p.red, true),
+        ruidoAvancado: bool(p.ruidoAvancado, true), porta: bool(p.porta, false),
+        limiarPorta: window.Ruido.limiarValido(p.limiarPorta, 12),
+        efeito: window.Ruido.efeitoValido(p.efeito)
     };
 }
 function salvarPreferenciasAudio() {
@@ -4096,13 +5183,46 @@ function salvarPreferenciasAudio() {
 }
 // Como o microfone é captado (valem pra chamada e pro teste).
 function opcoesCapturaMicrofone() {
-    const o = { echoCancellation: prefsAudio.eco, noiseSuppression: prefsAudio.ruido, autoGainControl: prefsAudio.ganho, channelCount: 1 };
+    // Com o filtro avançado ligado, o do Chromium fica desligado (filtrar duas vezes abafa a voz).
+    const o = { echoCancellation: prefsAudio.eco, noiseSuppression: prefsAudio.ruido && !ruidoAvancadoAtivo(), autoGainControl: prefsAudio.ganho, channelCount: 1 };
     if (prefsAudio.microfoneId) o.deviceId = prefsAudio.microfoneId;
     return o;
 }
 // Como a voz é enviada (qualidade e proteções).
 function opcoesPublicacaoAudio() {
     return { dtx: prefsAudio.dtx, red: prefsAudio.red, audioPreset: { maxBitrate: BITRATE_VOZ[prefsAudio.qualidade] || BITRATE_VOZ.alta } };
+}
+
+// ---------- Supressão de ruído avançada (RNNoise) e porta de ruído ----------
+// O filtro roda aqui, no PC de quem fala (ver ruido.js). Se não conseguir iniciar, o app avisa e volta
+// para o filtro comum do Chromium, sem derrubar a chamada.
+let falhaFiltroRuido = false;
+let processadorRuido = null;
+function ruidoAvancadoAtivo() { return prefsAudio.ruidoAvancado && !falhaFiltroRuido; }
+function filtroRuidoNecessario() { return !falhaFiltroRuido && (prefsAudio.ruidoAvancado || prefsAudio.porta || prefsAudio.efeito !== 'nenhum'); }
+function opcoesFiltroRuido() { return { rnnoise: prefsAudio.ruidoAvancado, porta: prefsAudio.porta, limiar: prefsAudio.limiarPorta, efeito: prefsAudio.efeito }; }
+
+// Liga, atualiza ou tira o filtro da trilha do microfone que está na chamada.
+async function aplicarFiltroRuidoNaChamada() {
+    if (!vozConectada()) return;
+    const pub = roomVoz.localParticipant.getTrackPublication(LivekitClient.Track.Source.Microphone);
+    const trilha = pub && pub.audioTrack;
+    if (!trilha) return;
+    try {
+        if (filtroRuidoNecessario()) {
+            if (processadorRuido && trilha.getProcessor() === processadorRuido) processadorRuido.ajustar(opcoesFiltroRuido());
+            else {
+                processadorRuido = window.Ruido.criarProcessadorLiveKit(opcoesFiltroRuido); await trilha.setProcessor(processadorRuido);
+                if (prefsAudio.efeito !== 'nenhum') mostrarNotificacao('Efeito de voz ligado: ' + window.Ruido.EFEITOS[prefsAudio.efeito].nome, 'info');
+            }
+        } else if (trilha.getProcessor()) { await trilha.stopProcessor(); processadorRuido = null; }
+    } catch (err) {
+        console.error('Filtro de ruído avançado:', err);
+        falhaFiltroRuido = true; processadorRuido = null;
+        mostrarNotificacao('Não consegui ligar a supressão de ruído avançada (' + err.message + '). Usando a comum.');
+        preencherControlesAudio();
+        reaplicarAudioNaChamada(false);
+    }
 }
 
 // Aplica uma mudança de áudio durante a chamada (se estiver numa).
@@ -4114,6 +5234,7 @@ async function reaplicarAudioNaChamada(saidaMudou) {
             const lp = roomVoz.localParticipant;
             await lp.setMicrophoneEnabled(false);
             await lp.setMicrophoneEnabled(true, opcoesCapturaMicrofone(), opcoesPublicacaoAudio());
+            await aplicarFiltroRuidoNaChamada();
         }
     } catch (err) { mostrarNotificacao('Não consegui aplicar a mudança de áudio: ' + err.message); }
     atualizarBotaoMicrofone();
@@ -4225,6 +5346,15 @@ function preencherControlesAudio() {
     document.getElementById('cfg-qualidade-voz').value = prefsAudio.qualidade;
     document.getElementById('cfg-dtx').checked = prefsAudio.dtx;
     document.getElementById('cfg-red').checked = prefsAudio.red;
+    document.getElementById('cfg-ruido-avancado').checked = ruidoAvancadoAtivo();
+    document.getElementById('cfg-ruido-avancado').disabled = falhaFiltroRuido;
+    document.getElementById('cfg-porta').checked = prefsAudio.porta;
+    document.getElementById('cfg-limiar-porta').value = prefsAudio.limiarPorta;
+    document.getElementById('cfg-limiar-valor').textContent = prefsAudio.limiarPorta;
+    document.getElementById('cfg-linha-limiar').style.display = prefsAudio.porta ? '' : 'none';
+    document.getElementById('cfg-limiar-marca').style.display = prefsAudio.porta ? '' : 'none';
+    document.getElementById('cfg-limiar-marca').style.left = prefsAudio.limiarPorta + '%';
+    document.getElementById('cfg-efeito-voz').value = prefsAudio.efeito;
 }
 
 function abrirConfig(secao) {
@@ -4296,6 +5426,35 @@ document.getElementById('cfg-select-saida').addEventListener('change', (e) => {
         if (microfoneTesteAtivo) { pararTesteMicrofone(); await alternarTesteMicrofone(); }
         reaplicarAudioNaChamada(false);
     });
+});
+// Filtro avançado e porta de ruído: valem na hora, sem reiniciar o teste nem a chamada
+// (só ligar/desligar o filtro avançado muda como o microfone é captado, então reinicia).
+function atualizarFiltroRuidoAoVivo() {
+    salvarPreferenciasAudio();
+    preencherControlesAudio();
+    if (cadeiaTesteMic) cadeiaTesteMic.ajustar(opcoesFiltroRuido());
+    aplicarFiltroRuidoNaChamada();
+}
+document.getElementById('cfg-ruido-avancado').addEventListener('change', async (e) => {
+    prefsAudio.ruidoAvancado = e.target.checked; salvarPreferenciasAudio();
+    preencherControlesAudio();
+    if (microfoneTesteAtivo) { pararTesteMicrofone(); await alternarTesteMicrofone(); }
+    reaplicarAudioNaChamada(false);
+});
+document.getElementById('cfg-porta').addEventListener('change', async (e) => {
+    prefsAudio.porta = e.target.checked;
+    atualizarFiltroRuidoAoVivo();
+    if (microfoneTesteAtivo && !cadeiaTesteMic && filtroRuidoNecessario()) { pararTesteMicrofone(); await alternarTesteMicrofone(); }
+});
+document.getElementById('cfg-efeito-voz').addEventListener('change', async (e) => {
+    prefsAudio.efeito = window.Ruido.efeitoValido(e.target.value);
+    atualizarFiltroRuidoAoVivo();
+    // Se o teste ou a chamada estavam sem o filtro, ele precisa ser montado agora.
+    if (microfoneTesteAtivo && !cadeiaTesteMic && filtroRuidoNecessario()) { pararTesteMicrofone(); await alternarTesteMicrofone(); }
+});
+document.getElementById('cfg-limiar-porta').addEventListener('input', (e) => {
+    prefsAudio.limiarPorta = window.Ruido.limiarValido(e.target.value, 12);
+    atualizarFiltroRuidoAoVivo();
 });
 document.getElementById('cfg-qualidade-voz').addEventListener('change', (e) => {
     prefsAudio.qualidade = BITRATE_VOZ[e.target.value] ? e.target.value : 'alta'; salvarPreferenciasAudio();
@@ -5173,7 +6332,7 @@ function itemAmizade(usuario) {
     return { id: 'add', rotulo: '➕ Adicionar amigo', acao: () => pedirAmizadePorUsuario(usuario) };
 }
 function abrirMenuPessoa(x, y, usuario, nome) {
-    abrirMenu(x, y, () => ({ cabecalho: nome, itens: [itemAmizade(usuario), itemDenunciar(usuario, nome)] }));
+    abrirMenu(x, y, () => ({ cabecalho: nome, itens: [{ id: 'perfil', rotulo: '👤 Ver perfil', acao: () => abrirPerfil(usuario) }, itemAmizade(usuario), itemDenunciar(usuario, nome)] }));
 }
 
 // ============================================================

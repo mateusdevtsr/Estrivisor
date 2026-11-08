@@ -17,6 +17,13 @@
     porsol:    { nome: 'Pôr do sol',  cores: { bg: '#120a10', painel: '#1c1018', painel2: '#22141d', borda: '#34202c', texto: '#f5e8ee', textoFraco: '#b08a9c', sinal: '#ff5c8a', acento: '#ffb347', botao: '#2f1b28', campo: '#160c13' } },
     roxo:      { nome: 'Roxo',        cores: { bg: '#0d0a14', painel: '#151020', painel2: '#1a1428', borda: '#2a2040', texto: '#ece6ff', textoFraco: '#9a8bb8', sinal: '#a06bff', acento: '#ff9ad5', botao: '#231a38', campo: '#0f0b18' } },
     grafite:   { nome: 'Grafite',     cores: { bg: '#101010', painel: '#1a1a1a', painel2: '#202020', borda: '#2c2c2c', texto: '#eeeeee', textoFraco: '#999999', sinal: '#d0d0d0', acento: '#ffb020', botao: '#2a2a2a', campo: '#131313' } },
+    // Os temas abaixo partem de 4 cores e o resto é derivado (as bordas, botões etc. acompanham).
+    oceano:    { nome: 'Oceano',      cores: derivar({ bg: '#06101a', painel: '#0c1c2b', texto: '#e4f3fb', sinal: '#17b8c4' }) },
+    neon:      { nome: 'Neon',        cores: derivar({ bg: '#07050d', painel: '#110b1d', texto: '#f3eaff', sinal: '#ff2fd0' }) },
+    vampiro:   { nome: 'Vampiro',     cores: derivar({ bg: '#14080b', painel: '#220e13', texto: '#f6e6e8', sinal: '#f0495d' }) },
+    rosa:      { nome: 'Rosa',        cores: derivar({ bg: '#150a12', painel: '#241320', texto: '#fbe9f4', sinal: '#ff7ab8' }) },
+    cafe:      { nome: 'Café',        cores: derivar({ bg: '#120d09', painel: '#1e1610', texto: '#f1e7dc', sinal: '#d08a4a' }) },
+    contraste: { nome: 'Alto contraste', cores: { ...derivar({ bg: '#000000', painel: '#0a0a0a', texto: '#ffffff', sinal: '#ffe600' }), textoFraco: '#d0d0d0', borda: '#5a5a5a' } },
   };
 
   // Só fontes que já vêm no Windows (o app não baixa fontes de fora).

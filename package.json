@@ -1,14 +1,14 @@
 {
   "name": "estrivisor",
   "productName": "Estrivisor",
-  "version": "3.10.0",
+  "version": "3.14.0",
   "description": "Estrivisor — voz, chat e compartilhamento de tela entre amigos",
   "author": "mateusdevtsr",
   "license": "UNLICENSED",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node --test testes/flutuante.test.js testes/estilo.test.js testes/areas.test.js testes/sons.test.js",
+    "test": "node --test testes/flutuante.test.js testes/estilo.test.js testes/areas.test.js testes/sons.test.js testes/ruido.test.js testes/arquivos.test.js testes/novidades.test.js testes/espectadores.test.js testes/desenho.test.js testes/social.test.js testes/perfil.test.js testes/somboard.test.js testes/cinema.test.js testes/caminhos.test.js",
     "dist": "electron-builder --publish always"
   },
   "dependencies": {
@@ -34,6 +34,16 @@
       "estilo.js",
       "areas.js",
       "sons.js",
+      "ruido.js",
+      "arquivos.js",
+      "novidades.js",
+      "espectadores.js",
+      "desenho.js",
+      "social.js",
+      "perfil.js",
+      "somboard.js",
+      "cinema.js",
+      "ruido/ruido-pacote.js",
       "flutuante.html",
       "flutuante.css",
       "flutuante-tela.js",

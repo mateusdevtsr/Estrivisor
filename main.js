@@ -771,7 +771,7 @@ responder('forcar-mutar-microfone', (evento, { sala, identidadeAlvo } = {}) => p
 // ---------- Servidores, canais, convites e presença ----------
 // A tela pede por este canal único; só passam caminhos que começam com /servidores, /convites, /amigos, /dm, /admin, /termos, /denuncias ou /qualidade.
 const METODOS_API = ['GET', 'POST', 'PATCH', 'DELETE'];
-const CAMINHO_API = /^\/(servidores|convites|amigos|dm|admin|termos|denuncias|qualidade|conta)(\/[A-Za-z0-9._%\-]+)*(\?[A-Za-z0-9=&._\-]*)?$/;
+const CAMINHO_API = /^\/(servidores|convites|amigos|dm|admin|termos|denuncias|qualidade|conta|previa|perfil)(\/[A-Za-z0-9._%\-]+)*(\?[A-Za-z0-9=&._\-]*)?$/;
 
 responder('api-servidor', async (evento, { metodo, caminho, corpo } = {}) => {
   if (!METODOS_API.includes(metodo) || typeof caminho !== 'string' || !CAMINHO_API.test(caminho)) {

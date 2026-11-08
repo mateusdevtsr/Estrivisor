@@ -73,3 +73,20 @@ test('estilo.js está no instalador e carregado antes do app', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
   assert.ok(html.indexOf('estilo.js') > 0 && html.indexOf('estilo.js') < html.indexOf('estrivisor-app.js'));
 });
+
+// Todo tema pronto precisa ser legível (contraste do texto, do texto fraco e da cor de destaque sobre o painel).
+test('temas prontos têm contraste legível', () => {
+  const lum = (h) => {
+    const c = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)));
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  };
+  const contraste = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+  assert.ok(Object.keys(E.TEMAS).length >= 12);
+  for (const [id, t] of Object.entries(E.TEMAS)) {
+    const c = t.cores;
+    for (const k of E.CHAVES_COR) assert.match(c[k], /^#[0-9a-f]{6}$/, id + ' ' + k);
+    assert.ok(contraste(c.texto, c.painel) >= 7, id + ' texto');
+    assert.ok(contraste(c.textoFraco, c.painel) >= 4.5, id + ' texto fraco');
+    assert.ok(contraste(c.sinal, c.painel) >= 4.5, id + ' destaque');
+  }
+});
