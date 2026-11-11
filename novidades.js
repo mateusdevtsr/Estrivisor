@@ -11,6 +11,13 @@
   // (formato, limite, atalho, onde fica). Nada sobre servidor, código ou como foi feito por dentro.
   const NOVIDADES = [
     {
+      versao: '3.15.2', titulo: 'Ajustes e o app do celular no site',
+      itens: [
+        { i: '📱', t: 'Android direto no site', d: 'Agora dá pra baixar o Estrivisor para Android no site, do lado do botão do Windows. É só mandar o link pros amigos.', c: 'estrivisor.com.br > "Baixar para Android".' },
+        { i: '📰', t: 'Novidades mais fáceis de ler', d: 'Esta tela ficou mais curta e direta. E as próximas novidades também vão aparecer no canal de atualizações do Discord.', c: 'Configurações > Sobre > O que há de novo.' }
+      ]
+    },
+    {
       versao: '3.15.1', titulo: 'Estrivisor no celular',
       itens: [
         { i: '📱', t: 'Agora tem app para Android', d: 'Entre com o mesmo Discord e está tudo lá: servidores, canais, mensagens, amigos e chamadas de voz com quem está no PC. Dá pra usar os efeitos de voz também. A chamada continua mesmo com a tela apagada.', c: 'Baixe em estrivisor.com.br, no botão "Baixar para Android", e instale no celular.' },
