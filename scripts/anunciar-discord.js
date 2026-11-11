@@ -13,7 +13,7 @@
 const path = require('path');
 const { NOVIDADES, compararVersoes } = require('../novidades.js');
 
-const REPO = 'mateusdevtsr/Estrivisor';
+const SITE = 'https://estrivisor.com.br';
 const COR = 0xe5484d;
 const cortar = (t, n) => { const s = String(t || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
 
@@ -23,13 +23,12 @@ function mensagemDaVersao(n, { maisNova = false } = {}) {
   let usados = 0, sobra = 0;
   for (const it of n.itens) {
     const bloco = `**${it.i} ${it.t}**\n${it.d}\n📍 ${it.c}`;
-    if (usados + bloco.length + 2 > 3600) { sobra++; continue; }
+    if (usados + bloco.length + 2 > 3780) { sobra++; continue; }
     linhas.push(bloco); usados += bloco.length + 2;
   }
   if (sobra) linhas.push(`_…e mais ${sobra} novidade${sobra > 1 ? 's' : ''} dentro do app._`);
-  const links = [`[⬇️ Baixar para PC](https://github.com/${REPO}/releases/tag/v${n.versao})`];
-  if (maisNova) links.push(`[📱 Baixar para Android](https://github.com/${REPO}/releases/latest/download/Estrivisor-Android.apk)`);
-  linhas.push(links.join('  ·  ') + '\nQuem já tem o Estrivisor no PC recebe a atualização sozinho.');
+  // Sempre o site do Estrivisor (lá tem o PC e o Android, com os termos de uso antes de baixar).
+  if (maisNova) linhas.push(`[⬇️ Baixar em estrivisor.com.br](${SITE})\nQuem já tem o Estrivisor no PC recebe a atualização sozinho.`);
   return {
     username: 'Estrivisor',
     allowed_mentions: { parse: [] }, // nunca marca @everyone / ninguém, mesmo se o texto tiver "@"

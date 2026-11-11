@@ -7,82 +7,82 @@
 // ============================================================
 (function (raiz) {
   // i = ícone, t = título curto, d = o que é, c = como usar / onde fica
+  // Escrito para quem USA o app: curto, no tom de conversa, com detalhe técnico só quando ajuda a usar
+  // (formato, limite, atalho, onde fica). Nada sobre servidor, código ou como foi feito por dentro.
   const NOVIDADES = [
     {
-      versao: '3.15.1', titulo: 'Ajuste da pedaleira de efeitos',
+      versao: '3.15.1', titulo: 'Estrivisor no celular',
       itens: [
-        { i: '🧹', t: 'Mais simples', d: 'Saiu o cartão do VB-CABLE (cabo de áudio virtual) da tela de criar efeito. A pedaleira de efeitos continua igual.', c: 'Configurações > Voz e áudio > Efeito de voz > "Criar efeito".' }
+        { i: '📱', t: 'Agora tem app para Android', d: 'Entre com o mesmo Discord e está tudo lá: servidores, canais, mensagens, amigos e chamadas de voz com quem está no PC. Dá pra usar os efeitos de voz também. A chamada continua mesmo com a tela apagada.', c: 'Baixe em estrivisor.com.br, no botão "Baixar para Android", e instale no celular.' },
+        { i: '🔔', t: 'Avisos no celular', d: 'Com o app fechado, o celular avisa quando chega mensagem direta ou quando alguém te marca com @ (ex.: "@Mateus bora?"). Se quiser, dá pra receber tudo dos canais também. Tocar no aviso abre a conversa.', c: 'No app do celular: Configurações > Sons do app > Notificações no celular.' }
       ]
     },
     {
-      versao: '3.15.0', titulo: 'Imagens no chat e configurações mais fáceis',
+      versao: '3.15.0', titulo: 'Imagens no chat, pedaleira de efeitos e configurações novas',
       itens: [
-        { i: '⚙️', t: 'Configurações reorganizadas', d: 'Nada mudou no que você já tinha escolhido, só o lugar. Nova seção Privacidade (perfil privado, registrar jogo, prévia de links e seus dados) e Janela flutuante com seção própria. Em Voz e áudio ficaram primeiro o básico; os filtros de ruído, eco e qualidade estão em "Avançado". E tem uma busca: digite o que procura (ex.: "ruído") e clique no resultado para ir direto na opção.', c: 'Configurações (Ctrl + ,) > campo "Procurar configuração" no topo da lista.' },
-        { i: '🖼️', t: 'Enviar imagens, GIFs e prints', d: 'Mande PNG, JPG, GIF (animado) e WEBP nos canais e nas mensagens diretas, com legenda se quiser. As imagens ficam guardadas no servidor, como os sons: quem entrar depois ainda vê. Prints grandes são reduzidos sozinhos antes de enviar (máximo de 6 MB). Nenhuma imagem é apagada por falta de espaço: quando o servidor enche, as mais antigas ficam numa versão reduzida e continuam abrindo.', c: 'Botão 🖼️ ao lado da caixa de texto, ou Ctrl+V com um print copiado (Win+Shift+S), ou arraste a imagem pra cima do chat.' },
-        { i: '🔍', t: 'Ampliar, copiar e salvar', d: 'Clique numa imagem do chat pra ver grande. Lá dá pra copiar a imagem (pra colar em outro lugar) ou salvar no computador.', c: 'Clique na imagem da mensagem.' },
-        { i: '🎛️', t: 'Pedaleira de efeitos de voz', d: 'Crie o seu próprio efeito numa pedaleira: tom, equalizador, filtros (rádio, telefone, abafada), robô, distorção, vibrato, volume pulsando, eco, ambiente e volume final. Cada pedal liga e desliga, os botões giram com o mouse, e um monitor mostra o som na hora. Dá pra começar de um modelo (robô, demônio, estádio...) e segurar "sem efeito" para comparar com a sua voz normal.', c: 'Configurações > Voz e áudio > Efeito de voz > "Criar efeito" (ou botão direito no seu nome na chamada > Efeito de voz).' },
-        { i: '🎤', t: 'Mudar o áudio sem derrubar nada', d: 'Trocar supressão de ruído, eco, volume automático ou o microfone no meio da chamada não muda mais o microfone para mudo e não faz os outros pararem de te ouvir. Se alguém parar de ouvir outra pessoa, tem um botão para refazer o áudio sem sair da chamada.', c: 'Setinha ao lado do fone no rodapé > "Não ouço alguém: refazer o áudio".' },
-        { i: '🎭', t: 'Sete efeitos de voz novos', d: 'Rádio antigo, Megafone, Caverna, Alienígena, Demônio, Debaixo d\'água e Bêbado, além de Robô, Voz grossa e Voz fina que já existiam. (O Eco saiu.) Todo mundo na chamada ouve o efeito.', c: 'Configurações > Voz > Efeito de voz. Teste com fone em "Testar microfone".' },
-        { i: '🛡️', t: 'Mais segurança', d: 'Quem é expulso de um servidor não volta mais com convite (o dono pode liberar depois, em Ajustes do servidor > Expulsos). Quando o apelido de alguém é diferente do nome da conta, o nome da conta aparece ao lado, entre parênteses, pra ninguém se passar por outra pessoa.', c: 'Ajustes do servidor > Membros > Expulsar, e a lista "Expulsos" logo abaixo.' },
-        { i: '🧰', t: 'Painel de administração maior', d: 'Para quem administra o Estrivisor: liberar pessoa pelo ID do Discord, ficha completa de cada pessoa (com notas internas), advertência, encerrar sessões, aviso geral para todos, chamadas ao vivo, gerenciar um servidor por dentro, espaço usado por imagens e sons, modo manutenção, limites e recursos que ligam e desligam na hora, moderadores com poderes limitados e busca nas listas. Para todo mundo: avisos da administração aparecem numa faixa no topo.', c: 'Configurações > Administração (só aparece para administradores e moderadores).' },
-        { i: '🔱', t: 'Cargos à vista', d: 'Embaixo do nome, junto das medalhas, aparecem os cargos: 🔱 Fundador (quem criou e administra o Estrivisor), 🛡️ Moderador e 👑 Dono do servidor. Também aparecem na lista da chamada. Quem vira moderador recebe um aviso, e a opção Administração aparece na hora.', c: 'Lista de membros, à direita.' },
-        { i: '🖱️', t: 'Menu completo no nome das pessoas', d: 'Clicar (ou clicar com o botão direito) no nome de alguém, online ou offline, abre um menu: ver perfil, mandar mensagem ou adicionar amigo, entrar na mesma chamada, copiar o nome ou o ID do Discord e denunciar. O dono do servidor também pode dar o servidor ou expulsar dali, e a administração vê a ficha, advertir e tornar moderador.', c: 'Lista de membros, à direita.' },
-        { i: '🎙️', t: 'Entrar já com o microfone ligado', d: 'Ao entrar numa chamada, o microfone liga sozinho assim que conecta (se você estiver ensurdecido, continua mudo). Prefere entrar mudo? Dá pra desligar a opção.', c: 'Configurações > Voz > Ao entrar numa chamada.' },
-        { i: '🎧', t: 'Menu de voz e transmissão na chamada', d: 'Botão direito no nome de quem está na chamada: silenciar só pra você, volume da voz, volume e mudo do som da transmissão, ver a transmissão em tela cheia ou numa janelinha por cima de tudo, e voltar os volumes ao normal. O dono do servidor também pode mutar o microfone pra todos, parar a transmissão e tirar da chamada. No seu próprio nome: microfone, ensurdecer, testar o microfone, transmitir ou parar, sair da chamada e trocar o efeito de voz direto numa lista ao lado, sem abrir as configurações.', c: 'Botão direito no nome, na lista da chamada.' },
-        { i: '📋', t: 'Copiar e colar textos', d: 'O botão direito agora tem Recortar, Copiar e Colar nos campos de texto, Copiar no texto selecionado e Copiar endereço nos links. Cada mensagem também tem um botão pra copiar o texto todo.', c: 'Botão direito em qualquer texto, ou o 📋 que aparece ao passar o mouse na mensagem.' },
+        { i: '🖼️', t: 'Imagens, GIFs e prints no chat', d: 'Mande foto, print ou GIF nos canais e nas mensagens diretas, com legenda se quiser. Quem entrar depois também vê. Aceita PNG, JPG, GIF e WEBP de até 6 MB, e prints grandes ficam menores sozinhos.', c: 'Botão 🖼️ ao lado da caixa de texto, Ctrl+V com um print copiado (Win+Shift+S) ou arraste a imagem pro chat.' },
+        { i: '🔍', t: 'Ver a imagem grande', d: 'Clique numa imagem pra ampliar. Lá dá pra copiar ou salvar no computador.', c: 'Clique na imagem da mensagem.' },
+        { i: '🎛️', t: 'Crie o seu efeito de voz', d: 'Uma pedaleira com tom, graves e agudos, robô, distorção, vibrato, eco, ambiente e mais. Gire os botões e ouça na hora. Dá pra começar de um modelo pronto e segurar "sem efeito" pra comparar com a sua voz.', c: 'Configurações > Voz e áudio > Efeito de voz > "Criar efeito".' },
+        { i: '🎭', t: 'Efeitos de voz novos', d: 'Rádio antigo, Megafone, Caverna, Alienígena, Demônio, Debaixo d\'água e Bêbado. E dá pra trocar o efeito direto na chamada: botão direito no seu nome.', c: 'Botão direito no seu nome na chamada > Efeito de voz.' },
+        { i: '⚙️', t: 'Configurações mais fáceis de achar', d: 'As opções estão mais organizadas e tem uma busca: digite "ruído", por exemplo, e vá direto na opção. Os filtros de áudio mais técnicos ficaram em "Avançado".', c: 'Configurações (Ctrl + ,) > "Procurar configuração", no topo.' },
+        { i: '🎙️', t: 'Entra na chamada já falando', d: 'O microfone liga sozinho quando você entra numa chamada. Prefere entrar mudo? É só desligar.', c: 'Configurações > Voz e áudio > Ao entrar numa chamada.' },
+        { i: '🎧', t: 'Mexer no áudio sem cair', d: 'Trocar o microfone ou os filtros no meio da chamada não te deixa mais mudo. E se você parar de ouvir alguém, dá pra consertar sem sair da sala.', c: 'Setinha ao lado do fone, no rodapé > "Não ouço alguém: refazer o áudio".' },
+        { i: '🖱️', t: 'Menu no nome das pessoas', d: 'Clique no nome de alguém (online ou não) pra ver o perfil, mandar mensagem, adicionar amigo, entrar na mesma chamada ou denunciar. Na chamada, o botão direito no nome ajusta o volume daquela pessoa e da transmissão dela.', c: 'Lista de membros, à direita, ou a lista da chamada.' },
+        { i: '🔱', t: 'Cargos à vista', d: 'Embaixo do nome aparecem os cargos: 🔱 Fundador, 🛡️ Moderador e 👑 Dono do servidor.', c: 'Lista de membros, à direita.' },
+        { i: '🛡️', t: 'Mais segurança', d: 'Quem foi expulso de um servidor não volta com convite. E se o apelido de alguém for diferente do nome da conta, o nome da conta aparece entre parênteses, pra ninguém se passar por outra pessoa.', c: 'Ajustes do servidor > Membros.' },
+        { i: '📋', t: 'Copiar e colar', d: 'O botão direito agora tem Copiar e Colar nos textos e nos links, e cada mensagem tem um botão pra copiar o texto inteiro.', c: 'Botão direito no texto, ou o 📋 que aparece ao passar o mouse na mensagem.' }
       ]
     },
     {
-      versao: '3.14.0', titulo: 'Soundboard do servidor e sala de cinema',
+      versao: '3.14.0', titulo: 'Soundboard e sala de cinema',
       itens: [
-        { i: '🔊', t: 'Soundboard compartilhado', d: 'Cada servidor tem uma lista de sons que todo mundo pode tocar na chamada. Qualquer membro pode enviar sons novos (até 6 segundos e 140 KB, em mp3, ogg, webm ou m4a). Quem enviou apaga o seu, e o dono do servidor apaga qualquer um.', c: 'Na chamada, clique no 🔈 da barra de baixo. Lá estão os sons do servidor e o botão "Enviar um som".' },
-        { i: '🏅', t: 'Medalhas na lista de membros', d: 'As conquistas de cada pessoa aparecem como ícones embaixo do nome, na coluna da direita (passe o mouse para ver o nome de cada uma). Quem deixou o perfil privado não mostra medalhas.', c: 'Coluna da direita, embaixo do nome.' },
-        { i: '🎬', t: 'Sala de cinema sincronizada', d: 'Assistam o mesmo vídeo juntos. Quem inicia escolhe o arquivo; os outros escolhem o mesmo arquivo no PC deles e o app mantém todo mundo no mesmo ponto. Quem iniciou controla o play, a pausa e o avanço. O filme não passa pela internet e o som toca em cada PC, sem eco na chamada.', c: 'Na chamada, clique no 🎬 da barra de baixo e escolha o vídeo. Quem recebe o convite clica em "Escolher o arquivo". Todos precisam ter exatamente o mesmo arquivo (mp4 com H.264 ou webm funcionam melhor).' }
+        { i: '🔊', t: 'Soundboard do servidor', d: 'Cada servidor tem os seus sons pra tocar na chamada, e qualquer um pode mandar um novo (até 6 segundos, em mp3, ogg, webm ou m4a).', c: 'Na chamada, botão 🔈 na barra de baixo.' },
+        { i: '🏅', t: 'Medalhas na lista', d: 'As conquistas de cada pessoa aparecem embaixo do nome. Passe o mouse pra ver qual é qual.', c: 'Lista de membros, à direita.' },
+        { i: '🎬', t: 'Sala de cinema', d: 'Assistam o mesmo vídeo juntos e no mesmo ponto. Cada um abre o mesmo arquivo no próprio PC, e quem começou controla o play e a pausa. Funciona melhor com mp4 ou webm.', c: 'Na chamada, botão 🎬 na barra de baixo.' }
       ]
     },
     {
       versao: '3.13.0', titulo: 'Perfil, conquistas e resumo',
       itens: [
-        { i: '👤', t: 'Cartão de perfil', d: 'Veja o perfil de qualquer pessoa do servidor: tempo em chamada, mensagens, quem mais te acompanha nas chamadas e os jogos mais transmitidos. O servidor mede tudo sozinho.', c: 'Clique na pessoa na lista de online ou offline e escolha "Ver perfil". Para ver o seu, clique na sua foto no canto de baixo.' },
-        { i: '🏆', t: 'Conquistas', d: 'Medalhas engraçadas como "Coruja de plantão" (chamada de madrugada) e "Inseparáveis" (horas com a mesma pessoa). As que faltam mostram o progresso.', c: 'No cartão de perfil.' },
-        { i: '📊', t: 'Meu resumo', d: 'Um resumo do seu mês passado, do mês atual ou do ano, no estilo "Wrapped": horas em chamada, dia mais falante, jogo mais transmitido e mais.', c: 'No seu perfil, botão "Meu resumo".' },
-        { i: '🔒', t: 'Você controla', d: 'Dá para deixar o perfil privado (só você vê). Registrar o nome do jogo que você transmite é opcional e vem desligado.', c: 'Configurações > Privacidade > Perfil e estatísticas.' },
-        { i: '🔗', t: 'Prévia de links funcionando de verdade', d: 'Corrigimos o servidor: agora o cartão com título e descrição aparece quando alguém manda um link.', c: 'Configurações > Privacidade > Mensagens.' }
+        { i: '👤', t: 'Perfil', d: 'Veja quanto tempo alguém passou em chamada, quantas mensagens mandou, com quem mais fala e os jogos que mais transmite.', c: 'Clique na pessoa na lista e escolha "Ver perfil". O seu fica na sua foto, no canto de baixo.' },
+        { i: '🏆', t: 'Conquistas', d: 'Medalhas engraçadas, tipo "Coruja de plantão" (chamada de madrugada) e "Inseparáveis" (horas com a mesma pessoa). As que faltam mostram quanto falta.', c: 'No perfil.' },
+        { i: '📊', t: 'Meu resumo', d: 'O seu mês ou o seu ano em números, estilo "Wrapped": horas em chamada, dia mais falante, jogo mais transmitido e mais.', c: 'No seu perfil > "Meu resumo".' },
+        { i: '🔒', t: 'Você escolhe o que mostra', d: 'Dá pra deixar o perfil privado. Registrar o jogo que você transmite é opcional e vem desligado.', c: 'Configurações > Privacidade.' },
+        { i: '🔗', t: 'Prévia de links consertada', d: 'O cartão com título e descrição do link voltou a aparecer.', c: 'Aparece sozinho quando alguém manda um link.' }
       ]
     },
     {
       versao: '3.12.0', titulo: 'Reações, status e prévia de links',
       itens: [
-        { i: '😀', t: 'Reações nas mensagens', d: 'Reaja a qualquer mensagem com um emoji (👍 ❤️ 😂 🔥 e mais). Clique numa reação que já existe para reagir também ou para tirar a sua.', c: 'Passe o mouse sobre a mensagem e clique no 😀.' },
-        { i: '💬', t: 'Status personalizado', d: 'Escreva uma frase curta embaixo do seu nome, como "🎮 jogando Wardogs". Todo mundo do servidor vê na lista de online.', c: 'Clique no seu nome no canto de baixo à esquerda. Para tirar, marque "Remover o meu status".' },
-        { i: '🔗', t: 'Prévia de links', d: 'Quando alguém manda um link, aparece um cartão com o título e a descrição da página. Quem abre a página é o servidor do Estrivisor, então o seu computador não acessa o site.', c: 'Para desligar: Configurações > Privacidade (seção "Mensagens") > "Mostrar prévia dos links no chat".' }
+        { i: '😀', t: 'Reações', d: 'Reaja a qualquer mensagem com um emoji. Clique numa reação que já está lá pra reagir também.', c: 'Passe o mouse na mensagem e clique no 😀.' },
+        { i: '💬', t: 'Status', d: 'Uma frase curta embaixo do seu nome, tipo "🎮 jogando Wardogs". Todo mundo do servidor vê.', c: 'Clique no seu nome, no canto de baixo à esquerda.' },
+        { i: '🔗', t: 'Prévia de links', d: 'Link no chat vira um cartão com título e descrição da página. O site não fica sabendo do seu IP.', c: 'Pra desligar: Configurações > Privacidade > Mensagens.' }
       ]
     },
     {
       versao: '3.11.0', titulo: 'Temas, efeitos de voz e desenho na tela',
       itens: [
-        { i: '🎨', t: 'Temas prontos', d: 'Novos temas para trocar o visual do app com um clique: Oceano, Neon, Vampiro, Rosa, Café e Alto contraste.', c: 'Configurações > Aparência > Temas.' },
-        { i: '🤖', t: 'Efeitos de voz', d: 'Fale como robô, com voz grossa, voz fina ou com eco. Todo mundo na chamada ouve o efeito.', c: 'Configurações > Voz e áudio > "Efeito de voz". Com o teste de microfone (use fone) dá para ouvir antes.' },
-        { i: '👀', t: 'Quem está vendo sua transmissão', d: 'Quando você transmite a tela, aparece no canto o nome de quem está assistindo. Só mostra quem usa o app.', c: 'Etiqueta "👀" no canto da sua transmissão.' },
-        { i: '✏️', t: 'Anotar na tela transmitida', d: 'Desenhe, aponte com seta ou circule algo na tela de alguém. Todos veem o desenho por alguns segundos e ele some sozinho.', c: 'Abra a transmissão em tela grande e clique no ✏️. Cada pessoa tem uma cor.' }
+        { i: '🎨', t: 'Temas prontos', d: 'Troque o visual com um clique: Oceano, Neon, Vampiro, Rosa, Café e Alto contraste.', c: 'Configurações > Aparência.' },
+        { i: '🤖', t: 'Efeitos de voz', d: 'Fale como robô, com voz grossa ou voz fina. Todo mundo na chamada ouve.', c: 'Configurações > Voz e áudio > Efeito de voz.' },
+        { i: '👀', t: 'Quem está vendo sua tela', d: 'Quando você transmite, aparece no canto quem está assistindo.', c: 'Etiqueta 👀 no canto da sua transmissão.' },
+        { i: '✏️', t: 'Desenhar na tela de alguém', d: 'Aponte, circule ou desenhe na transmissão. Todo mundo vê, e o desenho some sozinho em alguns segundos.', c: 'Abra a transmissão em tela grande e clique no ✏️.' }
       ]
     },
     {
-      versao: '3.10.1', titulo: 'Voz mais limpa, arquivos na chamada e lista de offline',
+      versao: '3.10.1', titulo: 'Voz mais limpa e arquivos na chamada',
       itens: [
-        { i: '🎙️', t: 'Supressão de ruído avançada', d: 'Um filtro por inteligência artificial que tira clique de teclado e mouse, ventilador, chiado e voz de fundo muito melhor que o filtro comum. Já vem ligado.', c: 'Configurações > Voz e áudio. Use "Testar microfone" (com fone) para ouvir a diferença. Quem fala precisa estar com esta versão.' },
-        { i: '🚪', t: 'Porta de ruído', d: 'Corta o microfone quando você não está falando, para não vazar barulho nenhum.', c: 'Configurações > Voz e áudio > "Porta de ruído". Com o teste ligado, arraste o controle "Limite" até a marca branca ficar acima do barulho e abaixo da sua voz.' },
-        { i: '📎', t: 'Enviar arquivos pela chamada', d: 'Mande foto, vídeo ou qualquer arquivo (até 100 MB) para quem está na chamada. Cada pessoa escolhe se aceita, e nada é salvo ou aberto sozinho.', c: 'Dentro de uma chamada, clique no 📎 da barra de baixo ou arraste o arquivo para a janela. Quem recebe clica em Aceitar e depois em Salvar.' },
-        { i: '👥', t: 'Quem está offline também aparece', d: 'A coluna da direita agora mostra os membros do servidor que não estão online, mais apagados, embaixo de quem está.', c: 'Coluna da direita, seção "OFFLINE".' },
-        { i: '🔔', t: 'Aba Som nas configurações', d: 'Os sons do app (mensagem, entrar e sair da sala, microfone) ganharam uma aba própria.', c: 'Configurações > Som. Dá para trocar cada som por um arquivo seu.' }
+        { i: '🎙️', t: 'Adeus barulho de teclado', d: 'Um filtro novo tira teclado, mouse, ventilador e conversa de fundo do seu microfone. Já vem ligado.', c: 'Configurações > Voz e áudio. Use "Testar microfone" (com fone) pra ouvir a diferença.' },
+        { i: '🚪', t: 'Porta de ruído', d: 'Corta o microfone quando você não está falando.', c: 'Configurações > Voz e áudio > Avançado > Porta de ruído.' },
+        { i: '📎', t: 'Mandar arquivos na chamada', d: 'Foto, vídeo ou qualquer arquivo de até 100 MB pra quem está na chamada. Cada um escolhe se aceita.', c: 'Na chamada, botão 📎 na barra de baixo, ou arraste o arquivo pra janela.' },
+        { i: '👥', t: 'Quem está offline', d: 'A lista da direita também mostra quem não está online, mais apagado.', c: 'Lista de membros, seção "OFFLINE".' }
       ]
     },
     {
       versao: '3.10.0', titulo: 'Janela flutuante e personalização',
       itens: [
-        { i: '🪟', t: 'Janela flutuante', d: 'Uma janelinha por cima do jogo mostra quem está falando na sala de voz, sem precisar sair do jogo.', c: 'Ligue nas configurações do Discord/jogo. Ctrl+Shift+F esconde e mostra de qualquer programa.' },
-        { i: '🎨', t: 'Cores e imagens por área', d: 'Mude as cores do app e coloque imagens ou animações (GIF, WebP, vídeo curto) em cada área da tela.', c: 'Configurações > Aparência.' },
-        { i: '🔊', t: 'Sons personalizados', d: 'Escolha o som de cada evento do app ou desligue os que não quiser.', c: 'Configurações > Som.' }
+        { i: '🪟', t: 'Janela flutuante', d: 'Uma janelinha por cima do jogo mostra quem está falando, sem precisar sair do jogo.', c: 'Configurações > Janela flutuante. Ctrl+Shift+F mostra e esconde de qualquer programa.' },
+        { i: '🎨', t: 'Cores e imagens', d: 'Mude as cores do app e coloque imagens ou animações em cada parte da tela.', c: 'Configurações > Aparência.' },
+        { i: '🔊', t: 'Seus sons', d: 'Troque o som de cada aviso do app ou desligue os que não quiser.', c: 'Configurações > Sons do app.' }
       ]
     }
   ];

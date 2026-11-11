@@ -45,6 +45,7 @@
   .baixar { display: inline-block; background: var(--acento); color: #fff; font: inherit; font-weight: 700; font-size: 18px; padding: 14px 30px; border-radius: 999px; text-decoration: none; transition: background .12s ease, transform .12s ease; }
   .baixar:hover { background: var(--acento-escuro); transform: translateY(-1px); }
   .baixar.travado { background: var(--papel-2); color: #6b7194; pointer-events: none; transform: none; }
+  .botoes-baixar { display: flex; flex-wrap: wrap; gap: 10px; }
   .dica-download { margin: 12px 0 0; color: var(--fraco); font-size: 14px; }
 
   /* ---------- Janela do app (peça principal) ---------- */
@@ -156,14 +157,17 @@
     <section class="abertura">
       <div>
         <h1>Voz e tela compartilhada para você e seus amigos.</h1>
-        <p class="lead">Salas de voz, chat de texto e transmissão de tela em um só aplicativo para Windows. Crie servidores com vários canais, adicione amigos, troque mensagens diretas e entre com a sua conta do Discord. O aplicativo se atualiza sozinho.</p>
+        <p class="lead">Salas de voz, chat de texto e transmissão de tela em um só aplicativo para Windows e Android. Crie servidores com vários canais, adicione amigos, troque mensagens diretas e entre com a sua conta do Discord. O aplicativo se atualiza sozinho.</p>
 
         <div class="acesso">
           <label class="aceite">
             <input type="checkbox" id="aceite">
             <span>Tenho <b>18 anos ou mais</b> e li e aceito os <a href="termos.html">Termos de uso</a> e a <a href="privacidade.html">Política de privacidade</a>.</span>
           </label>
-          <a class="baixar travado" id="baixar" href="#" aria-disabled="true">Baixar para Windows</a>
+          <div class="botoes-baixar">
+            <a class="baixar travado" id="baixar" href="#" aria-disabled="true">Baixar para Windows</a>
+            <a class="baixar travado" id="baixar-android" href="#" aria-disabled="true">Baixar para Android</a>
+          </div>
           <p class="dica-download" id="dica-download" aria-live="polite">Marque a caixa para liberar o download.</p>
           <noscript><p class="dica-download">Sem JavaScript o botão não libera. Baixe pela <a href="https://github.com/mateusdevtsr/Estrivisor/releases/latest">página de versões</a>.</p></noscript>
         </div>
@@ -259,15 +263,20 @@
 
 <script>
   var URL_EXE = 'https://github.com/mateusdevtsr/Estrivisor/releases/latest/download/Estrivisor-Setup.exe';
+  var URL_APK = 'https://github.com/mateusdevtsr/Estrivisor/releases/latest/download/Estrivisor-Android.apk';
   var caixa = document.getElementById('aceite');
-  var botao = document.getElementById('baixar');
+  var botoes = [[document.getElementById('baixar'), URL_EXE], [document.getElementById('baixar-android'), URL_APK]];
   var dica = document.getElementById('dica-download');
   caixa.addEventListener('change', function () {
     var ok = caixa.checked;
-    botao.classList.toggle('travado', !ok);
-    botao.setAttribute('aria-disabled', String(!ok));
-    botao.href = ok ? URL_EXE : '#';
-    dica.textContent = ok ? 'Para Windows 10 e 11. Instala em um clique e se atualiza sozinho.' : 'Marque a caixa para liberar o download.';
+    botoes.forEach(function (par) {
+      par[0].classList.toggle('travado', !ok);
+      par[0].setAttribute('aria-disabled', String(!ok));
+      par[0].href = ok ? par[1] : '#';
+    });
+    dica.textContent = ok
+      ? 'Windows 10 e 11: instala em um clique e se atualiza sozinho. Android 6 ou mais novo: abra o arquivo no celular e permita instalar quando ele pedir.'
+      : 'Marque a caixa para liberar o download.';
   });
 
   // Prévia: clique numa pessoa para ela "falar"; os botões de cor trocam o tema da janela.

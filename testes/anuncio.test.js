@@ -10,8 +10,8 @@ test('anúncio no Discord: cabe nos limites, não marca ninguém e tem os links'
     const e = m.embeds[0];
     assert.ok(e.title.length <= 256 && e.description.length <= 4096, n.versao);
     assert.deepStrictEqual(m.allowed_mentions, { parse: [] });
-    assert.ok(e.description.includes(`releases/tag/v${n.versao}`));
-    assert.strictEqual(e.description.includes('Estrivisor-Android.apk'), n === NOVIDADES[0], 'link do celular só na mais nova');
+    assert.strictEqual(e.description.includes('https://estrivisor.com.br'), n === NOVIDADES[0], 'link do site só na versão mais nova');
+    assert.ok(!e.description.includes('github.com'), 'nada de link do GitHub');
   }
 });
 
