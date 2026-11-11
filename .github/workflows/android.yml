@@ -4,6 +4,7 @@
 # Segredos (Settings > Secrets and variables > Actions):
 #   TOKEN_SERVER_URL, INVITE_KEY, LIVEKIT_URL  -> os mesmos do .env do app do PC
 #   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_SENHA, ANDROID_KEY_ALIAS -> assinatura (opcional no começo)
+#   GOOGLE_SERVICES_JSON -> conteúdo do google-services.json do Firebase (notificações; opcional)
 name: App Android
 
 on:
@@ -48,6 +49,7 @@ jobs:
           TOKEN_SERVER_URL: ${{ secrets.TOKEN_SERVER_URL }}
           INVITE_KEY: ${{ secrets.INVITE_KEY }}
           LIVEKIT_URL: ${{ secrets.LIVEKIT_URL }}
+          TEM_FIREBASE: ${{ secrets.GOOGLE_SERVICES_JSON != '' && '1' || '' }}
         run: node montar-www.js
 
       - name: Projeto Android
@@ -55,6 +57,19 @@ jobs:
         run: |
           npx cap add android
           npx cap sync android
+
+      - name: Firebase (notificações, se configurado)
+        working-directory: celular
+        env:
+          GSJ: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -n "$GSJ" ]; then
+            printf '%s' "$GSJ" > android/app/google-services.json
+            node -e "const j=require('./android/app/google-services.json'); const ok=(j.client||[]).some(c=>c.client_info&&c.client_info.android_client_info&&c.client_info.android_client_info.package_name==='com.estrivisor.celular'); if(!ok){console.error('O google-services.json não é do app com.estrivisor.celular. Confira o nome do pacote no Firebase.'); process.exit(1)}"
+            echo "Notificações ligadas."
+          else
+            echo "Sem GOOGLE_SERVICES_JSON: o APK sai sem notificações."
+          fi
 
       - name: Assinatura (se configurada)
         env:

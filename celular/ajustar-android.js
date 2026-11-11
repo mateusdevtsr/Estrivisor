@@ -36,6 +36,12 @@ if (faltando) m = m.replace('<application', `${faltando}\n\n    <application`);
 if (!m.includes('.VozServico')) {
   m = m.replace('</application>', '        <service android:name=".VozServico" android:exported="false" android:foregroundServiceType="microphone" />\n    </application>');
 }
+// Notificações que o Android mostra sozinho (app fechado): ícone de mensagem e o canal "Mensagens".
+if (!m.includes('default_notification_channel_id')) {
+  m = m.replace('</application>', `        <meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@android:drawable/sym_action_chat" />
+        <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="mensagens" />
+    </application>`);
+}
 if (!m.includes('android:scheme="estrivisor"')) {
   const inicio = m.indexOf('android:name=".MainActivity"');
   if (inicio < 0) erro('Não achei a MainActivity no AndroidManifest.xml.');

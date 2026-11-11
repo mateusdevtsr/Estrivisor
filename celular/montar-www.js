@@ -54,7 +54,9 @@ esbuild.buildSync({
     __TOKEN_SERVER_URL__: JSON.stringify(TOKEN_SERVER_URL),
     __INVITE_KEY__: JSON.stringify(INVITE_KEY),
     __LIVEKIT_URL__: JSON.stringify(LIVEKIT_URL || 'wss://livekit.estrivisor.com.br'),
-    __VERSAO__: JSON.stringify(versao)
+    __VERSAO__: JSON.stringify(versao),
+    // Notificações só ficam ligadas se o APK for montado com o google-services.json (TEM_FIREBASE=1).
+    __PUSH_ATIVO__: JSON.stringify(process.env.TEM_FIREBASE === '1')
   }
 });
 

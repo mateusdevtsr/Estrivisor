@@ -14,6 +14,9 @@ Segredos necessários (Settings > Secrets and variables > Actions): `TOKEN_SERVE
 (os mesmos do `.env` do PC). Para atualizações instalarem por cima, adicione também a assinatura:
 `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_SENHA`, `ANDROID_KEY_ALIAS`.
 
+Notificações: segredo `GOOGLE_SERVICES_JSON` (o arquivo do Firebase) no GitHub e a chave da conta de serviço em
+`dados/firebase-conta.json` no notebook. Sem isso, o app funciona igual, só sem avisos com o app fechado.
+
 No servidor: `CELULAR_REDIRECT_URI=https://api.SEU-DOMINIO/auth/celular/retorno` no `server.env`, e o mesmo
 endereço cadastrado no Discord Developer Portal > OAuth2 > Redirects.
 

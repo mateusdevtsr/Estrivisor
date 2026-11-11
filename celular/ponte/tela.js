@@ -104,10 +104,14 @@ export function iniciarTelaCelular({ App }) {
       marcar();
     }
 
+    // Abriu uma conversa pela notificação: mostra a conversa (sem gaveta por cima).
+    let abertoPorAviso = false;
+    document.addEventListener('estrivisor-abriu-conversa', () => { abertoPorAviso = true; fecharGavetas(); });
+
     // Sem nenhum canal aberto (começo): já mostra a lista de canais.
     setTimeout(() => {
       const vazio = document.getElementById('area-vazia');
-      if (vazio && getComputedStyle(vazio).display !== 'none') abrir('celular-canais-aberto');
+      if (!abertoPorAviso && vazio && getComputedStyle(vazio).display !== 'none') abrir('celular-canais-aberto');
     }, 1500);
 
     // Botão Voltar do Android.

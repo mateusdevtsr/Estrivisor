@@ -1534,6 +1534,94 @@ function registrarEventosDaVoz(sala) {
 
 // No app de celular, entrar/sair da chamada liga/desliga o aviso "Na chamada" do Android (sem ele o
 // sistema corta o microfone quando a tela apaga). No PC essa função não existe e nada acontece.
+// ---------- Notificações do celular ----------
+// Tocou numa notificação: abre a DM ou o canal. Espera os servidores carregarem (o app pode estar abrindo).
+async function abrirConversaDeAviso(d) {
+    if (!d || typeof d !== 'object') return;
+    const pausa = (ms) => new Promise((ok) => setTimeout(ok, ms));
+    if (d.tipo === 'dm' && d.amigo) {
+        for (let i = 0; i < 30 && !obterIdentidadeUsuario(); i++) await pausa(300);
+        abrirAmigos('amigos', d.amigo);
+        document.dispatchEvent(new CustomEvent('estrivisor-abriu-conversa'));
+        return;
+    }
+    if (d.tipo !== 'canal' || !d.servidor || !d.canal) return;
+    for (let i = 0; i < 30 && !meusServidores.some((x) => x.id === d.servidor); i++) await pausa(300);
+    if (!meusServidores.some((x) => x.id === d.servidor)) return;
+    if (amigosAbertos()) fecharAmigos();
+    if (configAberta()) fecharConfig();
+    if (servidorAtual.id !== d.servidor) await selecionarServidor(d.servidor);
+    for (let i = 0; i < 20; i++) {
+        const canal = (servidorAtual.canais || []).find((c) => c.id === d.canal && c.tipo === 'texto');
+        if (canal) {
+            if (!canalTextoAtual || canalTextoAtual.id !== canal.id) entrarCanalTexto(canal);
+            document.dispatchEvent(new CustomEvent('estrivisor-abriu-conversa'));
+            return;
+        }
+        await pausa(300);
+    }
+}
+window.abrirConversaDeAviso = abrirConversaDeAviso;
+// App aberto tocando numa notificação: a ponte do celular guardou qual conversa abrir.
+if (window.electronAPI && window.electronAPI.notificacoesCelular) {
+    let vezes = 0;
+    const olhar = setInterval(() => {
+        const p = window.electronAPI.notificacoesCelular.pegarPendente();
+        if (p) abrirConversaDeAviso(p);
+        if (++vezes > 20) clearInterval(olhar);
+    }, 1000);
+}
+
+// Configurações > Sons do app > Notificações no celular (só aparece no app de celular).
+(function montarOpcoesDeNotificacao() {
+    const api = window.electronAPI && window.electronAPI.notificacoesCelular;
+    const painel = document.getElementById('cfg-painel-som');
+    if (!api || !painel) return;
+    const grupo = document.createElement('div');
+    grupo.className = 'cfg-grupo'; grupo.id = 'cfg-grupo-notificacoes';
+    const titulo = document.createElement('div'); titulo.className = 'cfg-grupo-titulo'; titulo.textContent = 'Notificações no celular';
+    const estado = document.createElement('div'); estado.className = 'cfg-dica'; estado.id = 'cfg-notif-estado';
+    const permitir = document.createElement('button'); permitir.type = 'button'; permitir.textContent = '🔔 Permitir notificações'; permitir.style.display = 'none';
+    grupo.append(titulo, estado, permitir);
+    const opcoes = [
+        ['dm', 'Mensagens diretas', 'Quando um amigo te mandar mensagem.'],
+        ['mencoes', 'Quando me marcarem com @', 'Ex.: "@Mateus bora jogar?" num canal de texto.'],
+        ['canais', 'Todas as mensagens dos canais de texto', 'Pode avisar bastante em servidor movimentado.']
+    ];
+    const caixas = {};
+    for (const [chave, rotulo, dica] of opcoes) {
+        const label = document.createElement('label'); label.className = 'cfg-check';
+        const cb = document.createElement('input'); cb.type = 'checkbox'; cb.id = 'cfg-notif-' + chave;
+        const textos = document.createElement('span');
+        const b = document.createElement('b'); b.textContent = rotulo;
+        const d = document.createElement('span'); d.textContent = dica;
+        textos.append(b, d);
+        label.append(cb, textos);
+        cb.addEventListener('change', async () => {
+            const r = await api.definir({ [chave]: cb.checked });
+            if (r && r.erro) mostrarNotificacao(r.erro);
+            atualizar();
+        });
+        caixas[chave] = cb;
+        grupo.appendChild(label);
+    }
+    painel.appendChild(grupo);
+    async function atualizar() {
+        const e = await api.ler();
+        for (const k of Object.keys(caixas)) caixas[k].checked = Boolean(e[k]);
+        permitir.style.display = e.disponivel && e.permissao !== 'granted' ? '' : 'none';
+        Object.values(caixas).forEach((c) => { c.disabled = !e.disponivel; });
+        estado.textContent = !e.disponivel ? 'Esta versão do app foi montada sem notificações.'
+            : e.permissao === 'denied' ? 'O Android está bloqueando as notificações do Estrivisor. Libere em Configurações do celular > Apps > Estrivisor > Notificações.'
+            : e.permissao !== 'granted' ? 'Toque em "Permitir notificações" para receber avisos com o app fechado.'
+            : e.erro ? e.erro
+            : e.registrado ? 'Ligadas: você recebe avisos mesmo com o app fechado.' : 'Ligando...';
+    }
+    permitir.addEventListener('click', async () => { await api.pedirPermissao(); setTimeout(atualizar, 1500); });
+    document.querySelector('.cfg-item[data-cfg="som"]').addEventListener('click', atualizar);
+    atualizar();
+})();
+
 function avisarPlataformaVoz(conectado) {
     try { const f = window.electronAPI && window.electronAPI.vozMudou; if (typeof f === 'function') f(conectado); } catch (e) {}
 }

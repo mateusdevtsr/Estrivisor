@@ -15,13 +15,15 @@ import { Browser } from '@capacitor/browser';
 import { Preferences } from '@capacitor/preferences';
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
+import { PushNotifications } from '@capacitor/push-notifications';
 import { iniciarTelaCelular } from './tela.js';
 
-/* global __TOKEN_SERVER_URL__, __INVITE_KEY__, __LIVEKIT_URL__, __VERSAO__ */
+/* global __TOKEN_SERVER_URL__, __INVITE_KEY__, __LIVEKIT_URL__, __VERSAO__, __PUSH_ATIVO__ */
 const TOKEN_SERVER_URL = __TOKEN_SERVER_URL__;
 const INVITE_KEY = __INVITE_KEY__;
 const LIVEKIT_URL = __LIVEKIT_URL__;
 const VERSAO = __VERSAO__;
+const PUSH_ATIVO = __PUSH_ATIVO__; // false quando o APK foi montado sem o google-services.json
 const VozCelular = registerPlugin('VozCelular');
 
 const CHAVE_SESSAO = 'estrivisor_sessao';
@@ -176,6 +178,49 @@ function vozMudou(conectado) {
   tentativasVoz = [setTimeout(tentar, 3000), setTimeout(tentar, 10000)];
 }
 
+// ---------- Notificações (Firebase) ----------
+// O celular pede permissão, ganha um "endereço de notificação" do Google e manda pro servidor junto com o
+// que a pessoa quer receber. Tocar na notificação abre a conversa (abrirConversaDeAviso, no estrivisor-app.js).
+const CHAVE_PREFS_NOTIF = 'estrivisor_notificacoes';
+let notificacoesLigadas = false;
+const notif = { token: null, permissao: 'desconhecida', erro: null, pendente: null, ouvintes: false };
+function prefsNotif() {
+  let p = {};
+  try { p = JSON.parse(localStorage.getItem(CHAVE_PREFS_NOTIF) || '{}') || {}; } catch (e) {}
+  return { dm: p.dm !== false, mencoes: p.mencoes !== false, canais: p.canais === true };
+}
+async function enviarAparelho() {
+  if (!notif.token || !sessao.chave) return;
+  const r = await chamarServidor('/conta/aparelho', { metodo: 'POST', corpo: { token: notif.token, ...prefsNotif() } });
+  notif.erro = r.ok ? null : (r.erro || 'O servidor não aceitou o aparelho.');
+  if (r.ok && r.dados && r.dados.ativo === false) notif.erro = 'As notificações ainda não foram ligadas no servidor (falta a chave do Firebase).';
+}
+function abrirDoAviso(dados) {
+  if (!dados || typeof dados !== 'object') return;
+  const limpo = { tipo: String(dados.tipo || ''), amigo: dados.amigo ? String(dados.amigo) : '', servidor: dados.servidor ? String(dados.servidor) : '', canal: dados.canal ? String(dados.canal) : '' };
+  if (typeof window.abrirConversaDeAviso === 'function') window.abrirConversaDeAviso(limpo);
+  else notif.pendente = limpo; // o app ainda está abrindo: a tela pega depois
+}
+async function ligarNotificacoes({ perguntar = true } = {}) {
+  if (!PUSH_ATIVO) { notif.permissao = 'indisponivel'; return; }
+  if (!notif.ouvintes) {
+    notif.ouvintes = true;
+    await PushNotifications.addListener('registration', (t) => { notif.token = t.value; enviarAparelho(); });
+    await PushNotifications.addListener('registrationError', (e) => { notif.erro = 'O Google não registrou este celular (' + (e && e.error) + ').'; });
+    await PushNotifications.addListener('pushNotificationActionPerformed', (a) => abrirDoAviso(a && a.notification && a.notification.data));
+    // Com o app aberto na tela o próprio app já mostra a mensagem: nada a fazer aqui.
+    await PushNotifications.addListener('pushNotificationReceived', () => {});
+  }
+  try {
+    let p = await PushNotifications.checkPermissions();
+    if (p.receive === 'prompt' || p.receive === 'prompt-with-rationale') { if (!perguntar) { notif.permissao = 'prompt'; return; } p = await PushNotifications.requestPermissions(); }
+    notif.permissao = p.receive;
+    if (p.receive !== 'granted') return;
+    await PushNotifications.createChannel({ id: 'mensagens', name: 'Mensagens', description: 'Mensagens diretas, menções e canais que você escolheu', importance: 4, visibility: 1, vibration: true });
+    await PushNotifications.register();
+  } catch (e) { notif.erro = 'Não consegui ligar as notificações (' + (e && e.message) + ').'; }
+}
+
 // ---------- Carrega a sessão guardada antes de a tela perguntar ----------
 const pronto = (async () => {
   // App acabou de ser instalado no celular: não mostra "O que há de novo" de versões que a pessoa nunca usou aqui.
@@ -239,6 +284,7 @@ window.electronAPI = {
   // Conta / login
   contaAtual: depois(async () => {
     if (!sessao.chave) return { conta: null };
+    if (!notificacoesLigadas) { notificacoesLigadas = true; setTimeout(() => ligarNotificacoes(), 2500); }
     chamarServidor('/auth/eu').then((r) => { if (r.ok && r.dados && r.dados.conta) { sessao.conta = r.dados.conta; gravarSessao().catch(() => {}); } });
     return { conta: sessao.conta };
   }),
@@ -252,7 +298,10 @@ window.electronAPI = {
     return { ok: true, conta: sessao.conta };
   }),
   sairDaConta: depois(async () => {
+    // Antes de sair: este celular para de receber avisos dessa conta.
+    if (sessao.chave && notif.token) await chamarServidor('/conta/aparelho', { metodo: 'DELETE', corpo: { token: notif.token }, tempo: 5000 });
     if (sessao.chave) await chamarServidor('/auth/sair', { metodo: 'POST', tempo: 5000 });
+    notificacoesLigadas = false;
     await apagarSessao();
     return { ok: true };
   }),
@@ -302,7 +351,22 @@ window.electronAPI = {
   aoFlutuanteMudou: () => {},
 
   // Só no celular: entrou/saiu da chamada (liga/desliga o aviso "Na chamada" do Android).
-  vozMudou
+  vozMudou,
+
+  // Só no celular: notificações (Configurações > Sons do app > Notificações no celular).
+  notificacoesCelular: {
+    ler: async () => ({ ...prefsNotif(), disponivel: PUSH_ATIVO, permissao: notif.permissao, registrado: Boolean(notif.token), erro: notif.erro }),
+    definir: async (novas) => {
+      const atual = prefsNotif();
+      const p = { dm: novas && typeof novas.dm === 'boolean' ? novas.dm : atual.dm, mencoes: novas && typeof novas.mencoes === 'boolean' ? novas.mencoes : atual.mencoes, canais: novas && typeof novas.canais === 'boolean' ? novas.canais : atual.canais };
+      try { localStorage.setItem(CHAVE_PREFS_NOTIF, JSON.stringify(p)); } catch (e) {}
+      if (notif.token) await enviarAparelho(); else await ligarNotificacoes();
+      return { ok: !notif.erro, erro: notif.erro };
+    },
+    pedirPermissao: async () => { await ligarNotificacoes({ perguntar: true }); return { permissao: notif.permissao }; },
+    // A tela chama quando terminou de abrir: se o app foi aberto tocando numa notificação, abre a conversa.
+    pegarPendente: () => { const p = notif.pendente; notif.pendente = null; return p; }
+  }
 };
 
 iniciarTelaCelular({ App });
