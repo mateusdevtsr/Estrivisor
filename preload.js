@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   versaoApp: () => ipcRenderer.invoke('obter-versao'),
   abrirLink: (url) => ipcRenderer.invoke('abrir-link', url),
+  copiarImagem: (dados) => ipcRenderer.invoke('copiar-imagem', dados),
+  salvarImagem: (dados) => ipcRenderer.invoke('salvar-imagem', dados),
   exportarMeusDados: () => ipcRenderer.invoke('exportar-meus-dados'),
   apagarMinhaConta: () => ipcRenderer.invoke('apagar-minha-conta'),
 
@@ -43,6 +45,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Moderação (só o dono do servidor; o servidor confere)
   forcarPararTransmissao: (dados) => ipcRenderer.invoke('forcar-parar-transmissao', dados),
   forcarMutarMicrofone: (dados) => ipcRenderer.invoke('forcar-mutar-microfone', dados),
+  forcarTirarDaChamada: (dados) => ipcRenderer.invoke('forcar-tirar-da-chamada', dados),
 
   // Janela flutuante (sala de voz por cima do jogo)
   flutuanteLer: () => ipcRenderer.invoke('flutuante-ler'),

@@ -1,0 +1,113 @@
+/* ============================================================
+   Estrivisor no celular: a tela do PC reorganizada em uma coluna.
+   Só vale com a classe "celular" (colocada pela ponte do app Android).
+   ============================================================ */
+html.celular, html.celular body { height: 100%; overflow: hidden; overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
+body.celular { --topo-seguro: env(safe-area-inset-top, 0px); --baixo-seguro: env(safe-area-inset-bottom, 0px); }
+body.celular .app { height: 100%; padding-top: var(--topo-seguro); box-sizing: border-box; z-index: auto; } /* sem z-index: as gavetas ficam por cima do véu */
+
+/* ---------- Gavetas: servidores + canais (esquerda) e membros (direita) ---------- */
+body.celular .barra-servidores,
+body.celular .coluna-canais,
+body.celular .coluna-membros {
+    position: fixed; top: var(--topo-seguro); bottom: 0; z-index: 1300;
+    transition: transform .22s ease; box-shadow: 0 0 24px rgba(0,0,0,.5);
+}
+body.celular .barra-servidores { left: 0; width: 64px; transform: translateX(calc(-100vw)); }
+body.celular .coluna-canais { left: 64px; width: min(300px, calc(100vw - 104px)); transform: translateX(calc(-100vw)); background: var(--painel); }
+body.celular .coluna-membros { right: 0; width: min(300px, 86vw); transform: translateX(100vw); background: var(--painel); }
+body.celular.celular-canais-aberto .barra-servidores,
+body.celular.celular-canais-aberto .coluna-canais { transform: none; }
+body.celular.celular-membros-aberto .coluna-membros { transform: none; }
+#celular-veu { display: none; }
+body.celular.celular-canais-aberto #celular-veu,
+body.celular.celular-membros-aberto #celular-veu { display: block; position: fixed; inset: 0; z-index: 1250; background: rgba(0,0,0,.55); }
+
+/* A tela de Amigos fica atrás das gavetas, para dar pra trocar de servidor por cima dela. */
+body.celular .tela-amigos { left: 0; top: var(--topo-seguro); z-index: 1200; flex-direction: column; }
+
+/* ---------- Conversa ocupando a tela toda ---------- */
+body.celular .coluna-principal { width: 100%; position: relative; }
+body.celular .cabecalho-canal { padding: 0 56px; height: 52px; font-size: 16px; justify-content: center; text-align: center; }
+body.celular .cabecalho-canal > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#celular-menu, #celular-pessoas { display: none; }
+body.celular #celular-menu, body.celular #celular-pessoas {
+    display: grid; place-items: center; position: fixed; top: calc(var(--topo-seguro) + 6px); z-index: 1210;
+    width: 40px; height: 40px; padding: 0; border-radius: 10px; font-size: 20px;
+    background: rgba(255,255,255,.06); color: var(--texto); border: 1px solid var(--borda);
+}
+body.celular #celular-menu { left: 8px; }
+body.celular.celular-canais-aberto #celular-menu, body.celular.celular-canais-aberto #celular-pessoas,
+body.celular.celular-membros-aberto #celular-menu, body.celular.celular-membros-aberto #celular-pessoas { display: none; }
+body.celular #celular-pessoas { right: 8px; }
+body.celular .mensagens-chat { padding-left: 10px; padding-right: 10px; }
+body.celular .campo-mensagem-wrap { padding: 8px 8px calc(8px + var(--baixo-seguro)); }
+body.celular textarea, body.celular input, body.celular select { font-size: 16px; }
+
+/* ---------- Barrinha da chamada ---------- */
+#celular-voz { display: none; }
+body.celular.celular-em-voz #celular-voz {
+    display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+    padding: 8px 10px calc(8px + var(--baixo-seguro)); background: var(--painel); border-top: 1px solid var(--borda);
+}
+body.celular.celular-em-voz .campo-mensagem-wrap { padding-bottom: 8px; }
+#celular-voz .celular-voz-nome { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; color: #8ef0b0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#celular-voz button { width: 48px; height: 44px; padding: 0; font-size: 20px; border-radius: 12px; background: #20242c; }
+#celular-voz #celular-btn-sair-voz { background: #6b1f24; }
+
+/* ---------- Área de voz: sem os controles de transmitir (não existe no celular) ---------- */
+body.celular .barra-controles-voz #select-fontes,
+body.celular .barra-controles-voz #btn-atualizar-fontes,
+body.celular .barra-controles-voz .opcao-som,
+body.celular .barra-controles-voz #btn-transmitir-voz,
+body.celular .barra-controles-voz #btn-parar-voz,
+body.celular #btn-tela-rodape,
+body.celular #btn-cinema-rodape,
+body.celular #btn-fone-seta { display: none !important; }
+body.celular .barra-controles-voz { padding: 8px 10px; min-height: 0; }
+body.celular .grade-video { padding: 8px; }
+
+/* ---------- Toque: alvos maiores ---------- */
+body.celular .item-canal { min-height: 40px; }
+body.celular .icone-rodape, body.celular .fileira-icones-voz button { min-width: 40px; min-height: 40px; }
+body.celular .item-menu { padding: 12px 14px; font-size: 15px; }
+body.celular .menu-contexto { max-width: calc(100vw - 16px); }
+
+/* ---------- Janelas (modais) ocupando a largura do celular ---------- */
+body.celular .tela-login .cartao-login,
+body.celular [role="dialog"] > div:first-child:not(.cfg-nav) { max-width: calc(100vw - 20px); box-sizing: border-box; }
+body.celular .tela-login { padding: 10px; box-sizing: border-box; }
+
+/* ---------- Configurações: lista de seções vira uma faixa rolável no topo ---------- */
+body.celular .tela-config { flex-direction: column; top: var(--topo-seguro); }
+body.celular .cfg-nav { width: auto; flex-direction: row; align-items: center; gap: 6px; padding: 10px 56px 10px 10px; overflow-x: auto; overflow-y: hidden; border-right: none; border-bottom: 1px solid var(--borda); flex-shrink: 0; }
+body.celular .cfg-nav-titulo, body.celular .cfg-nav-sep { display: none; }
+body.celular .cfg-busca { width: 170px; flex-shrink: 0; margin: 0; }
+body.celular .cfg-nav { scrollbar-width: none; }
+body.celular .cfg-nav::-webkit-scrollbar { display: none; }
+body.celular .cfg-item { flex-shrink: 0; white-space: nowrap; padding: 8px 12px; border-radius: 999px; background: rgba(255,255,255,.05); }
+body.celular .cfg-conteudo { padding: 18px 14px calc(60px + var(--baixo-seguro)); }
+body.celular .cfg-painel, body.celular .cfg-painel-largo { max-width: none; }
+/* Coisas que só existem no PC */
+body.celular .cfg-item[data-cfg="flutuante"],
+body.celular .cfg-item[data-cfg="discord"],
+body.celular #grupo-layouts { display: none !important; }
+body.celular .efeito-barra { position: static; }
+body.celular .efeito-barra button { padding: 8px 10px; font-size: 13px; }
+body.celular .pedaleira { grid-template-columns: 1fr 1fr; gap: 8px; }
+body.celular .pedal.largo { grid-column: 1 / -1; }
+body.celular .botao-caixa { width: 64px; }
+body.celular .efeito-cabeca input { flex: 1 1 100%; }
+
+/* ---------- Amigos: lista OU conversa ---------- */
+#celular-voltar-dm { display: none; }
+body.celular .amigos-lateral { width: auto; flex: 1; border-right: none; }
+body.celular .amigos-principal { display: none; }
+body.celular .tela-amigos.celular-com-conversa .amigos-lateral { display: none; }
+body.celular .tela-amigos.celular-com-conversa .amigos-principal { display: flex; flex: 1; }
+body.celular .tela-amigos.celular-com-conversa #celular-voltar-dm { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; font-size: 26px; background: none; color: var(--texto); }
+body.celular .amigo-acoes { display: flex; }
+body.celular .amigos-topo { padding-left: 56px; }
+
+/* Lightbox e menus por cima de tudo */
+body.celular .menu-contexto { z-index: 4000; }

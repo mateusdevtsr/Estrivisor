@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- Só roda script do próprio app. Conexões: LiveKit (https/wss). Imagens: do app, data: (ícones e fundo) e avatares do Discord. -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' blob: 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://cdn.discordapp.com; media-src 'self' blob: mediastream:; connect-src 'self' https: wss:; worker-src 'self' blob:; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' blob: 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://cdn.discordapp.com; media-src 'self' blob: mediastream:; connect-src 'self' https://*.estrivisor.com.br wss://*.estrivisor.com.br https://*.livekit.cloud wss://*.livekit.cloud ws://127.0.0.1:* ws://localhost:* http://127.0.0.1:* http://localhost:*; worker-src 'self' blob:; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
     <title>Estrivisor</title>
     <style>
         :root {
@@ -43,7 +43,7 @@
         button:disabled { opacity: 0.4; cursor: not-allowed; }
         input, select, textarea {
             padding: 9px 11px; border-radius: 6px; border: 1px solid var(--borda);
-            background: var(--campo); color: var(--texto); font-size: 13px; outline: none;
+            background: var(--campo); color: var(--texto); font-size: 13px;
             font-family: inherit; width: 100%;
         }
         input:focus, select:focus { border-color: var(--sinal); }
@@ -138,6 +138,12 @@
             border-radius: 5px; font-weight: 500; font-size: 13px;
         }
         .item-menu:hover:not(:disabled) { background: rgba(255,255,255,0.08); }
+        .item-menu.tem-submenu { position: relative; padding-right: 26px; }
+        .item-menu.tem-submenu::after { content: '›'; position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 16px; color: var(--texto-fraco); }
+        .item-menu.sub-aberto { background: rgba(255,255,255,0.08); }
+        .menu-contexto.submenu { min-width: 200px; max-height: 70vh; overflow-y: auto; z-index: 1101; }
+        .item-menu.marcado { color: var(--texto); font-weight: 700; background: rgba(88,101,242,0.16); }
+        .titulo-submenu { padding: 4px 10px 2px; font-size: 11.5px; font-weight: 700; color: var(--texto-fraco); letter-spacing: .04em; text-transform: uppercase; }
         .item-menu.perigo { color: var(--sinal); }
 
         /* Excluir canal (aparece ao passar o mouse) */
@@ -154,6 +160,18 @@
         .cfg-item { background: none; text-align: left; padding: 9px 10px; font-weight: 500; color: var(--texto-fraco); }
         .cfg-item:hover:not(:disabled) { background: rgba(255,255,255,0.05); color: var(--texto); }
         .cfg-item.ativo { background: rgba(255,77,77,0.14); color: var(--texto); }
+        .cfg-busca { width: 100%; margin: 0 0 10px; padding: 8px 10px; border-radius: 8px; background: #0f1114; border: 1px solid var(--borda); color: var(--texto); font-size: 13px; }
+        .cfg-novo { display: inline-block; margin-left: 6px; font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 5px; background: #5865f2; color: #fff; vertical-align: middle; }
+        details.cfg-avancado { border: 1px solid var(--borda); border-radius: 10px; padding: 10px 14px; margin-top: 10px; }
+        details.cfg-avancado > summary { cursor: pointer; font-weight: 700; font-size: 13px; color: var(--texto); padding: 4px 0; }
+        details.cfg-avancado[open] > summary { margin-bottom: 4px; }
+        .cfg-explica { font-size: 12.5px; color: var(--texto-fraco); margin: 2px 0 10px 26px; line-height: 1.45; }
+        .busca-resultados { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+        .busca-resultados button { text-align: left; background: var(--painel); border: 1px solid var(--borda); border-radius: 8px; padding: 10px 12px; color: var(--texto); font-size: 13.5px; }
+        .busca-resultados button:hover { border-color: #5865f2; }
+        .busca-resultados button span { display: block; color: var(--texto-fraco); font-size: 12px; margin-top: 2px; }
+        .cfg-achado { animation: cfgAchado 1.8s ease-out; border-radius: 8px; }
+        @keyframes cfgAchado { 0%, 40% { box-shadow: 0 0 0 3px rgba(88,101,242,.85); background: rgba(88,101,242,.14); } 100% { box-shadow: 0 0 0 0 rgba(88,101,242,0); } }
         .cfg-nav-sep { height: 1px; background: var(--borda); margin: 10px 8px; }
         .cfg-conteudo { flex: 1; overflow-y: auto; padding: 36px 48px 60px; position: relative; }
         .cfg-painel { display: none; max-width: 600px; flex-direction: column; gap: 4px; }
@@ -179,7 +197,7 @@
         .cfg-conta-nome { font-size: 17px; font-weight: 700; }
         .cfg-linha-botoes { display: flex; gap: 8px; flex-wrap: wrap; }
         .cfg-btn-perigo { background: rgba(255,77,77,0.14); color: #ff8a8a; }
-        @media (max-width: 760px) { .cfg-nav { width: 170px; } .cfg-conteudo { padding: 28px 18px 50px; } }
+        @media (max-width: 760px) { .cfg-nav { width: 170px; } .cfg-conteudo { padding: 28px 18px 50px; } .efeito-barra { bottom: -50px; } }
 
         /* ---------- Painel de voz no estilo do Discord ---------- */
         .grupo-icone { display: flex; align-items: center; flex-shrink: 0; }
@@ -343,6 +361,29 @@
         .campo-mensagem-wrap input, .campo-mensagem-wrap textarea { padding: 12px 14px; border-radius: 10px; background: #1b1e23; }
         .campo-mensagem-wrap textarea { resize: none; overflow-y: auto; max-height: 160px; line-height: 1.4; display: block; box-sizing: border-box; }
         .campo-mensagem-wrap textarea:focus { border-color: var(--sinal); }
+        .campo-mensagem-linha { display: flex; gap: 8px; align-items: flex-end; }
+        .campo-mensagem-linha textarea { flex: 1; min-width: 0; }
+        .btn-anexar-imagem { flex-shrink: 0; width: 42px; height: 42px; padding: 0; border-radius: 10px; background: #1b1e23; border: 1px solid var(--borda); font-size: 18px; }
+        .btn-anexar-imagem:hover { filter: brightness(1.25); }
+        .anexo-pendente { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; padding: 8px 10px; background: var(--painel); border: 1px solid var(--borda); border-radius: 10px; }
+        .anexo-pendente[hidden] { display: none; }
+        .anexo-pendente img { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; background: #111; }
+        .anexo-pendente .anexo-info { flex: 1; min-width: 0; font-size: 12.5px; }
+        .anexo-pendente .anexo-info b { display: block; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .anexo-pendente .anexo-info span { color: var(--texto-fraco); }
+        .anexo-pendente button { background: none; font-size: 15px; padding: 4px 8px; }
+        .area-texto.arrastando-imagem, .amigos-chat.arrastando-imagem { outline: 2px dashed #5865f2; outline-offset: -6px; }
+        .imagem-mensagem { position: relative; margin-top: 4px; max-width: 100%; border-radius: 8px; overflow: hidden; background: #15171b; cursor: zoom-in; display: flex; align-items: center; justify-content: center; }
+        .imagem-mensagem img { width: 100%; height: 100%; object-fit: contain; display: block; }
+        .imagem-mensagem .imagem-estado { font-size: 12px; color: var(--texto-fraco); padding: 8px; text-align: center; }
+        .imagem-mensagem.erro { cursor: pointer; }
+        .imagem-removida { margin-top: 4px; font-size: 12px; color: var(--texto-fraco); font-style: italic; }
+        .lightbox-imagem { position: fixed; inset: 0; z-index: 3500; background: rgba(0,0,0,0.85); display: none; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 20px; }
+        .lightbox-imagem.aberto { display: flex; }
+        .lightbox-imagem img { max-width: 92vw; max-height: 78vh; object-fit: contain; border-radius: 6px; background: #111; }
+        .lightbox-imagem .lightbox-barra { display: flex; gap: 8px; }
+        .lightbox-nota { font-size: 12.5px; color: #c9cdd3; min-height: 1em; text-align: center; }
+        .lightbox-imagem .lightbox-barra button { padding: 8px 14px; border-radius: 8px; background: var(--painel); border: 1px solid var(--borda); }
         .link-mensagem { color: #5eb1ff; text-decoration: underline; cursor: pointer; }
         #modal-texto-area { resize: vertical; min-height: 90px; max-height: 260px; }
 
@@ -594,6 +635,7 @@
         .avatar-participante { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 12px; color: #fff; flex-shrink: 0; }
         .item-membro.transmitindo .avatar-participante { box-shadow: 0 0 0 2px var(--sinal); }
         .item-membro.falando .avatar-participante { box-shadow: 0 0 0 2px #3bd671, 0 0 8px #3bd67199; }
+        .nome-conta { color: var(--texto-fraco); font-size: 11.5px; font-weight: 400; }
         .ponto-qualidade { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; margin-left: auto; }
         .ponto-qualidade.excelente { background: #3bd671; } .ponto-qualidade.boa { background: #ffb020; }
         .ponto-qualidade.ruim { background: var(--sinal); } .ponto-qualidade.desconhecida { background: #565c63; }
@@ -744,6 +786,12 @@
         .status-personalizado:empty::before { content: '+ definir status'; opacity: 0; }
         .cartao-usuario:hover .status-personalizado:empty::before { opacity: 0.8; }
         .item-membro .legenda-conquistas { font-size: 12px; letter-spacing: 1px; cursor: default; }
+        .linha-cargos { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 2px; }
+        .selo-cargo { font-size: 10.5px; font-weight: 600; padding: 1px 6px; border-radius: 6px; line-height: 1.5; cursor: default; white-space: nowrap; }
+        .selo-cargo.fundador { color: #1a1300; background: linear-gradient(90deg, #f7d774, #e0a82e); box-shadow: 0 0 6px rgba(240, 190, 60, 0.45); }
+        .selo-cargo.moderador { color: #dbe6ff; background: #2c4a8f; }
+        .selo-cargo.dono { color: #e6fff4; background: #23795a; }
+        .item-membro .selos-voz { display: inline-flex; gap: 4px; margin-left: 6px; vertical-align: middle; }
         .item-membro .legenda-status { font-size: 10.5px; color: var(--texto-fraco); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
         .perfil-topo { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
         .perfil-avatar { width: 56px; height: 56px; font-size: 22px; }
@@ -765,6 +813,57 @@
         .conquista .barra { height: 4px; border-radius: 2px; background: var(--borda); margin-top: 4px; overflow: hidden; }
         .conquista .barra i { display: block; height: 100%; background: #5865f2; }
         .perfil-botoes { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+        .cfg-painel-largo { max-width: 940px; }
+        .efeito-voltar { align-self: flex-start; background: none; border: 1px solid var(--borda); color: var(--texto-fraco); font-size: 12.5px; padding: 6px 10px; margin-bottom: 10px; }
+        .efeito-cabeca { display: flex; gap: 20px; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; margin-bottom: 14px; }
+        .efeito-cabeca h2 { margin-bottom: 4px; }
+        .efeito-cabeca > div { flex: 1 1 380px; }
+        .efeito-cabeca input { flex: 0 1 260px; font-size: 15px; font-weight: 600; padding: 10px 12px; }
+        .efeito-monitor-caixa { position: relative; border: 1px solid var(--borda); border-radius: 12px; background: radial-gradient(120% 140% at 50% 0%, #161a24 0%, #0b0d11 70%); padding: 10px 12px 12px; margin-bottom: 14px; }
+        #efeito-monitor { display: block; width: 100%; height: 120px; }
+        .efeito-monitor-legenda { position: absolute; inset: 10px 12px 26px; display: flex; align-items: center; justify-content: center; text-align: center; font-size: 12.5px; color: var(--texto-fraco); pointer-events: none; }
+        .efeito-medidor { margin-top: 8px; height: 6px; }
+        .efeito-rotulo { font-size: 11.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--texto-fraco); margin: 2px 0 8px; }
+        .efeito-modelos { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+        .chip-modelo { background: #151820; border: 1px solid var(--borda); border-radius: 999px; padding: 6px 12px; font-size: 12.5px; color: var(--texto); }
+        .chip-modelo:hover:not(:disabled) { background: #1d212c; border-color: #3a4152; }
+        .chip-modelo.ativo { background: rgba(139,123,255,.2); border-color: #8b7bff; }
+        .pedaleira { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+        .pedal { --cor: #888; position: relative; border-radius: 14px; padding: 12px 12px 14px; background: linear-gradient(180deg, color-mix(in srgb, var(--cor) 16%, #161920) 0%, #12141a 100%); border: 1px solid color-mix(in srgb, var(--cor) 38%, #252a33); box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 6px 16px rgba(0,0,0,.35); transition: opacity .15s, filter .15s; }
+        .pedal::before { content: ''; position: absolute; left: 14px; right: 14px; top: 0; height: 3px; border-radius: 0 0 3px 3px; background: var(--cor); opacity: .85; }
+        .pedal.desligado { filter: saturate(.15); opacity: .55; }
+        .pedal.desligado::before { opacity: .25; }
+        .pedal-topo { display: flex; align-items: center; gap: 9px; margin-bottom: 8px; }
+        .pedal-icone { font-size: 20px; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; background: color-mix(in srgb, var(--cor) 22%, #0e1014); }
+        .pedal-textos { flex: 1; min-width: 0; }
+        .pedal-nome { font-weight: 700; font-size: 14px; }
+        .pedal-desc { font-size: 11.5px; color: var(--texto-fraco); line-height: 1.3; }
+        .pedal.largo { grid-column: span 2; }
+        @media (max-width: 900px) { .pedal.largo { grid-column: auto; } }
+        .pedal-chave { width: 38px; height: 22px; border-radius: 999px; padding: 0; position: relative; background: #2a2f3a; border: 1px solid #3a4150; flex-shrink: 0; }
+        .pedal-chave::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #8a93a3; transition: left .15s, background .15s, box-shadow .15s; }
+        .pedal-chave[aria-pressed="true"] { background: color-mix(in srgb, var(--cor) 35%, #1a1d24); border-color: var(--cor); }
+        .pedal-chave[aria-pressed="true"]::after { left: 18px; background: var(--cor); box-shadow: 0 0 8px var(--cor); }
+        .pedal-botoes { display: flex; justify-content: space-around; gap: 6px; flex-wrap: wrap; }
+        .botao-caixa { display: flex; flex-direction: column; align-items: center; width: 70px; }
+        .botao-girar { width: 62px; height: 62px; cursor: ns-resize; touch-action: none; outline: none; border-radius: 50%; }
+        .botao-girar:focus-visible { outline: 2px solid #8ab4ff; outline-offset: 1px; }
+        .botao-girar .arco-trilho { fill: none; stroke: #262b35; stroke-width: 5; stroke-linecap: round; }
+        .botao-girar .arco-valor { fill: none; stroke: var(--cor); stroke-width: 5; stroke-linecap: round; filter: drop-shadow(0 0 3px color-mix(in srgb, var(--cor) 70%, transparent)); }
+        .botao-girar .botao-corpo { fill: #1c2029; stroke: #3a4150; stroke-width: 1.5; }
+        .botao-girar.girando .botao-corpo, .botao-girar:hover .botao-corpo { fill: #232835; }
+        .botao-girar .ponteiro { stroke: #f2f4f8; stroke-width: 3; stroke-linecap: round; }
+        .botao-valor { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: -2px; }
+        .botao-rotulo { font-size: 11.5px; color: var(--texto-fraco); }
+        .botao-caixa.mexido .botao-rotulo { color: var(--cor); }
+        .efeito-barra { position: sticky; bottom: -60px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 14px 0 10px; background: var(--bg); border-top: 1px solid var(--borda); margin-top: 16px; z-index: 2; }
+        .efeito-espaco { flex: 1; }
+        .efeito-salvar { background: #3b8a55; color: #fff; }
+        .efeito-ouvir.ativo { background: rgba(59,214,113,0.2); color: #8ef0b0; }
+        #efeito-comparar.ativo { background: rgba(242,181,58,.25); color: #ffd98a; }
+        #vozes-criadas .voz-criada { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 4px 0; }
+        #vozes-criadas .voz-criada span { flex: 1; }
+        #vozes-criadas .voz-criada button { background: none; padding: 2px 8px; }
         .resumo-abas { display: flex; gap: 6px; margin: 6px 0 10px; }
         .resumo-abas button { padding: 5px 10px; border-radius: 14px; font-size: 12.5px; background: var(--painel); color: var(--texto); border: 1px solid var(--borda); }
         .resumo-abas button.ativa { background: #5865f2; color: #fff; border-color: #5865f2; }
@@ -810,6 +909,23 @@
         .adm-aba { background: rgba(255,255,255,0.05); color: var(--texto-fraco); padding: 7px 12px; border-radius: 8px; font-weight: 600; font-size: 13px; }
         .adm-aba:hover { color: var(--texto); }
         .adm-aba.ativa { background: rgba(255,77,77,0.18); color: var(--texto); }
+        .adm-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; background: rgba(255,255,255,0.04); border-radius: 8px; padding: 10px; }
+        .adm-form input[type=text], .adm-form textarea, .adm-form select, .adm-busca { padding: 7px 10px; border-radius: 8px; background: #1b1e23; border: 1px solid var(--borda); color: var(--texto); font: inherit; }
+        .adm-form textarea { flex: 1 1 100%; min-height: 60px; resize: vertical; }
+        .adm-form label { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+        .adm-busca { width: 100%; box-sizing: border-box; }
+        .adm-subtitulo { font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--texto-fraco); margin: 10px 0 2px; }
+        .adm-detalhe { max-width: 720px; width: 92vw; }
+        .adm-detalhe-corpo { max-height: 66vh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; text-align: left; }
+        .adm-campos { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 6px; }
+        .adm-campo { background: rgba(255,255,255,0.04); border-radius: 8px; padding: 7px 10px; font-size: 13px; }
+        .adm-campo b { display: block; font-size: 11px; color: var(--texto-fraco); font-weight: 600; margin-bottom: 2px; }
+        .adm-barra { height: 10px; border-radius: 6px; background: rgba(255,255,255,0.08); overflow: hidden; }
+        .adm-barra > div { height: 100%; background: #5865f2; }
+        .faixa-aviso { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 3000; max-width: min(720px, 92vw); display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
+        .faixa-aviso > div { pointer-events: auto; display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px; border-radius: 10px; background: #2b3a67; color: #fff; font-size: 13.5px; line-height: 1.4; box-shadow: 0 6px 24px rgba(0,0,0,0.4); white-space: pre-wrap; }
+        .faixa-aviso > div.manutencao { background: #7a2e2e; }
+        .faixa-aviso button { background: none; color: #fff; padding: 0 4px; font-size: 14px; }
         .adm-contador { background: var(--perigo, #e5484d); color: #fff; border-radius: 10px; font-size: 11px; font-weight: 700; padding: 1px 6px; margin-left: 4px; }
         .acesso-linha { flex-wrap: wrap; }
         .acesso-linha .acesso-botoes { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -841,6 +957,31 @@
         #btn-ativar-chave { align-self: flex-start; background: #262b31; color: var(--texto); }
         #modal-denuncia select, #modal-denuncia textarea { width: 100%; box-sizing: border-box; font-family: inherit; resize: vertical; }
         #modal-denuncia #denuncia-enviar { white-space: nowrap; }
+        /* ---------- Acessibilidade e leitura ---------- */
+        input:focus, select:focus, textarea:focus { outline: none; }
+        input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline: 2px solid #8ab4ff; outline-offset: 2px; }
+        .cfg-check input:focus-visible { outline-offset: 1px; }
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+        }
+        /* letras pequenas demais ficaram um pouco maiores */
+        .status-usuario-rodape, .item-membro .legenda-canal-voz, .item-membro .legenda-status, .mensagem-chat .editada, .sons-titulo, .diagnostico-info { font-size: 11.5px; }
+        .titulo-config, .cfg-grupo-titulo, .pop-titulo, .titulo-ajustes, .perfil-sec, .cfg-nav-titulo, .secao-titulo-membros { font-size: 11.5px; }
+        .mensagem-chat .hora-mensagem, .previa-link .previa-site, .perfil-num span, .conquista .ds, .separador-dia, .cartao-layout .desc-layout { font-size: 11.5px; }
+        .dica-config, .dica-personalizado, .pop-dica, .sub-canal, .amigo-sub, .nome-conta, .rotulo-volume, .item-lista-ajustes .sub { font-size: 12px; }
+        .rotulo-slider { font-size: 11.5px; width: 92px; }
+        /* setinhas do rodapé (escolher microfone / saída): maiores e fáceis de acertar */
+        .seta-rodape { font-size: 16px; padding: 5px 6px; min-width: 22px; }
+        body.layout-compacto .seta-rodape, body.layout-cinema .seta-rodape { font-size: 14px; padding: 4px 5px; }
+        /* avisos: erro fica mais tempo e todos têm botão de fechar */
+        #container-notificacoes { pointer-events: none; }
+        .notificacao { pointer-events: auto; display: flex; align-items: flex-start; gap: 10px; }
+        .notificacao .nota-texto { flex: 1; line-height: 1.4; }
+        .notificacao .nota-fechar { background: none; border: none; padding: 0 2px; font-size: 14px; line-height: 1.2; color: var(--texto-fraco); cursor: pointer; }
+        .notificacao .nota-fechar:hover { color: var(--texto); background: none; }
+        /* O que há de novo: resumido, com "ver tudo" */
+        #novidades-corpo.resumido .novidades-extra { display: none; }
+        .novidades-ver-tudo { background: none; border: 1px solid var(--borda); color: var(--texto-fraco); margin: 6px 0 10px; font-size: 12.5px; }
     </style>
 </head>
 <body>
@@ -910,11 +1051,11 @@
                     </span>
                     <span class="grupo-icone">
                         <button id="btn-microfone-rodape" class="icone-rodape" title="Entre num canal de voz pra usar o microfone" disabled>🎤</button>
-                        <button id="btn-mic-seta" class="seta-rodape" title="Escolher microfone e ajustes de voz">˅</button>
+                        <button id="btn-mic-seta" class="seta-rodape" title="Escolher microfone e ajustes de voz" aria-label="Escolher microfone e ajustes de voz">▾</button>
                     </span>
                     <span class="grupo-icone">
                         <button id="btn-surdo-rodape" class="icone-rodape" title="Silenciar áudio recebido">🔊</button>
-                        <button id="btn-fone-seta" class="seta-rodape" title="Escolher a saída de áudio">˅</button>
+                        <button id="btn-fone-seta" class="seta-rodape" title="Escolher a saída de áudio" aria-label="Escolher a saída de áudio">▾</button>
                     </span>
                     <button id="btn-config-usuario" class="icone-rodape" title="Configurações do usuário (Ctrl+,)">⚙️</button>
                 </div>
@@ -937,14 +1078,18 @@
             <div class="area-texto" id="area-texto">
                 <div class="mensagens-chat" id="mensagens-chat"></div>
                 <div class="campo-mensagem-wrap">
-                    <textarea id="input-mensagem" rows="1" maxlength="2000" placeholder="Enviar mensagem..."></textarea>
+                    <div class="anexo-pendente" hidden></div>
+                    <div class="campo-mensagem-linha">
+                        <button type="button" class="btn-anexar-imagem" title="Enviar imagem ou GIF (você também pode colar com Ctrl+V ou arrastar pra cá)" aria-label="Enviar imagem ou GIF">🖼️</button>
+                        <textarea id="input-mensagem" rows="1" maxlength="2000" placeholder="Enviar mensagem..."></textarea>
+                    </div>
                 </div>
             </div>
 
             <!-- Voz -->
             <div class="area-voz" id="area-voz">
                 <div class="barra-controles-voz">
-                    <select id="select-fontes" disabled><option value="">Escolha o que transmitir...</option></select>
+                    <select id="select-fontes" aria-label="O que transmitir" disabled><option value="">Escolha o que transmitir...</option></select>
                     <button id="btn-atualizar-fontes" title="Atualizar a lista de janelas (use depois de abrir um jogo)">🔄</button>
                     <label class="opcao-som" title="Envia junto TODO o som que estiver tocando no seu computador (não só o da janela escolhida): música, avisos, outros programas. Desmarque se quiser transmitir só a imagem.">
                         <input type="checkbox" id="check-som-sistema" checked> <span>Som do computador</span>
@@ -996,7 +1141,7 @@
                         <button data-tam="personalizado">Outra</button>
                     </div>
                     <div class="linha-slider" id="linha-slider-tamanho" style="display:none;">
-                        <input type="range" id="slider-tamanho-video" min="25" max="100" step="5" value="100">
+                        <input type="range" id="slider-tamanho-video" aria-label="Tamanho do vídeo na tela" min="25" max="100" step="5" value="100">
                         <span id="valor-tamanho-video">100%</span>
                     </div>
                     <div class="dica-config">"Grande" ocupa toda a área. Pra tela cheia de verdade, passe o mouse sobre a transmissão e use o botão ⤢.</div>
@@ -1004,7 +1149,7 @@
 
                 <div class="secao-config">
                     <div class="titulo-config">Qualidade do que você envia</div>
-                    <select id="select-qualidade">
+                    <select id="select-qualidade" aria-label="Qualidade da transmissão">
                         <option value="automatico">Automático — 1080p30</option>
                         <option value="alta">Alta — 1080p60</option>
                         <option value="balanceado" selected>Balanceado — 720p30</option>
@@ -1016,6 +1161,7 @@
                     <label class="opcao-discord" title="Envia várias versões da transmissão (em qualidades diferentes), e quem assiste com conexão ruim recebe uma mais leve. Gasta mais processamento de quem transmite, e o H264 passa a usar o processador em vez da placa de vídeo. Não dá pra trocar durante a transmissão.">
                         <input type="checkbox" id="custom-simulcast"> <span>Simulcast (várias versões da transmissão)</span>
                     </label>
+                    <div class="cfg-explica">Manda a sua tela em 2 ou 3 qualidades ao mesmo tempo, e cada pessoa recebe a que a internet dela aguenta. Usa mais o seu PC. Deixe desligado se ninguém reclama de travar.</div>
                 <div id="painel-personalizado-voz">
                             <div class="grade-campos">
                                 <div class="campo campo-resolucao"><label>Resolução (largura × altura)</label>
@@ -1023,7 +1169,7 @@
                                         <input type="number" id="custom-largura" value="1920" min="160" max="3840" step="2">
                                         <span>×</span>
                                         <input type="number" id="custom-altura" value="1080" min="90" max="2160" step="2">
-                                        <select id="custom-preset" title="Resoluções prontas">
+                                        <select id="custom-preset" aria-label="Resoluções prontas" title="Resoluções prontas">
                                             <option value="">Prontas...</option>
                                             <option value="854x480">480p</option>
                                             <option value="1280x720">720p</option>
@@ -1039,10 +1185,11 @@
                             <div class="dica-personalizado" id="dica-personalizado-texto">Limites: resolução de 160×90 até 3840×2160 · FPS de 1 a 60 · bitrate de 0,1 a 50 Mbps. Valores fora disso são ajustados sozinhos.</div>
                         </div>
                     <div class="rotulo-config">Codec de vídeo</div>
-                    <select id="select-codec" title="H264 usa a placa de vídeo (alivia o processador); VP8 usa o processador. Não dá pra trocar durante a transmissão.">
+                    <select id="select-codec" aria-label="Codec de vídeo" title="H264 usa a placa de vídeo (alivia o processador); VP8 usa o processador. Não dá pra trocar durante a transmissão.">
                         <option value="h264">H264 (placa de vídeo)</option>
                         <option value="vp8">VP8 (processador)</option>
                     </select>
+                    <div class="cfg-explica" style="margin-left:0">O "idioma" da compressão do vídeo. H264 usa a placa de vídeo (mais leve). Só troque se a transmissão sair com defeito.</div>
                 </div>
 
                 <div class="secao-config">
@@ -1060,6 +1207,7 @@
                     <label class="opcao-discord" title="Quando alguém manda um link, o servidor do Estrivisor abre a página e mostra o título e a descrição. O seu computador não acessa o site. Desmarque para ver só o link.">
                         <input type="checkbox" id="check-previa-links" checked> <span>Mostrar prévia dos links no chat</span>
                     </label>
+                    <div class="dica-config">A prévia é buscada pelo servidor do Estrivisor, não pelo seu PC: o site do link não vê o seu IP.</div>
                 </div>
 
                 <div class="secao-config">
@@ -1088,7 +1236,7 @@
                         <label class="opcao-discord"><input type="checkbox" id="check-sons-ativo" checked> <span>Tocar os sons do app</span></label>
                         <div class="rotulo-config">Volume dos sons</div>
                         <div class="linha-slider" style="display:flex;">
-                            <input type="range" id="slider-sons" min="0" max="100" step="5" value="60">
+                            <input type="range" id="slider-sons" aria-label="Volume dos sons do app" min="0" max="100" step="5" value="60">
                             <span id="valor-sons">60%</span>
                         </div>
                         <div id="lista-sons"></div>
@@ -1117,19 +1265,19 @@
                             <label>Texto <input type="color" id="cor-texto"></label>
                         </div>
                         <div class="rotulo-config">Fonte</div>
-                        <select id="select-fonte"></select>
+                        <select id="select-fonte" aria-label="Fonte das letras"></select>
                         <div class="rotulo-config">Tamanho da interface</div>
                         <div class="linha-slider" style="display:flex;">
-                            <input type="range" id="slider-zoom" min="80" max="150" step="5" value="100">
+                            <input type="range" id="slider-zoom" aria-label="Tamanho da interface" min="80" max="150" step="5" value="100">
                             <span id="valor-zoom">100%</span>
                         </div>
                         <div class="rotulo-config">Arredondamento dos cantos</div>
                         <div class="linha-slider" style="display:flex;">
-                            <input type="range" id="slider-raio" min="0" max="20" step="1" value="6">
+                            <input type="range" id="slider-raio" aria-label="Arredondamento dos cantos" min="0" max="20" step="1" value="6">
                             <span id="valor-raio">6 px</span>
                         </div>
                         <div class="rotulo-config">Formato das fotos de perfil e ícones</div>
-                        <select id="select-avatar">
+                        <select id="select-avatar" aria-label="Formato da foto">
                             <option value="circulo">Círculo</option>
                             <option value="arredondado">Arredondado</option>
                             <option value="quadrado">Quadrado</option>
@@ -1160,7 +1308,7 @@
                         </label>
                         <div class="rotulo-config">Transparência da janela (quanto aparece)</div>
                         <div class="linha-slider" style="display:flex;">
-                            <input type="range" id="slider-flutuante-opacidade" min="30" max="100" step="5" value="100">
+                            <input type="range" id="slider-flutuante-opacidade" aria-label="Transparência da janela flutuante" min="30" max="100" step="5" value="100">
                             <span id="valor-flutuante-opacidade">100%</span>
                         </div>
                     </div>
@@ -1179,12 +1327,12 @@
 
                     <div class="rotulo-config">Escurecer a foto</div>
                     <div class="linha-slider" style="display:flex;">
-                        <input type="range" id="slider-fundo-escuro" min="0" max="90" step="5" value="60">
+                        <input type="range" id="slider-fundo-escuro" aria-label="Escurecer a foto de fundo" min="0" max="90" step="5" value="60">
                         <span id="valor-fundo-escuro">60%</span>
                     </div>
                     <div class="rotulo-config">Desfoque</div>
                     <div class="linha-slider" style="display:flex;">
-                        <input type="range" id="slider-fundo-desfoque" min="0" max="20" step="1" value="0">
+                        <input type="range" id="slider-fundo-desfoque" aria-label="Desfocar a foto de fundo" min="0" max="20" step="1" value="0">
                         <span id="valor-fundo-desfoque">0 px</span>
                     </div>
                     <div class="dica-config">Se o texto ficar difícil de ler, aumente o escurecimento.</div>
@@ -1204,10 +1352,10 @@
     </div>
 
     <div id="painel-arquivos"></div>
-    <div id="container-notificacoes"></div>
+    <div id="container-notificacoes" role="status" aria-live="polite"></div>
 
     <!-- Amigos e mensagens diretas -->
-    <div id="tela-amigos" class="tela-amigos">
+    <div id="tela-amigos" class="tela-amigos" role="dialog" aria-modal="true">
         <aside class="amigos-lateral">
             <div class="amigos-topo">
                 <div class="amigos-titulo"><span>👥 Amigos</span></div>
@@ -1239,20 +1387,29 @@
             </div>
             <div class="amigos-chat" id="amigos-chat">
                 <div class="mensagens-chat" id="amigos-mensagens"></div>
-                <div class="campo-mensagem-wrap"><textarea id="amigos-input-mensagem" rows="1" maxlength="2000" placeholder="Enviar mensagem..."></textarea></div>
+                <div class="campo-mensagem-wrap">
+                    <div class="anexo-pendente" hidden></div>
+                    <div class="campo-mensagem-linha">
+                        <button type="button" class="btn-anexar-imagem" title="Enviar imagem ou GIF (você também pode colar com Ctrl+V ou arrastar pra cá)" aria-label="Enviar imagem ou GIF">🖼️</button>
+                        <textarea id="amigos-input-mensagem" rows="1" maxlength="2000" placeholder="Enviar mensagem..."></textarea>
+                    </div>
+                </div>
             </div>
         </section>
     </div>
 
     <!-- Configurações do usuário -->
-    <div id="modal-config" class="tela-config">
+    <div id="modal-config" class="tela-config" role="dialog" aria-modal="true">
         <nav class="cfg-nav">
             <div class="cfg-nav-titulo">CONFIGURAÇÕES DO USUÁRIO</div>
+            <input type="search" id="cfg-busca" class="cfg-busca" placeholder="🔎 Procurar configuração..." aria-label="Procurar configuração" autocomplete="off">
             <button class="cfg-item ativo" data-cfg="conta">👤 Minha conta</button>
+            <button class="cfg-item" data-cfg="privacidade">🔒 Privacidade <span class="cfg-novo" data-novo="privacidade">novo</span></button>
             <button class="cfg-item" data-cfg="voz">🎙️ Voz e áudio</button>
             <button class="cfg-item" data-cfg="video">🖥️ Vídeo e transmissão</button>
             <button class="cfg-item" data-cfg="aparencia">🎨 Aparência</button>
-            <button class="cfg-item" data-cfg="som">🔔 Som</button>
+            <button class="cfg-item" data-cfg="flutuante">🪟 Janela flutuante <span class="cfg-novo" data-novo="flutuante">novo</span></button>
+            <button class="cfg-item" data-cfg="som">🔔 Sons do app</button>
             <button class="cfg-item" data-cfg="discord">🎮 Discord</button>
             <button class="cfg-item" data-cfg="acesso" id="cfg-item-acesso" style="display:none;">🛡️ Administração <span id="cfg-badge-acesso" class="cfg-badge-acesso" style="display:none;"></span></button>
             <div class="cfg-nav-sep"></div>
@@ -1275,6 +1432,16 @@
                     <div class="cfg-linha-botoes"><code id="cfg-codigo-amigo" style="font-size:16px;font-weight:700;letter-spacing:.05em;align-self:center;">—</code><button id="cfg-copiar-codigo">Copiar</button><button id="cfg-trocar-codigo">Trocar código</button></div>
                     <div class="cfg-dica">Passe esse código pra um amigo adicionar você (botão 👥 no canto da barra de servidores → Adicionar). Se o código vazar, troque: o antigo deixa de valer e quem já é seu amigo continua amigo.</div>
                 </div>
+                <div class="cfg-grupo">
+                    <div class="cfg-linha-botoes">
+                        <button id="cfg-sair-conta" class="cfg-btn-perigo">Sair da conta</button>
+                    </div>
+                </div>
+            </section>
+
+            <section class="cfg-painel" id="cfg-painel-privacidade">
+                <h2>Privacidade</h2>
+                <div class="cfg-dica" style="margin-bottom:6px;">O que os outros veem de você e o que o Estrivisor guarda.</div>
                 <div class="cfg-grupo" id="cfg-grupo-dados">
                     <div class="cfg-grupo-titulo">Seus dados</div>
                     <div class="cfg-linha-botoes">
@@ -1283,11 +1450,6 @@
                     </div>
                     <div class="cfg-dica">Exportar salva um arquivo com o que o servidor guarda sobre você (as suas mensagens, servidores e amigos). Apagar remove a sua conta, as suas mensagens e as suas amizades, e não dá para desfazer. Se você for dono de um servidor, transfira ou apague o servidor antes.</div>
                 </div>
-                <div class="cfg-grupo">
-                    <div class="cfg-linha-botoes">
-                        <button id="cfg-sair-conta" class="cfg-btn-perigo">Sair da conta</button>
-                    </div>
-                </div>
             </section>
 
             <section class="cfg-painel" id="cfg-painel-voz">
@@ -1295,9 +1457,9 @@
                 <div class="cfg-grupo">
                     <div class="cfg-grupo-titulo">Dispositivos</div>
                     <div class="cfg-rotulo">Microfone</div>
-                    <select id="cfg-select-entrada"></select>
+                    <select id="cfg-select-entrada" aria-label="Microfone"></select>
                     <div class="cfg-rotulo">Saída de áudio (fone ou caixa de som)</div>
-                    <select id="cfg-select-saida"></select>
+                    <select id="cfg-select-saida" aria-label="Saída de áudio"></select>
                 </div>
                 <div class="cfg-grupo">
                     <div class="cfg-grupo-titulo">Testar microfone</div>
@@ -1306,28 +1468,43 @@
                     <div class="cfg-dica">O teste toca a sua voz de volta. Use fone de ouvido para não gerar microfonia. A barra mostra o nível do que o microfone está captando.</div>
                 </div>
                 <div class="cfg-grupo">
+                    <div class="cfg-grupo-titulo">Ao entrar numa chamada</div>
+                    <label class="cfg-check"><input type="checkbox" id="cfg-mic-ao-entrar"><span><b>Entrar com o microfone ligado</b><span>Assim que a chamada conecta, o microfone já liga (como no Discord). Desligado: você entra mudo e liga quando quiser.</span></span></label>
+                </div>
+                <div class="cfg-grupo">
+                    <div class="cfg-grupo-titulo">Efeito de voz (brincadeira)</div>
+                    <select id="cfg-efeito-voz" aria-label="Efeito de voz">
+                        <option value="nenhum">Sem efeito</option>
+                        <option value="robo">🤖 Robô</option>
+                        <option value="grave">🎙️ Voz grossa</option>
+                        <option value="agudo">🐿️ Voz fina</option>
+                        <option value="radio">📻 Rádio antigo</option>
+                        <option value="megafone">📢 Megafone</option>
+                        <option value="caverna">🕳️ Caverna</option>
+                        <option value="alien">👽 Alienígena</option>
+                        <option value="demonio">😈 Demônio</option>
+                        <option value="agua">🌊 Debaixo d'água</option>
+                        <option value="bebado">🥴 Bêbado</option>
+                    </select>
+                    <div class="cfg-dica">Todo mundo na chamada ouve o efeito. Use "Testar microfone" (com fone) para experimentar. Lembre de voltar para "Sem efeito" depois.</div>
+                    <div id="vozes-criadas"></div>
+                    <div class="cfg-linha-botoes"><button id="cfg-criar-voz" type="button">🎛️ Criar efeito</button></div>
+                    <div class="cfg-dica">Monte o seu próprio efeito: tom, graves e agudos, robô, distorção, vibrato, eco, ambiente e volume, ouvindo o resultado na hora.</div>
+                </div>
+                <details class="cfg-avancado" id="cfg-voz-avancado">
+                    <summary>⚙️ Avançado: filtros de ruído, eco e qualidade (mexa só se tiver problema)</summary>
+                <div class="cfg-grupo">
                     <div class="cfg-grupo-titulo">Processamento da voz</div>
                     <label class="cfg-check"><input type="checkbox" id="cfg-eco"><span><b>Cancelamento de eco</b><span>Evita que a voz dos outros volte pelo seu microfone. Recomendado ligado.</span></span></label>
                     <label class="cfg-check"><input type="checkbox" id="cfg-ruido-avancado"><span><b>Supressão de ruído avançada (IA)</b><span>Tira cliques de teclado e mouse, ventilador, chiado e vozes de fundo bem melhor que o filtro comum. Quem fala precisa estar com a versão atual do app. Recomendado ligado.</span></span></label>
                     <label class="cfg-check"><input type="checkbox" id="cfg-ruido"><span><b>Supressão de ruído comum</b><span>Filtro simples do sistema. Fica desligado sozinho quando a avançada está ligada.</span></span></label>
                     <label class="cfg-check"><input type="checkbox" id="cfg-porta"><span><b>Porta de ruído</b><span>Corta o microfone quando você não está falando. Use "Testar microfone" e arraste o controle abaixo até a marca branca ficar acima do nível do barulho e abaixo da sua voz.</span></span></label>
-                    <div class="cfg-linha-limiar" id="cfg-linha-limiar" style="display:none"><span title="Quanto maior, mais alto você precisa falar para o microfone abrir">Limite</span><input type="range" id="cfg-limiar-porta" min="1" max="100" step="1"><b id="cfg-limiar-valor">12</b></div>
+                    <div class="cfg-linha-limiar" id="cfg-linha-limiar" style="display:none"><span title="Quanto maior, mais alto você precisa falar para o microfone abrir">Limite</span><input type="range" id="cfg-limiar-porta" aria-label="Limite da porta de ruído" min="1" max="100" step="1"><b id="cfg-limiar-valor">12</b></div>
                     <label class="cfg-check"><input type="checkbox" id="cfg-ganho"><span><b>Controle de volume automático</b><span>Nivela o volume da sua voz. Desligue se usa um microfone bom e já regulado.</span></span></label>
                 </div>
                 <div class="cfg-grupo">
-                    <div class="cfg-grupo-titulo">Efeito de voz (brincadeira)</div>
-                    <select id="cfg-efeito-voz">
-                        <option value="nenhum">Sem efeito</option>
-                        <option value="robo">🤖 Robô</option>
-                        <option value="grave">🎙️ Voz grossa</option>
-                        <option value="agudo">🐿️ Voz fina</option>
-                        <option value="eco">🏔️ Eco</option>
-                    </select>
-                    <div class="cfg-dica">Todo mundo na chamada ouve o efeito. Use "Testar microfone" (com fone) para experimentar. Lembre de voltar para "Sem efeito" depois.</div>
-                </div>
-                <div class="cfg-grupo">
                     <div class="cfg-grupo-titulo">Qualidade da voz</div>
-                    <select id="cfg-qualidade-voz">
+                    <select id="cfg-qualidade-voz" aria-label="Qualidade da voz">
                         <option value="normal">Normal — 32 kbps (economiza internet)</option>
                         <option value="alta">Alta — 64 kbps (recomendado)</option>
                         <option value="muito_alta">Muito alta — 96 kbps</option>
@@ -1335,6 +1512,34 @@
                     <label class="cfg-check"><input type="checkbox" id="cfg-dtx"><span><b>Economizar internet no silêncio</b><span>Para de enviar áudio enquanto você está calado.</span></span></label>
                     <label class="cfg-check"><input type="checkbox" id="cfg-red"><span><b>Proteção contra perda de pacotes</b><span>Mantém a voz mais limpa em Wi‑Fi ou internet instável, gastando um pouco mais de banda.</span></span></label>
                     <div class="cfg-dica">As mudanças valem na hora, inclusive durante uma chamada.</div>
+                </div>
+                </details>
+            </section>
+
+            <section class="cfg-painel cfg-painel-largo" id="cfg-painel-efeito">
+                <button type="button" id="efeito-voltar" class="efeito-voltar">← Voltar para Voz e áudio</button>
+                <div class="efeito-cabeca">
+                    <div>
+                        <h2 id="efeito-titulo">Criar efeito de voz</h2>
+                        <div class="cfg-dica">Monte a sua pedaleira: ligue os pedais, gire os botões e ouça na hora (use fone). Enquanto você edita, ninguém na chamada ouve nada.</div>
+                    </div>
+                    <input id="efeito-nome" maxlength="24" placeholder="Nome do efeito" aria-label="Nome do efeito">
+                </div>
+                <div class="efeito-monitor-caixa">
+                    <canvas id="efeito-monitor" aria-hidden="true"></canvas>
+                    <div id="efeito-monitor-legenda" class="efeito-monitor-legenda"></div>
+                    <div class="cfg-medidor efeito-medidor" title="Nível do que sai do efeito (o que os outros ouviriam)"><div id="efeito-medidor-barra"></div></div>
+                </div>
+                <div class="efeito-rotulo">Começar de um modelo</div>
+                <div id="efeito-modelos" class="efeito-modelos"></div>
+                <div id="efeito-controles" class="pedaleira"></div>
+                <div class="efeito-barra">
+                    <button type="button" id="efeito-ouvir" class="efeito-ouvir">🎧 Ouvir com meu microfone</button>
+                    <button type="button" id="efeito-comparar" title="Segure para ouvir a sua voz sem o efeito e comparar">👂 Segure: sem efeito</button>
+                    <button type="button" id="efeito-zerar">↺ Zerar tudo</button>
+                    <span class="efeito-espaco"></span>
+                    <button type="button" id="efeito-cancelar">Cancelar</button>
+                    <button type="button" id="efeito-salvar" class="efeito-salvar">💾 Salvar efeito</button>
                 </div>
             </section>
 
@@ -1347,7 +1552,11 @@
             </section>
 
             <section class="cfg-painel" id="cfg-painel-som">
-                <h2>Som</h2>
+                <h2>Sons do app</h2>
+            </section>
+
+            <section class="cfg-painel" id="cfg-painel-flutuante">
+                <h2>Janela flutuante</h2>
             </section>
 
             <section class="cfg-painel" id="cfg-painel-discord">
@@ -1359,9 +1568,13 @@
                 <div class="adm-abas" id="adm-abas">
                     <button class="adm-aba ativa" data-aba="pedidos">Pedidos <span class="adm-contador" id="adm-cont-pedidos" style="display:none;"></span></button>
                     <button class="adm-aba" data-aba="pessoas">Pessoas</button>
-                    <button class="adm-aba" data-aba="servidores">Servidores</button>
+                    <button class="adm-aba" data-aba="servidores" data-so-admin="1">Servidores</button>
                     <button class="adm-aba" data-aba="denuncias">Denúncias <span class="adm-contador" id="adm-cont-denuncias" style="display:none;"></span></button>
-                    <button class="adm-aba" data-aba="chaves">Chaves</button>
+                    <button class="adm-aba" data-aba="aovivo" data-so-admin="1">Ao vivo</button>
+                    <button class="adm-aba" data-aba="avisos" data-so-admin="1">Aviso geral</button>
+                    <button class="adm-aba" data-aba="chaves" data-so-admin="1">Chaves</button>
+                    <button class="adm-aba" data-aba="espaco" data-so-admin="1">Espaço</button>
+                    <button class="adm-aba" data-aba="sistema" data-so-admin="1">Sistema</button>
                     <button class="adm-aba" data-aba="historico">Histórico</button>
                 </div>
                 <div class="cfg-dica" id="adm-dica" style="margin-bottom:12px;"></div>
@@ -1381,7 +1594,7 @@
     </div>
 
     <!-- O que há de novo (aparece uma vez depois de cada atualização) -->
-    <div id="tela-novidades" class="tela-login">
+    <div id="tela-novidades" class="tela-login" role="dialog" aria-modal="true">
         <div class="cartao-login cartao-largo">
             <div class="titulo-modal" id="novidades-titulo">O que há de novo</div>
             <div id="novidades-corpo"></div>
@@ -1390,6 +1603,15 @@
     </div>
 
     <!-- Sala de cinema sincronizada -->
+    <div id="lightbox-imagem" class="lightbox-imagem" role="dialog" aria-label="Imagem ampliada">
+        <img id="lightbox-img" alt="Imagem ampliada">
+        <div id="lightbox-nota" class="lightbox-nota"></div>
+        <div class="lightbox-barra">
+            <button type="button" id="lightbox-copiar">📋 Copiar imagem</button>
+            <button type="button" id="lightbox-salvar">💾 Salvar</button>
+            <button type="button" id="lightbox-fechar">Fechar</button>
+        </div>
+    </div>
     <div id="cinema-convite" class="cinema-convite" style="display:none;">
         <div class="cinema-convite-texto" id="cinema-convite-texto"></div>
         <div class="cinema-convite-botoes">
@@ -1402,21 +1624,21 @@
             <span class="cinema-titulo" id="cinema-titulo"></span>
             <span class="cinema-status" id="cinema-status"></span>
             <button id="cinema-minimizar" type="button" title="Esconde a sala (o filme continua; clique no 🎬 para voltar)">─</button>
-            <button id="cinema-fechar" type="button"></button>
+            <button id="cinema-fechar" type="button" aria-label="Fechar a sala de cinema"></button>
         </div>
         <video id="cinema-video" playsinline></video>
         <div class="cinema-barra">
             <button id="cinema-play" type="button" title="Tocar/pausar (só quem iniciou a sessão controla)">▶</button>
             <span class="cinema-tempo" id="cinema-tempo">0:00 / 0:00</span>
-            <input type="range" id="cinema-seek" min="0" max="1000" value="0">
-            <span>🔊</span><input type="range" id="cinema-volume" min="0" max="100" value="80">
+            <input type="range" id="cinema-seek" aria-label="Posição do filme" min="0" max="1000" value="0">
+            <span>🔊</span><input type="range" id="cinema-volume" aria-label="Volume do filme" min="0" max="100" value="80">
             <button id="cinema-tela-cheia" type="button" title="Tela cheia">⛶</button>
         </div>
     </div>
     <input type="file" id="entrada-cinema" accept="video/*,.mkv,.mp4,.webm,.m4v,.mov,.ogv" style="display:none">
 
     <!-- Cartão de perfil e resumo (estatísticas medidas pelo servidor) -->
-    <div id="tela-perfil" class="tela-login">
+    <div id="tela-perfil" class="tela-login" role="dialog" aria-modal="true">
         <div class="cartao-login cartao-largo">
             <div class="perfil-topo">
                 <span class="avatar-participante perfil-avatar" id="perfil-avatar"></span>
@@ -1429,7 +1651,15 @@
             </div>
         </div>
     </div>
-    <div id="tela-resumo" class="tela-login">
+    <!-- Administração: ficha de uma pessoa / detalhes de um servidor -->
+    <div id="tela-adm-detalhe" class="tela-login" role="dialog" aria-modal="true">
+        <div class="cartao-login cartao-largo adm-detalhe">
+            <div class="titulo-modal" id="adm-detalhe-titulo"></div>
+            <div id="adm-detalhe-corpo" class="adm-detalhe-corpo"></div>
+            <div class="perfil-botoes"><button id="adm-detalhe-fechar" type="button">Fechar</button></div>
+        </div>
+    </div>
+    <div id="tela-resumo" class="tela-login" role="dialog" aria-modal="true">
         <div class="cartao-login cartao-largo">
             <div class="titulo-modal">Meu resumo</div>
             <div class="resumo-abas" id="resumo-abas"></div>
@@ -1439,7 +1669,7 @@
     </div>
 
     <!-- Aceite dos termos de uso (aparece no primeiro login e quando os termos mudam) -->
-    <div id="tela-termos" class="tela-login">
+    <div id="tela-termos" class="tela-login" role="dialog" aria-modal="true">
         <div class="cartao-login cartao-largo termos-cartao">
             <div class="titulo-modal">Termos de uso do Estrivisor</div>
             <div class="termos-texto" id="termos-texto">
@@ -1466,7 +1696,7 @@
     </div>
 
     <!-- Denunciar mensagem ou pessoa -->
-    <div id="modal-chave" class="tela-login">
+    <div id="modal-chave" class="tela-login" role="dialog" aria-modal="true">
         <div class="cartao-login">
             <div class="titulo-modal">Ativar chave de qualidade</div>
             <div class="dica-login" id="chave-dica">Digite a chave que o administrador te passou. Ela vale para a sua conta.</div>
@@ -1479,11 +1709,11 @@
         </div>
     </div>
 
-    <div id="modal-denuncia" class="tela-login">
+    <div id="modal-denuncia" class="tela-login" role="dialog" aria-modal="true">
         <div class="cartao-login">
             <div class="titulo-modal" id="denuncia-titulo">Denunciar</div>
             <div class="dica-login" id="denuncia-dica"></div>
-            <select id="denuncia-motivo">
+            <select id="denuncia-motivo" aria-label="Motivo da denúncia">
                 <option value="assedio">Assédio, ameaça ou discurso de ódio</option>
                 <option value="sexual-menores">Conteúdo sexual envolvendo menores</option>
                 <option value="golpe">Golpe, fraude ou invasão</option>
@@ -1499,7 +1729,7 @@
         </div>
     </div>
 
-    <div id="modal-texto" class="tela-login">
+    <div id="modal-texto" class="tela-login" role="dialog" aria-modal="true">
         <div class="cartao-login">
             <div class="titulo-modal" id="modal-texto-titulo">Título</div>
             <div id="modal-texto-dica" class="dica-login" style="display:none; white-space: pre-wrap; overflow-wrap: anywhere;"></div>
@@ -1516,7 +1746,7 @@
     </div>
 
     <!-- Primeira abertura / criar ou entrar num servidor -->
-    <div id="tela-inicio" class="tela-login">
+    <div id="tela-inicio" class="tela-login" role="dialog" aria-modal="true">
         <div class="cartao-login cartao-largo">
             <div class="marca-login"><span class="ponto"></span> <span id="inicio-titulo">Bem-vindo ao Estrivisor</span></div>
             <div id="inicio-texto" class="dica-login"></div>
@@ -1551,7 +1781,7 @@
     </div>
 
     <!-- Ajustes do servidor -->
-    <div id="modal-ajustes" class="tela-login">
+    <div id="modal-ajustes" class="tela-login" role="dialog" aria-modal="true">
         <div class="cartao-login cartao-largo">
             <div class="marca-login"><span class="icone-servidor" id="ajustes-icone" style="width:34px;height:34px;font-size:14px;border-radius:10px;"></span> <span id="ajustes-titulo">Servidor</span></div>
             <div id="ajustes-aparencia" class="secao-ajustes" style="border-top:none; padding-top:0;">
@@ -1592,7 +1822,7 @@
         </div>
     </div>
 
-    <div id="tela-login" class="tela-login">
+    <div id="tela-login" class="tela-login" role="dialog" aria-modal="true">
         <div class="cartao-login">
             <div class="marca-login"><span class="ponto"></span> Estrivisor</div>
 
@@ -1639,6 +1869,7 @@
     <script src="./perfil.js"></script>
     <script src="./somboard.js"></script>
     <script src="./cinema.js"></script>
+    <script src="./imagens.js"></script>
     <script src="./estrivisor-app.js"></script>
 </body>
 </html>

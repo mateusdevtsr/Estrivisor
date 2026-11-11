@@ -6,10 +6,23 @@
 function mostrarNotificacao(mensagem, tipo) {
     const container = document.getElementById('container-notificacoes');
     const nota = document.createElement('div');
-    nota.className = 'notificacao' + (tipo === 'info' ? ' info' : '');
-    nota.textContent = mensagem;
+    const ehInfo = tipo === 'info';
+    nota.className = 'notificacao' + (ehInfo ? ' info' : '');
+    if (!ehInfo) nota.setAttribute('role', 'alert');
+    const texto = document.createElement('div');
+    texto.className = 'nota-texto';
+    texto.textContent = mensagem;
+    const fechar = document.createElement('button');
+    fechar.type = 'button'; fechar.className = 'nota-fechar'; fechar.textContent = '✕';
+    fechar.title = 'Fechar'; fechar.setAttribute('aria-label', 'Fechar aviso');
+    fechar.addEventListener('click', () => nota.remove());
+    nota.append(texto, fechar);
     container.appendChild(nota);
-    setTimeout(() => nota.remove(), 4500);
+    // Erro fica mais tempo (dá pra ler com calma); passar o mouse por cima segura o aviso na tela.
+    const duracao = ehInfo ? 4500 : Math.min(12000, 7000 + String(mensagem || '').length * 30);
+    let timer = setTimeout(() => nota.remove(), duracao);
+    nota.addEventListener('mouseenter', () => clearTimeout(timer));
+    nota.addEventListener('mouseleave', () => { clearTimeout(timer); timer = setTimeout(() => nota.remove(), 2500); });
 }
 
 // ---------- Cor de avatar consistente ----------
@@ -50,6 +63,20 @@ function aplicarAvatar(el, identidade, nome, avatarUrl) {
 }
 
 // Lê o avatar que o servidor colocou no "metadata" do participante.
+// O apelido é livre; o nome da CONTA vem do servidor. Quando são diferentes, a tela mostra os dois:
+// "Apelido (Nome da conta)", pra ninguém se passar por outra pessoa só trocando o apelido.
+function contaDoParticipante(p) {
+    try { const d = JSON.parse((p && p.metadata) || '{}'); return typeof d.conta === 'string' ? d.conta.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 40) : ''; }
+    catch (e) { return ''; }
+}
+function contaDiferente(nome, conta) {
+    const c = typeof conta === 'string' ? conta.trim().slice(0, 40) : '';
+    return c && c.toLowerCase() !== String(nome || '').trim().toLowerCase() ? c : '';
+}
+function htmlNomeComConta(nome, conta) {
+    const c = contaDiferente(nome, conta);
+    return escaparHtml(nome) + (c ? ` <span class="nome-conta" title="Nome da conta desta pessoa">(${escaparHtml(c)})</span>` : '');
+}
 function avatarDoParticipante(p, alternativo) {
     try {
         const dados = JSON.parse((p && p.metadata) || '{}');
@@ -313,6 +340,7 @@ let canalVozAtual = null;
 let souAnfitriaoVoz = false;
 
 let microfoneAtivo = false;
+let reaplicandoAudio = 0; // >0 enquanto o app mesmo mexe na trilha do microfone (não é o dono do servidor mutando)
 let microfoneTesteAtivo = false;
 let streamTesteMic = null;
 let audioTesteMic = null;
@@ -771,6 +799,161 @@ function anexarPreviaDoLink(corpoEl, texto) {
     caixa.addEventListener('change', () => { try { localStorage.setItem(CHAVE_PREVIA_LINKS, caixa.checked ? '1' : '0'); } catch (e) { /* vale só até fechar */ } });
 }
 
+// ---------- Imagens, GIFs e prints no chat ----------
+// Guardadas no servidor (como os sons). Aqui: preparar o arquivo antes de enviar, baixar/mostrar na mensagem e ampliar.
+const cacheImagens = new Map(); // chave -> { p: Promise<entrada>, e: entrada|null }
+let bytesNoCacheImagens = 0;
+const LIMITE_CACHE_IMAGENS = 80 * 1024 * 1024;
+function carregarImagemDoChat(caminho, seq) {
+    const chave = caminho + '#' + seq;
+    const guardada = cacheImagens.get(chave);
+    if (guardada) return guardada.p;
+    const reg = { p: null, e: null };
+    reg.p = api('GET', `${caminho}/${seq}/imagem`).then((d) => {
+        if (!d || typeof d.dados !== 'string' || !window.Imagens.TIPOS.includes(d.tipo)) throw new Error('Imagem inválida.');
+        const bin = atob(d.dados);
+        const u8 = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+        if (window.Imagens.tipoPorBytes(u8) !== d.tipo) throw new Error('Imagem inválida.');
+        const blob = new Blob([u8], { type: d.tipo });
+        reg.e = { url: URL.createObjectURL(blob), blob, tipo: d.tipo, bytes: u8.length, compactada: d.compactada === true };
+        bytesNoCacheImagens += u8.length;
+        for (const [k, v] of cacheImagens) { // tira as mais antigas se passar do limite
+            if (bytesNoCacheImagens <= LIMITE_CACHE_IMAGENS || k === chave) break;
+            if (v.e) { URL.revokeObjectURL(v.e.url); bytesNoCacheImagens -= v.e.bytes; cacheImagens.delete(k); }
+        }
+        return reg.e;
+    }).catch((err) => { cacheImagens.delete(chave); throw err; });
+    cacheImagens.set(chave, reg);
+    return reg.p;
+}
+function blobParaBase64(blob) {
+    return new Promise((ok, falha) => {
+        const l = new FileReader();
+        l.onload = () => ok(String(l.result).split(',')[1] || '');
+        l.onerror = () => falha(new Error('Não consegui ler a imagem.'));
+        l.readAsDataURL(blob);
+    });
+}
+async function blobParaPng(blob) {
+    const bmp = await createImageBitmap(blob);
+    const c = document.createElement('canvas');
+    c.width = bmp.width; c.height = bmp.height;
+    c.getContext('2d').drawImage(bmp, 0, 0);
+    if (bmp.close) bmp.close();
+    return new Promise((ok, falha) => c.toBlob((b) => (b ? ok(b) : falha(new Error('Não consegui converter a imagem.'))), 'image/png'));
+}
+// Confere o arquivo escolhido/colado/arrastado e deixa pronto pra enviar: formato pelos bytes, e reduz se for enorme.
+async function prepararImagemParaEnvio(arquivo) {
+    const I = window.Imagens;
+    if (!arquivo || !arquivo.size) throw new Error('Não consegui ler essa imagem.');
+    if (arquivo.size > 40 * 1024 * 1024) throw new Error('Imagem grande demais (máximo 6 MB depois de reduzir).');
+    const tipo = I.tipoPorBytes(new Uint8Array(await arquivo.slice(0, 32).arrayBuffer()));
+    if (!tipo) throw new Error('Formato não aceito. Use PNG, JPG, GIF ou WEBP.');
+    let bmp;
+    try { bmp = await createImageBitmap(arquivo); } catch (e) { throw new Error('Não consegui ler essa imagem.'); }
+    let blob = arquivo, tipoFinal = tipo, w = bmp.width, h = bmp.height;
+    if (I.deveReencodar({ tipo, bytes: arquivo.size, w, h })) {
+        for (const [lado, q] of [[I.LADO_MAXIMO, 0.9], [I.LADO_MAXIMO, 0.78], [1280, 0.7]]) {
+            const d = I.dimensoesAlvo(w, h, lado);
+            const c = document.createElement('canvas');
+            c.width = d.w; c.height = d.h;
+            c.getContext('2d').drawImage(bmp, 0, 0, d.w, d.h);
+            const novo = await new Promise((ok) => c.toBlob(ok, 'image/webp', q));
+            if (novo && novo.type === 'image/webp' && novo.size <= I.MAX_BYTES) {
+                if (novo.size < arquivo.size || arquivo.size > I.MAX_BYTES) { blob = novo; tipoFinal = 'image/webp'; w = d.w; h = d.h; }
+                break;
+            }
+        }
+    }
+    // Versão compacta (alguns KB): o servidor guarda junto e, quando o espaço dele acaba, fica só com ela
+    // nas imagens mais antigas. Assim nenhuma imagem some. (De GIF vai o primeiro quadro.)
+    let mini = null;
+    if (blob.size > 150 * 1024) {
+        for (const [lado, q] of [[1024, 0.72], [800, 0.6], [640, 0.5]]) {
+            const d = I.dimensoesAlvo(bmp.width, bmp.height, lado);
+            const c = document.createElement('canvas');
+            c.width = d.w; c.height = d.h;
+            c.getContext('2d').drawImage(bmp, 0, 0, d.w, d.h);
+            const novo = await new Promise((ok) => c.toBlob(ok, 'image/webp', q));
+            if (novo && novo.type === 'image/webp' && novo.size <= 300 * 1024 && novo.size < blob.size * 0.8) { mini = novo; break; }
+        }
+    }
+    if (bmp.close) bmp.close();
+    if (blob.size > I.MAX_BYTES) throw new Error('Imagem grande demais (máximo 6 MB).');
+    return { blob, mini, tipo: tipoFinal, w, h, nome: arquivo.name || '' };
+}
+
+let imagemAmpliada = null;
+function abrirImagemAmpliada(entrada) {
+    imagemAmpliada = entrada;
+    document.getElementById('lightbox-img').src = entrada.url;
+    document.getElementById('lightbox-nota').textContent = entrada.compactada ? 'Versão reduzida: a original é antiga e foi compactada para economizar espaço no servidor.' : '';
+    document.getElementById('lightbox-imagem').classList.add('aberto');
+}
+function fecharImagemAmpliada() {
+    imagemAmpliada = null;
+    document.getElementById('lightbox-imagem').classList.remove('aberto');
+    document.getElementById('lightbox-img').removeAttribute('src');
+}
+document.getElementById('lightbox-fechar').addEventListener('click', fecharImagemAmpliada);
+document.getElementById('lightbox-imagem').addEventListener('click', (e) => { if (e.target.id === 'lightbox-imagem') fecharImagemAmpliada(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && imagemAmpliada) { e.stopPropagation(); fecharImagemAmpliada(); } }, true);
+document.getElementById('lightbox-copiar').addEventListener('click', async () => {
+    if (!imagemAmpliada) return;
+    try {
+        const png = await blobParaPng(imagemAmpliada.blob);
+        const r = await window.electronAPI.copiarImagem({ tipo: 'image/png', base64: await blobParaBase64(png) });
+        mostrarNotificacao(r && r.ok ? 'Imagem copiada!' : 'Não consegui copiar a imagem.', r && r.ok ? 'info' : undefined);
+    } catch (err) { mostrarNotificacao('Não consegui copiar a imagem.'); }
+});
+document.getElementById('lightbox-salvar').addEventListener('click', async () => {
+    if (!imagemAmpliada) return;
+    try {
+        const r = await window.electronAPI.salvarImagem({ tipo: imagemAmpliada.tipo, base64: await blobParaBase64(imagemAmpliada.blob) });
+        if (r && r.ok) mostrarNotificacao('Imagem salva!', 'info');
+        else if (r && !r.cancelado) mostrarNotificacao(r.erro || 'Não consegui salvar a imagem.');
+    } catch (err) { mostrarNotificacao('Não consegui salvar a imagem.'); }
+});
+// Põe a imagem da mensagem dentro de "corpoEl" (antes das prévias/reações). O espaço é reservado pelo tamanho que o servidor guardou.
+function anexarImagemDaMensagem(corpoEl, m, caminho) {
+    const ancora = corpoEl.querySelector('.reacoes-mensagem') || null;
+    if (m.imagemRemovida && !m.imagem) {
+        const aviso = document.createElement('div');
+        aviso.className = 'imagem-removida';
+        aviso.textContent = '🖼️ Imagem antiga removida do servidor.';
+        corpoEl.insertBefore(aviso, ancora);
+        return;
+    }
+    const info = window.Imagens.imagemRecebida(m.imagem);
+    if (!info) return;
+    const caixa = window.Imagens.caixaDeExibicao(info.w, info.h) || { w: 280, h: 180 };
+    const box = document.createElement('div');
+    box.className = 'imagem-mensagem';
+    box.style.width = caixa.w + 'px';
+    box.style.height = caixa.h + 'px';
+    const estado = document.createElement('div');
+    estado.className = 'imagem-estado';
+    estado.textContent = '🖼️ Carregando imagem...';
+    box.appendChild(estado);
+    corpoEl.insertBefore(box, ancora);
+    const mostrar = (entrada) => {
+        const img = document.createElement('img');
+        img.alt = 'Imagem enviada por ' + String(m.nome || '').slice(0, 40);
+        img.draggable = false;
+        img.src = entrada.url;
+        box.replaceChildren(img);
+        box.onclick = () => abrirImagemAmpliada(entrada);
+    };
+    const pronta = cacheImagens.get(caminho + '#' + m.seq);
+    if (pronta && pronta.e) { mostrar(pronta.e); return; } // já baixada: sem piscar ao redesenhar
+    const carregar = () => {
+        box.classList.remove('erro'); estado.textContent = '🖼️ Carregando imagem...';
+        carregarImagemDoChat(caminho, m.seq).then(mostrar).catch(() => { box.classList.add('erro'); estado.textContent = '🖼️ Não consegui carregar a imagem. Clique pra tentar de novo.'; box.onclick = carregar; });
+    };
+    carregar();
+}
+
 // ---------- Controlador de chat (serve pros canais e pras mensagens diretas) ----------
 function criarChat({ container, input, aoSemAcesso }) {
     let cfg = null;              // { caminho, chaveLida, podeModerar }
@@ -812,6 +995,8 @@ function criarChat({ container, input, aoSemAcesso }) {
         if (m.editadoEm) { const ed = document.createElement('span'); ed.className = 'editada'; ed.textContent = '(editada)'; textoEl.appendChild(ed); }
         aplicarAvatar(el.querySelector('.avatar-mensagem'), m.usuario, m.nome || '?', urlAvatarSegura(m.avatar));
         const corpoEl = el.querySelector('.corpo-mensagem');
+        if (!m.texto) textoEl.style.display = 'none';
+        if (m.imagem || m.imagemRemovida) anexarImagemDaMensagem(corpoEl, m, cfg && cfg.caminho);
         anexarPreviaDoLink(corpoEl, m.texto);
         const barraReacoes = document.createElement('div');
         barraReacoes.className = 'reacoes-mensagem';
@@ -834,12 +1019,17 @@ function criarChat({ container, input, aoSemAcesso }) {
             const bReagir = document.createElement('button'); bReagir.textContent = '😀'; bReagir.title = 'Reagir';
             bReagir.addEventListener('click', (e) => { e.stopPropagation(); abrirSeletorReacao(bReagir, (emoji) => reagir(m, emoji)); });
             acoes.appendChild(bReagir);
+            if (m.texto) {
+                const bCopiar = document.createElement('button'); bCopiar.textContent = '📋'; bCopiar.title = 'Copiar o texto da mensagem';
+                bCopiar.addEventListener('click', () => copiarTexto(m.texto, 'Mensagem copiada!'));
+                acoes.appendChild(bCopiar);
+            }
             if (!ehEu) {
                 const b = document.createElement('button'); b.textContent = '🚩'; b.title = 'Denunciar';
                 b.addEventListener('click', () => denunciarMensagem(m, cfg && cfg.caminho));
                 acoes.appendChild(b);
             }
-            if (ehEu) {
+            if (ehEu && m.texto) {
                 const b = document.createElement('button'); b.textContent = '✏️'; b.title = 'Editar';
                 b.addEventListener('click', () => editar(m));
                 acoes.appendChild(b);
@@ -900,7 +1090,7 @@ function criarChat({ container, input, aoSemAcesso }) {
         if (meu !== token) return;
         const minimo = r.mensagens.length ? r.mensagens[0].seq : r.ultimaSeq + 1;
         const lista = msgs.filter((m) => m.seq < minimo).concat(r.mensagens);
-        const assin = (l) => l.map((m) => m.seq + ':' + (m.editadoEm || 0) + ':' + window.Social.assinaturaReacoes(m.reacoes)).join(',');
+        const assin = (l) => l.map((m) => m.seq + ':' + (m.editadoEm || 0) + ':' + (m.imagemRemovida ? 1 : 0) + ':' + window.Social.assinaturaReacoes(m.reacoes)).join(',');
         if (assin(lista) === assin(msgs)) return;
         const fundo = noFundo();
         msgs = lista;
@@ -943,13 +1133,82 @@ function criarChat({ container, input, aoSemAcesso }) {
     }
     container.addEventListener('scroll', () => { if (ativo && container.scrollTop < 60) carregarAntigas(); });
 
+    // ---- Imagem pendente (colada, escolhida ou arrastada), mostrada acima da caixa de texto até enviar ----
+    const campoWrap = input.closest('.campo-mensagem-wrap');
+    const barraAnexo = campoWrap.querySelector('.anexo-pendente');
+    const botaoAnexar = campoWrap.querySelector('.btn-anexar-imagem');
+    const areaChat = container.parentElement;
+    let anexo = null; // { blob, tipo, w, h, nome, url }
+    function limparAnexo() {
+        if (anexo) URL.revokeObjectURL(anexo.url);
+        anexo = null;
+        barraAnexo.hidden = true; barraAnexo.replaceChildren();
+    }
+    function mostrarAnexo() {
+        barraAnexo.replaceChildren();
+        const mini = document.createElement('img'); mini.src = anexo.url; mini.alt = 'Imagem pronta pra enviar';
+        const info = document.createElement('div'); info.className = 'anexo-info';
+        const nome = document.createElement('b'); nome.textContent = anexo.nome ? anexo.nome.slice(0, 60) : 'Imagem colada';
+        const det = document.createElement('span'); det.textContent = `${window.Imagens.formatarTamanho(anexo.blob.size)} · ${anexo.w}×${anexo.h} · Enter envia (a legenda é opcional)`;
+        info.append(nome, det);
+        const x = document.createElement('button'); x.type = 'button'; x.textContent = '✖'; x.title = 'Tirar a imagem';
+        x.addEventListener('click', () => { limparAnexo(); input.focus(); });
+        barraAnexo.append(mini, info, x);
+        barraAnexo.hidden = false;
+    }
+    async function receberArquivoDeImagem(arquivo) {
+        if (!ativo || !cfg) return;
+        try {
+            const pronto = await prepararImagemParaEnvio(arquivo);
+            limparAnexo();
+            anexo = { ...pronto, url: URL.createObjectURL(pronto.blob) };
+            mostrarAnexo();
+            input.focus();
+        } catch (err) { mostrarNotificacao(err && err.message ? err.message : 'Não consegui usar essa imagem.'); }
+    }
+    const entradaArquivo = document.createElement('input');
+    entradaArquivo.type = 'file'; entradaArquivo.accept = 'image/png,image/jpeg,image/gif,image/webp'; entradaArquivo.style.display = 'none';
+    document.body.appendChild(entradaArquivo);
+    botaoAnexar.addEventListener('click', () => entradaArquivo.click());
+    entradaArquivo.addEventListener('change', () => { const f = entradaArquivo.files && entradaArquivo.files[0]; entradaArquivo.value = ''; if (f) receberArquivoDeImagem(f); });
+    // Ctrl+V: print ou imagem copiada. Se vier texto junto, vale o texto (colagem normal).
+    document.addEventListener('paste', (e) => {
+        if (!ativo || container.offsetParent === null) return;
+        const alvo = e.target;
+        if (alvo && alvo !== input && (alvo.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(alvo.tagName))) return; // é pra outro campo
+        const item = window.Imagens.escolherImagemColada(e.clipboardData && e.clipboardData.items);
+        const arq = item && item.getAsFile();
+        if (!arq) return;
+        e.preventDefault();
+        receberArquivoDeImagem(arq);
+    });
+    // Arrastar uma imagem pra cima do chat.
+    const arrastoTemArquivo = (e) => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
+    areaChat.addEventListener('dragover', (e) => { if (!ativo || !arrastoTemArquivo(e)) return; e.preventDefault(); e.stopPropagation(); areaChat.classList.add('arrastando-imagem'); });
+    areaChat.addEventListener('dragleave', (e) => { if (!areaChat.contains(e.relatedTarget)) areaChat.classList.remove('arrastando-imagem'); });
+    areaChat.addEventListener('drop', (e) => {
+        if (!ativo || !arrastoTemArquivo(e)) return;
+        e.preventDefault(); e.stopPropagation();
+        areaChat.classList.remove('arrastando-imagem');
+        const f = Array.from(e.dataTransfer.files || []).find((x) => /^image\//.test(x.type)) || (e.dataTransfer.files || [])[0];
+        if (f) receberArquivoDeImagem(f);
+    });
+
     async function enviar() {
         if (!ativo || !cfg || enviando) return;
         const texto = input.value.trim().slice(0, 2000);
-        if (!texto) return;
+        if (!texto && !anexo) return;
         enviando = true;
         try {
-            const r = await api('POST', cfg.caminho, { texto, nome: obterNomeUsuario() });
+            let r;
+            if (anexo) {
+                const envio = anexo;
+                r = await api('POST', cfg.caminho.replace(/\/mensagens$/, '/imagens'), {
+                    texto, nome: obterNomeUsuario(), dados: await blobParaBase64(envio.blob), largura: envio.w, altura: envio.h,
+                    compacta: envio.mini ? await blobParaBase64(envio.mini) : undefined,
+                });
+                limparAnexo();
+            } else r = await api('POST', cfg.caminho, { texto, nome: obterNomeUsuario() });
             input.value = ''; input.style.height = 'auto';
             anexar([r.mensagem], true);
         } catch (err) {
@@ -995,13 +1254,14 @@ function criarChat({ container, input, aoSemAcesso }) {
         fechar();
         cfg = novaCfg; ativo = true; carregou = false; msgs = []; temMais = false; ciclos = 0;
         token++;
-        input.value = '';
+        input.value = ''; limparAnexo();
         container.innerHTML = '<div class="rotulo-sistema">Carregando mensagens...</div>';
         ciclo();
     }
     function fechar() {
         ativo = false; token++;
         if (timer) { clearTimeout(timer); timer = null; }
+        limparAnexo();
         cfg = null; msgs = [];
     }
     return { abrir, fechar, marcarVisto, ativo: () => ativo };
@@ -1090,7 +1350,7 @@ async function entrarCanalVoz(canal) {
     conectandoVoz = true;
     avisoConexaoVoz = precisaAprovacao ? 'aguardando' : 'conectando';
     canalVozAtual = canal;
-    microfoneAtivo = false; // SEMPRE entra com o microfone desligado (só liga quando você clicar)
+    microfoneAtivo = false; // começa desligado; se a opção "Entrar com o microfone ligado" estiver marcada, liga assim que conectar
     mostrarAreaVoz(canal);
     document.getElementById('fileira-icones-voz').classList.add('visivel');
     renderizarListaCanais();
@@ -1121,6 +1381,7 @@ async function entrarCanalVoz(canal) {
 
         await sala.connect(url, token);
         if (minhaTentativa !== tentativaVoz) { try { sala.disconnect(); } catch (e) {} return; }
+        avisarPlataformaVoz(true);
 
         conectandoVoz = false;
         avisoConexaoVoz = '';
@@ -1136,6 +1397,11 @@ async function entrarCanalVoz(canal) {
         renderizarListaCanais();
         atualizarStatusVozPersistente();
         atualizarBotaoMicrofone();
+        // Entrar com o microfone ligado (padrão). Não liga se você estiver ensurdecido (como no Discord).
+        if (prefsAudio.micAoEntrar && !surdoAtivo && !microfoneAtivo) {
+            await alternarMicrofone(null);
+            if (minhaTentativa !== tentativaVoz) return;
+        }
 
         // O dono do servidor é sempre o anfitrião (modera e, se o canal pedir, aprova quem entra).
         souAnfitriaoVoz = servidorAtual.souDono === true;
@@ -1179,7 +1445,7 @@ function registrarEventosDaVoz(sala) {
 
     sala.on(E.TrackMuted, (publicacao, participante) => {
         if (!atual()) return;
-        if (participante === sala.localParticipant && publicacao.source === LivekitClient.Track.Source.Microphone && microfoneAtivo) {
+        if (participante === sala.localParticipant && publicacao.source === LivekitClient.Track.Source.Microphone && microfoneAtivo && reaplicandoAudio === 0) {
             // Não foi você que desligou: o dono do servidor mutou o seu microfone.
             microfoneAtivo = false;
             atualizarBotaoMicrofone();
@@ -1187,7 +1453,13 @@ function registrarEventosDaVoz(sala) {
         }
         atualizarListaMembros();
     });
-    sala.on(E.TrackUnmuted, () => { if (atual()) atualizarListaMembros(); });
+    sala.on(E.TrackUnmuted, (pub, participante) => {
+        if (!atual()) return;
+        if (participante && participante !== sala.localParticipant) retomarAudioDe(participante.identity);
+        atualizarListaMembros();
+    });
+    // O Chromium às vezes deixa o áudio "esperando um clique" (ou pausa o elemento): destrava sozinho.
+    sala.on(E.AudioPlaybackStatusChanged, () => { if (atual() && !sala.canPlaybackAudio) sala.startAudio().catch(() => {}); });
     sala.on(E.TrackPublished, (pub, participante) => {
         if (!atual()) return;
         const src = LivekitClient.Track && LivekitClient.Track.Source;
@@ -1218,12 +1490,15 @@ function registrarEventosDaVoz(sala) {
     sala.on(E.ActiveSpeakersChanged, (falantes) => {
         if (!atual()) return;
         identidadesFalando = new Set(falantes.map(p => p.identity));
-        atualizarListaMembros(); atualizarSubMembrosVoz();
+        atualizarDestaqueDeFala();
     });
     sala.on(E.ConnectionQualityChanged, (qualidade, participante) => {
         if (!atual()) return;
         qualidadePorIdentidade.set(participante.identity, mapearQualidade(qualidade));
-        atualizarListaMembros();
+        // Só troca a cor da bolinha dessa pessoa (sem remontar a lista).
+        const ponto = [...document.querySelectorAll('#lista-membros .item-membro[data-identidade]')].find((el) => el.dataset.identidade === participante.identity);
+        if (ponto && ponto.querySelector('.ponto-qualidade')) ponto.querySelector('.ponto-qualidade').className = 'ponto-qualidade ' + (qualidadePorIdentidade.get(participante.identity) || 'desconhecida');
+        else atualizarListaMembros();
     });
 
     // A janela transmitida foi fechada (ou o Windows encerrou a captura): o LiveKit para a
@@ -1257,6 +1532,12 @@ function registrarEventosDaVoz(sala) {
     });
 }
 
+// No app de celular, entrar/sair da chamada liga/desliga o aviso "Na chamada" do Android (sem ele o
+// sistema corta o microfone quando a tela apaga). No PC essa função não existe e nada acontece.
+function avisarPlataformaVoz(conectado) {
+    try { const f = window.electronAPI && window.electronAPI.vozMudou; if (typeof f === 'function') f(conectado); } catch (e) {}
+}
+
 async function sairCanalVoz() {
     if (!roomVoz && !canalVozAtual) return;
     tentativaVoz++; // cancela uma entrada que ainda esteja em andamento (token, aprovação, conexão)
@@ -1271,6 +1552,7 @@ async function sairCanalVoz() {
     pararChecagemPendentes();
     roomVoz = null; // antes do disconnect: assim o aviso de "você foi desconectado" não aparece numa saída normal
     if (sala) { try { sala.disconnect(); } catch (e) {} }
+    avisarPlataformaVoz(false);
     conectandoVoz = false;
     avisoConexaoVoz = '';
     canalVozAtual = null;
@@ -1905,6 +2187,27 @@ function aplicarAudioDePessoa(identity) {
     });
 }
 
+// Garante que o áudio de uma pessoa está tocando (elemento não pausado, volume/mudo no lugar).
+function retomarAudioDe(identity) {
+    const entrada = elementosAudioPorIdentidade.get(identity);
+    if (!entrada) return;
+    aplicarAudioDePessoa(identity);
+    ['microfone', 'compartilhamento'].forEach((tipo) => entrada[tipo].forEach((el) => { if (el.paused) el.play().catch(() => {}); }));
+}
+// "Não estou ouvindo fulano": cancela e refaz a assinatura do áudio de todo mundo, sem sair da chamada.
+async function refazerAudioDosOutros() {
+    if (!vozConectada()) return mostrarNotificacao('Entre num canal de voz primeiro.');
+    const sala = roomVoz;
+    try { await sala.startAudio(); } catch (e) { /* sem problema */ }
+    const pubs = [];
+    sala.remoteParticipants.forEach((p) => p.audioTrackPublications.forEach((pub) => pubs.push(pub)));
+    for (const pub of pubs) { try { pub.setSubscribed(false); } catch (e) { /* segue */ } }
+    await new Promise((ok) => setTimeout(ok, 400));
+    for (const pub of pubs) { try { pub.setSubscribed(true); } catch (e) { /* segue */ } }
+    sala.remoteParticipants.forEach((p) => retomarAudioDe(p.identity));
+    mostrarNotificacao('Áudio dos outros refeito.', 'info');
+}
+
 function alternarSilencioDe(identity) {
     if (silenciadosPorIdentidade.has(identity)) silenciadosPorIdentidade.delete(identity);
     else silenciadosPorIdentidade.add(identity);
@@ -2218,14 +2521,27 @@ function atualizarStatusVozPersistente() {
     status.style.display = 'flex';
 }
 
+// Confere o que o microfone está REALMENTE usando agora (o que o Chromium aceitou), pra não ficar no escuro.
+function resumoCaptura(mediaTrack) {
+    try {
+        const st = mediaTrack.getSettings();
+        const q = opcoesCapturaMicrofone();
+        const txt = (v) => (v === undefined ? '?' : v ? 'ligado' : 'desligado');
+        let r = `Em uso agora: eco ${txt(st.echoCancellation)} · ruído comum ${txt(st.noiseSuppression)} · volume automático ${txt(st.autoGainControl)}`;
+        if (ruidoAvancadoAtivo()) r += ' · filtro avançado ligado (o ruído comum fica desligado de propósito)';
+        const diferente = ['echoCancellation', 'noiseSuppression', 'autoGainControl'].some((k) => st[k] !== undefined && st[k] !== q[k]);
+        if (diferente) r += ' · atenção: o Windows não aceitou uma das opções';
+        return r;
+    } catch (e) { return ''; }
+}
 async function alternarTesteMicrofone() {
     if (microfoneTesteAtivo) return pararTesteMicrofone();
     try {
         streamTesteMic = await navigator.mediaDevices.getUserMedia({ audio: opcoesCapturaMicrofone() });
         let streamOuvida = streamTesteMic;
-        if (filtroRuidoNecessario()) {
+        if (filtroRuidoNecessario(true)) {
             try {
-                cadeiaTesteMic = await window.Ruido.criarCadeia(streamTesteMic, opcoesFiltroRuido());
+                cadeiaTesteMic = await window.Ruido.criarCadeia(streamTesteMic, opcoesFiltroRuido(true));
                 streamOuvida = cadeiaTesteMic.stream;
             } catch (err) {
                 console.error('Filtro de ruído avançado:', err);
@@ -2243,6 +2559,7 @@ async function alternarTesteMicrofone() {
         if (prefsAudio.saidaId && audioTesteMic.setSinkId) { try { await audioTesteMic.setSinkId(prefsAudio.saidaId); } catch (e) {} }
         document.body.appendChild(audioTesteMic);
         microfoneTesteAtivo = true;
+        { const t0 = streamTesteMic.getAudioTracks()[0]; const r = t0 && resumoCaptura(t0); if (r) mostrarNotificacao(r, 'info'); }
         iniciarMedidorMicrofone(streamOuvida); // a barra mostra o que sai do filtro, ou seja, o que os outros vão ouvir
     } catch (err) { mostrarNotificacao('Erro ao testar microfone: ' + err.message); }
     atualizarBotaoTesteConfig();
@@ -2397,7 +2714,47 @@ function abrirMenu(x, y, construir) {
     const menu = document.createElement('div');
     menu.className = 'menu-contexto';
 
+    // Submenu: itens com "submenu" (função que devolve itens) abrem uma lista ao lado ao passar o mouse.
+    let subAberto = null, subDe = null, timerSub = 0;
+    function fecharSub() { clearTimeout(timerSub); if (subAberto) subAberto.remove(); subAberto = null; if (subDe) subDe.classList.remove('sub-aberto'); subDe = null; }
+    function abrirSub(botao, item) {
+        clearTimeout(timerSub);
+        if (subDe === botao) return;
+        fecharSub();
+        const sub = document.createElement('div');
+        sub.className = 'menu-contexto submenu';
+        sub.setAttribute('role', 'menu');
+        item.submenu().forEach((s) => {
+            if (s.separador) { const l = document.createElement('div'); l.className = 'separador-menu'; sub.appendChild(l); return; }
+            if (s.titulo) { const t = document.createElement('div'); t.className = 'titulo-submenu'; t.textContent = s.titulo; sub.appendChild(t); return; }
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'item-menu' + (s.marcado ? ' marcado' : '');
+            b.setAttribute('role', 'menuitemradio');
+            b.setAttribute('aria-checked', s.marcado ? 'true' : 'false');
+            b.textContent = (s.marcado ? '✓ ' : '') + s.rotulo;
+            b.addEventListener('click', async () => {
+                if (!s.mantemAberto) fecharMenuContexto();
+                await s.acao();
+                if (s.mantemAberto && menuContextoAberto === menu) { desenhar(); }
+            });
+            sub.appendChild(b);
+        });
+        sub.addEventListener('mouseenter', () => clearTimeout(timerSub));
+        sub.addEventListener('mouseleave', () => { timerSub = setTimeout(fecharSub, 250); });
+        menu.appendChild(sub);
+        subAberto = sub; subDe = botao; botao.classList.add('sub-aberto');
+        // ao lado direito do item; se não couber, do lado esquerdo do menu
+        const r = botao.getBoundingClientRect(), m = menu.getBoundingClientRect(), c = sub.getBoundingClientRect();
+        const larguraTela = window.innerWidth || 1200, alturaTela = window.innerHeight || 800;
+        let left = m.right + 4;
+        if (left + c.width > larguraTela - 8) left = Math.max(8, m.left - c.width - 4);
+        const top = Math.max(8, Math.min(r.top - 6, alturaTela - c.height - 8));
+        sub.style.left = left + 'px'; sub.style.top = top + 'px';
+    }
+
     function desenhar() {
+        fecharSub();
         menu.innerHTML = '';
         const { cabecalho, itens } = construir();
         if (cabecalho) {
@@ -2414,11 +2771,23 @@ function abrirMenu(x, y, construir) {
                 return;
             }
             const botao = document.createElement('button');
-            botao.className = 'item-menu' + (item.perigo ? ' perigo' : '');
+            botao.className = 'item-menu' + (item.perigo ? ' perigo' : '') + (item.submenu ? ' tem-submenu' : '');
             botao.textContent = item.rotulo;
             botao.dataset.acao = item.id || '';
             if (item.dica) botao.title = item.dica;
             botao.disabled = Boolean(item.desabilitado);
+            if (item.submenu) {
+                botao.setAttribute('aria-haspopup', 'menu');
+                botao.addEventListener('mouseenter', () => { clearTimeout(timerSub); timerSub = setTimeout(() => abrirSub(botao, item), 80); });
+                botao.addEventListener('mouseleave', () => { clearTimeout(timerSub); timerSub = setTimeout(fecharSub, 250); });
+                // clique (ou Enter/seta para a direita no teclado) também abre a lista
+                botao.addEventListener('click', () => { abrirSub(botao, item); const p = subAberto && subAberto.querySelector('button'); if (p) p.focus(); });
+                botao.addEventListener('keydown', (e) => { if (e.key === 'ArrowRight') { e.preventDefault(); botao.click(); } });
+                menu.appendChild(botao);
+                return;
+            }
+            // passar o mouse num item comum fecha a lista ao lado
+            botao.addEventListener('mouseenter', () => { if (subAberto) { clearTimeout(timerSub); timerSub = setTimeout(fecharSub, 150); } });
             botao.addEventListener('click', async () => {
                 if (!item.mantemAberto) fecharMenuContexto();
                 await item.acao();
@@ -2443,40 +2812,100 @@ function abrirMenu(x, y, construir) {
 }
 
 // Menu de uma pessoa na sala de voz.
+// Menu da CHAMADA (botão direito no nome de quem está na chamada): só voz e transmissão.
+// (Perfil, amizade, denúncia e administração ficam no menu da lista de membros.)
+function tileDaTransmissaoDe(identity) {
+    for (const [sid, t] of tiles) if (t.identidade === identity && !t.ehVoce && t.origem !== 'camera') return { sid, ...t };
+    return null;
+}
+// Lista de efeitos para o submenu "Efeito de voz" (os mesmos do seletor em Configurações, inclusive as vozes criadas).
+// Escolher aqui é igual a escolher lá: muda o seletor e dispara o mesmo evento, então salva e aplica na hora.
+function itensEfeitoDeVoz() {
+    const sel = document.getElementById('cfg-efeito-voz');
+    popularEfeitosCriados();
+    const escolher = (valor) => async () => {
+        sel.value = valor;
+        if (sel.value !== valor) return;
+        sel.dispatchEvent(new Event('change'));
+        mostrarNotificacao(valor === 'nenhum' ? 'Efeito de voz desligado.' : 'Efeito de voz: ' + nomeDoEfeito(valor), 'info');
+    };
+    const itens = [];
+    let grupo = null;
+    for (const o of sel.querySelectorAll('option')) {
+        const g = o.parentElement.tagName === 'OPTGROUP' ? o.parentElement.label : null;
+        if (g && g !== grupo) { itens.push({ separador: true }, { titulo: g }); }
+        grupo = g;
+        itens.push({ rotulo: o.textContent, marcado: prefsAudio.efeito === o.value, acao: escolher(o.value) });
+        if (o.value === 'nenhum') itens.push({ separador: true });
+    }
+    itens.push({ separador: true }, { rotulo: '🎛️ Criar um efeito novo...', acao: () => abrirEditorEfeito(null) });
+    if (prefsAudio.efeito.startsWith('voz:')) itens.push({ rotulo: '✏️ Editar este efeito...', acao: () => abrirEditorEfeito(prefsAudio.efeito) });
+    return itens;
+}
 function abrirMenuContexto(identity, nome, ehVoce, x, y, estaTransmitindo) {
     abrirMenu(x, y, () => {
         if (ehVoce) {
-            return {
-                cabecalho: `${nome} (você)`,
-                itens: [
-                    { id: 'mic', rotulo: microfoneAtivo ? '🎙️ Desligar meu microfone' : '🎙️ Ligar meu microfone', mantemAberto: true, acao: () => alternarMicrofone(null) },
-                    { id: 'testar-mic', rotulo: microfoneTesteAtivo ? '🎧 Parar o teste do microfone' : '🎧 Testar meu microfone', mantemAberto: true, acao: () => alternarTesteMicrofone() }
-                ]
-            };
+            const itens = [
+                { id: 'mic', rotulo: microfoneAtivo ? '🎙️ Desligar meu microfone' : '🎙️ Ligar meu microfone', mantemAberto: true, acao: () => alternarMicrofone(null) },
+                { id: 'surdo', rotulo: surdoAtivo ? '🔊 Voltar a ouvir todo mundo' : '🔇 Ensurdecer (parar de ouvir todo mundo)', mantemAberto: true, acao: () => document.getElementById('btn-surdo-rodape').click() },
+                { id: 'testar-mic', rotulo: microfoneTesteAtivo ? '🎧 Parar o teste do microfone' : '🎧 Testar meu microfone', mantemAberto: true, acao: () => alternarTesteMicrofone() },
+                { separador: true },
+                transmitindoAgora
+                    ? { id: 'parar-minha', rotulo: '⏹ Parar a minha transmissão', perigo: true, acao: () => encerrarTransmissao() }
+                    : { id: 'transmitir', rotulo: '🖥️ Transmitir a minha tela', acao: () => document.getElementById('btn-tela-rodape').click() },
+                { id: 'efeito', rotulo: `🎭 Efeito de voz: ${prefsAudio.efeito === 'nenhum' ? 'Sem efeito' : nomeDoEfeito(prefsAudio.efeito).replace(/^🎭 /, '')}`, submenu: () => itensEfeitoDeVoz() },
+                { separador: true },
+                { id: 'sair', rotulo: '🚪 Sair da chamada', perigo: true, acao: () => document.getElementById('btn-sair-voz').click() },
+            ];
+            return { cabecalho: `${nome} (você)`, itens };
         }
 
         garantirEntradaAudio(identity);
-        const volume = volumesPorIdentidade.get(identity).microfone;
+        const vol = volumesPorIdentidade.get(identity);
         const silenciado = silenciadosPorIdentidade.has(identity);
         const itens = [
-            { id: 'silenciar', rotulo: silenciado ? '🔈 Reativar o som' : '🔇 Silenciar', dica: 'Só você deixa de ouvir esta pessoa.', mantemAberto: true, acao: () => alternarSilencioDe(identity) },
-            { id: 'aumentar', rotulo: volume >= 100 ? '🔊 Aumentar volume da voz (já está no máximo)' : '🔊 Aumentar volume da voz (+5%)', desabilitado: volume >= 100, mantemAberto: true, acao: () => ajustarVolumeDaVoz(identity, 5) },
-            { id: 'reduzir', rotulo: volume <= 0 ? '🔉 Reduzir volume da voz (já está no mínimo)' : '🔉 Reduzir volume da voz (−5%)', desabilitado: volume <= 0, mantemAberto: true, acao: () => ajustarVolumeDaVoz(identity, -5) },
-            { separador: true },
-            {
-                id: 'mutar',
-                rotulo: '🎙️ Mutar o microfone (pra todos)',
-                desabilitado: !souAnfitriaoVoz,
-                dica: souAnfitriaoVoz ? 'Desliga o microfone dessa pessoa pra todo mundo na sala.' : 'Só o dono do servidor pode fazer isso.',
-                acao: () => mutarMicrofoneDe(identity, nome)
-            }
+            { id: 'silenciar', rotulo: silenciado ? '🔈 Voltar a ouvir esta pessoa' : '🔇 Silenciar (só pra você)', dica: 'Só você deixa de ouvir esta pessoa.', mantemAberto: true, acao: () => alternarSilencioDe(identity) },
+            { id: 'aumentar', rotulo: vol.microfone >= 100 ? '🔊 Voz: já está no máximo' : '🔊 Aumentar a voz (+5%)', desabilitado: vol.microfone >= 100, mantemAberto: true, acao: () => ajustarVolumeDaVoz(identity, 5) },
+            { id: 'reduzir', rotulo: vol.microfone <= 0 ? '🔉 Voz: já está no mínimo' : '🔉 Diminuir a voz (−5%)', desabilitado: vol.microfone <= 0, mantemAberto: true, acao: () => ajustarVolumeDaVoz(identity, -5) },
         ];
-        if (souAnfitriaoVoz && estaTransmitindo) {
-            itens.push({ id: 'parar', rotulo: '⏹ Parar a transmissão', perigo: true, acao: () => pararTransmissaoDe(identity, nome) });
+        if (vol.microfone !== 100 || vol.compartilhamento !== 100) {
+            itens.push({ id: 'normal', rotulo: '↩️ Voltar os volumes ao normal (100%)', mantemAberto: true, acao: () => { definirVolume(identity, 'microfone', 100); definirVolume(identity, 'compartilhamento', 100); } });
         }
-        itens.push({ separador: true }, itemAmizade(identity), itemDenunciar(identity, nome));
-        return { cabecalho: `${nome} · voz a ${volume}%${silenciado ? ' (silenciada)' : ''}`, itens };
+        // Transmissão dessa pessoa (tela).
+        const tela = estaTransmitindo ? tileDaTransmissaoDe(identity) : null;
+        if (estaTransmitindo) {
+            itens.push({ separador: true });
+            itens.push({ id: 'som-tela-mais', rotulo: vol.compartilhamento >= 100 ? '🖥️ Som da transmissão: no máximo' : '🖥️ Aumentar o som da transmissão (+10%)', desabilitado: vol.compartilhamento >= 100, mantemAberto: true, acao: () => definirVolume(identity, 'compartilhamento', vol.compartilhamento + 10) });
+            itens.push({ id: 'som-tela-menos', rotulo: vol.compartilhamento <= 0 ? '🖥️ Som da transmissão: no mínimo' : '🖥️ Diminuir o som da transmissão (−10%)', desabilitado: vol.compartilhamento <= 0, mantemAberto: true, acao: () => definirVolume(identity, 'compartilhamento', vol.compartilhamento - 10) });
+            itens.push({ id: 'som-tela-mudo', rotulo: vol.compartilhamento === 0 ? '🔈 Voltar o som da transmissão' : '🔇 Tirar o som da transmissão', mantemAberto: true, acao: () => definirVolume(identity, 'compartilhamento', vol.compartilhamento === 0 ? 100 : 0) });
+            if (tela) {
+                itens.push({ id: 'tela-cheia', rotulo: '⛶ Ver a transmissão em tela cheia', acao: () => {
+                    const el = document.getElementById('tile-' + tela.sid);
+                    if (el && el.requestFullscreen) el.requestFullscreen().catch(() => mostrarNotificacao('Não consegui abrir em tela cheia.'));
+                    else mostrarNotificacao('Abra a área da chamada para ver a transmissão.');
+                } });
+                itens.push({ id: 'pip', rotulo: '⧉ Ver numa janelinha (por cima de tudo)', acao: () => { if (tela.videoEl && tela.videoEl.requestPictureInPicture) tela.videoEl.requestPictureInPicture().catch(() => mostrarNotificacao('Não consegui abrir a janelinha.')); } });
+            }
+        }
+        // Dono do servidor: o que vale pra todo mundo na chamada.
+        if (souAnfitriaoVoz) {
+            itens.push({ separador: true });
+            itens.push({ id: 'mutar', rotulo: '🎙️ Mutar o microfone (pra todos)', dica: 'Desliga o microfone dessa pessoa pra todo mundo na chamada.', acao: () => mutarMicrofoneDe(identity, nome) });
+            if (estaTransmitindo) itens.push({ id: 'parar', rotulo: '⏹ Parar a transmissão dela', perigo: true, acao: () => pararTransmissaoDe(identity, nome) });
+            itens.push({ id: 'tirar', rotulo: '🚪 Tirar da chamada', perigo: true, acao: () => tirarDaChamada(identity, nome) });
+        }
+        return { cabecalho: `${nome} · voz ${vol.microfone}%${silenciado ? ' (silenciada)' : ''}`, itens };
     });
+}
+
+// Dono do servidor tira alguém da chamada (a pessoa pode entrar de novo; pra impedir, expulse do servidor).
+async function tirarDaChamada(identity, nome) {
+    const r = await pedirTexto({ titulo: `Tirar ${nome} da chamada?`, dica: 'A pessoa é desconectada desta chamada agora. Ela pode entrar de novo; para impedir, expulse do servidor.', semCampo: true, rotuloOk: 'Tirar da chamada' });
+    if (!r) return;
+    try {
+        await window.electronAPI.forcarTirarDaChamada({ sala: nomeSalaCanal(canalVozAtual), identidadeAlvo: identity });
+        mostrarNotificacao(`${nome} saiu da chamada.`, 'info');
+    } catch (err) { mostrarNotificacao('Não consegui tirar da chamada: ' + err.message); }
 }
 
 let painelAudioAberto = null;
@@ -2683,6 +3112,18 @@ function removerTile(trackSid) {
 }
 
 // ---------- Lista de membros (coluna direita) ----------
+// Alguém começou ou parou de falar: só liga/desliga o destaque de cada pessoa. Remontar a lista inteira várias
+// vezes por segundo fazia ela piscar e fechava o menu de quem estava com o mouse em cima.
+function atualizarDestaqueDeFala() {
+    if (!vozConectada()) { atualizarListaMembros(); return; }
+    const itens = document.querySelectorAll('#lista-membros .item-membro[data-identidade]');
+    if (itens.length !== roomVoz.remoteParticipants.size + 1) { atualizarListaMembros(); atualizarSubMembrosVoz(); return; } // lista desatualizada: remonta
+    itens.forEach((el) => el.classList.toggle('falando', identidadesFalando.has(el.dataset.identidade)));
+    document.querySelectorAll('.sub-membro-voz[data-identidade]').forEach((el) => el.classList.toggle('falando', identidadesFalando.has(el.dataset.identidade)));
+    renderizarFesta();
+    enviarEstadoFlutuante();
+}
+
 function atualizarListaMembros() {
     const lista = document.getElementById('lista-membros');
     const titulo = document.getElementById('titulo-membros');
@@ -2707,15 +3148,20 @@ function atualizarListaMembros() {
 
         const item = document.createElement('div');
         item.className = 'item-membro' + (transmitindo ? ' transmitindo' : '') + (falando ? ' falando' : '');
+        item.dataset.identidade = p.identity;
         const micLigado = ehVoce ? microfoneAtivo : p.isMicrophoneEnabled === true;
         const silenciado = !ehVoce && silenciadosPorIdentidade.has(p.identity);
         item.innerHTML = `
             <span class="avatar-participante"></span>
-            <span>${escaparHtml(nome)}${ehVoce ? ' (você)' : ''}</span>
+            <span>${ehVoce ? escaparHtml(nome) + ' (você)' : htmlNomeComConta(nome, contaDoParticipante(p))}</span>
             <span class="icone-mic ${micLigado ? 'ligado' : 'mudo'}" title="${micLigado ? 'Microfone ligado' : 'Microfone desligado'}">🎙️</span>
             ${silenciado ? '<span class="icone-silenciado" title="Você silenciou esta pessoa">🔇</span>' : ''}
             <span class="ponto-qualidade ${qualidadePorIdentidade.get(p.identity) || 'desconhecida'}"></span>`;
         aplicarAvatar(item.querySelector('.avatar-participante'), p.identity, nome, avatarDoParticipante(p, ehVoce ? avatarUsuarioAtual : null));
+        { // cargos (Fundador, Moderador, Dono) também na lista da chamada
+            const cargos = cargosDe(p.identity);
+            if (cargos.length) { const sv = document.createElement('span'); sv.className = 'selos-voz'; cargos.forEach((c) => sv.appendChild(seloCargo(c))); item.children[1].appendChild(sv); }
+        }
         // Clique normal: painel com os controles de volume. Botão direito: menu (silenciar, volume, mutar...).
         item.addEventListener('click', (e) => abrirPainelAudio(p.identity, nome, ehVoce, e.clientX, e.clientY, transmitindo, item));
         item.addEventListener('contextmenu', (e) => { e.preventDefault(); abrirMenuContexto(p.identity, nome, ehVoce, e.clientX, e.clientY, transmitindo); });
@@ -3280,7 +3726,7 @@ let mensagemFlutuante = null; // última mensagem nova do chat (só aparece se a
 let avisoFlutuante = null;    // { id, texto } de quem entrou/saiu; some sozinho em 5 s
 let contadorAviso = 0, timerAvisoFlutuante = null;
 function registrarMensagemFlutuante(m) {
-    mensagemFlutuante = { autor: String(m.nome || '?').slice(0, 30), texto: String(m.texto || '').slice(0, 90) };
+    mensagemFlutuante = { autor: String(m.nome || '?').slice(0, 30), texto: String(m.texto || (m.imagem ? '🖼️ imagem' : '')).slice(0, 90) };
     enviarEstadoFlutuante();
 }
 let entradaNaVozEm = 0;
@@ -3392,6 +3838,7 @@ function atualizarSubMembrosVoz() {
                 const falando = identidadesFalando.has(p.identity);
                 const div = document.createElement('div');
                 div.className = 'sub-membro-voz' + (falando ? ' falando' : '');
+                div.dataset.identidade = p.identity;
                 div.innerHTML = `<span class="mini-avatar"></span><span>${escaparHtml(nome)}</span>`;
                 aplicarAvatar(div.querySelector('.mini-avatar'), p.identity, nome, avatarDoParticipante(p, p === roomVoz.localParticipant ? avatarUsuarioAtual : null));
                 // Botão direito no nome (embaixo do canal, na lateral) abre o mesmo menu.
@@ -3419,7 +3866,7 @@ function atualizarSubMembrosVoz() {
 
 // ============================================================
 // Perfil, conquistas e resumo. Os números são medidos pelo SERVIDOR (tempo em chamada, mensagens...);
-// o app só pede e desenha. Opções (Configurações > Aparência > Perfil e estatísticas): perfil privado e registrar jogos.
+// o app só pede e desenha. Opções (Configurações > Privacidade > Perfil e estatísticas): perfil privado e registrar jogos.
 // ============================================================
 const CHAVE_PERFIL_PRIVADO = 'estrivisor_perfil_privado';
 const CHAVE_REGISTRAR_JOGOS = 'estrivisor_registrar_jogos';
@@ -3467,7 +3914,7 @@ function desenharPerfil(d) {
         itens.forEach((i) => { const l = elemento('div', 'perfil-linha'); l.appendChild(elemento('span', '', i.nome)); l.appendChild(elemento('span', 'perfil-vazio', P.formatarDuracao(i.s))); corpo.appendChild(l); });
     };
     lista('MAIS TEMPO EM CHAMADA COM', d.topParceiros, 'Ainda sem dados.');
-    lista('JOGOS MAIS TRANSMITIDOS', d.topJogos, d.perfil.meu ? 'Nada ainda. Para registrar, ligue em Configurações > Aparência > Perfil e estatísticas.' : 'Nada registrado.');
+    lista('JOGOS MAIS TRANSMITIDOS', d.topJogos, d.perfil.meu ? 'Nada ainda. Para registrar, ligue em Configurações > Privacidade > Perfil e estatísticas.' : 'Nada registrado.');
     const ganhas = d.conquistas.filter((c) => c.ganha).length;
     corpo.appendChild(elemento('div', 'perfil-sec', `CONQUISTAS — ${ganhas} de ${d.conquistas.length}`));
     const gc = elemento('div', 'conquistas-grade');
@@ -3598,6 +4045,7 @@ function aplicarOnline(lista) {
             nome: String(p.nome || p.usuario).slice(0, 40),
             canalVoz: typeof p.canalVoz === 'string' ? p.canalVoz : null,
             status: window.Social.limparStatus(p.status),
+            conta: typeof p.conta === 'string' ? p.conta.slice(0, 40) : '',
             avatar: urlAvatarSegura(p.avatar)
         });
     });
@@ -3648,6 +4096,18 @@ function pingarOutrosServidores() {
 
 // Medalhas de cada membro, mostradas embaixo do nome nas listas da direita (o servidor guarda 1 min em cache).
 let conquistasMembros = new Map(); // usuario -> [{ icone, titulo }]
+let cargosMembros = new Map();     // usuario -> ['fundador' | 'moderador']
+// Selos de cargo, do mais alto pro mais baixo. O dono do servidor vem da lista de membros do próprio servidor.
+const CARGOS = {
+    fundador: { texto: '🔱 Fundador', dica: 'Fundador do Estrivisor: quem criou e administra o app.', classe: 'fundador' },
+    moderador: { texto: '🛡️ Moderador', dica: 'Moderador do Estrivisor: cuida dos pedidos de acesso e das denúncias.', classe: 'moderador' },
+    dono: { texto: '👑 Dono', dica: 'Dono deste servidor.', classe: 'dono' },
+};
+function cargosDe(usuario) {
+    const lista = (cargosMembros.get(String(usuario)) || []).filter((c) => CARGOS[c] && c !== 'dono');
+    if (servidorAtual && servidorAtual.dono && String(servidorAtual.dono) === String(usuario)) lista.push('dono');
+    return lista;
+}
 let temporizadorConquistas = null;
 async function carregarConquistasMembros() {
     const id = servidorAtual.id;
@@ -3662,17 +4122,39 @@ async function carregarConquistasMembros() {
             if (limpas.length) mapa.set(String(usuario), limpas);
         });
         conquistasMembros = mapa;
+        const cargos = new Map();
+        Object.entries((d && d.cargos) || {}).slice(0, 60).forEach(([usuario, lista]) => {
+            const ok = (Array.isArray(lista) ? lista : []).filter((c) => c === 'fundador' || c === 'moderador');
+            if (ok.length) cargos.set(String(usuario), ok.slice(0, 1));
+        });
+        cargosMembros = cargos;
         atualizarListaOnline();
+        if (vozConectada()) atualizarListaMembros();
     } catch (e) { /* servidor antigo ou sem internet: fica sem as medalhas */ }
+}
+// Selos de cargo (Fundador, Moderador, Dono) e, depois, as medalhas ganhas.
+function seloCargo(c) {
+    const s = document.createElement('span');
+    s.className = 'selo-cargo ' + CARGOS[c].classe;
+    s.textContent = CARGOS[c].texto;
+    s.title = CARGOS[c].dica;
+    return s;
 }
 function linhaConquistas(usuario) {
     const lista = conquistasMembros.get(String(usuario));
-    if (!lista) return null;
-    const el = document.createElement('span');
-    el.className = 'legenda-conquistas';
-    el.textContent = lista.slice(0, 6).map((c) => c.icone).join('') + (lista.length > 6 ? ` +${lista.length - 6}` : '');
-    el.title = lista.map((c) => `${c.icone} ${c.titulo}`).join('\n');
-    return el;
+    const cargos = cargosDe(usuario);
+    if (!lista && !cargos.length) return null;
+    const linha = document.createElement('span');
+    linha.className = 'linha-cargos';
+    cargos.forEach((c) => linha.appendChild(seloCargo(c)));
+    if (lista) {
+        const el = document.createElement('span');
+        el.className = 'legenda-conquistas';
+        el.textContent = lista.slice(0, 6).map((c) => c.icone).join('') + (lista.length > 6 ? ` +${lista.length - 6}` : '');
+        el.title = lista.map((c) => `${c.icone} ${c.titulo}`).join('\n');
+        linha.appendChild(el);
+    }
+    return linha;
 }
 function iniciarPing() {
     pararPing();
@@ -3686,6 +4168,7 @@ function pararPing() {
     if (temporizadorPing) { clearInterval(temporizadorPing); temporizadorPing = null; }
     if (temporizadorConquistas) { clearInterval(temporizadorConquistas); temporizadorConquistas = null; }
     conquistasMembros = new Map();
+    cargosMembros = new Map();
 }
 
 // Usado quando entra/sai de um canal de voz: avisa na hora em vez de esperar o próximo ping.
@@ -3731,6 +4214,8 @@ async function carregarMeusServidores(preferirId) {
     try {
         dados = await api('GET', '/servidores');
     } catch (err) {
+        // Em manutenção o recado já aparece na faixa do topo: não fica repetindo "não consegui falar".
+        if (err.codigo === 'manutencao') { carregarAvisosDaConta(); setTimeout(() => carregarMeusServidores(preferirId), 30000); return; }
         mostrarNotificacao('Não consegui falar com o servidor do Estrivisor. Tentando de novo...');
         setTimeout(() => carregarMeusServidores(preferirId), 10000);
         return;
@@ -4010,7 +4495,11 @@ document.getElementById('tela-inicio').addEventListener('keydown', (e) => { if (
 const modalAjustes = () => document.getElementById('modal-ajustes');
 const ajustesAbertos = () => modalAjustes().style.display === 'flex';
 function fecharAjustes() { modalAjustes().style.display = 'none'; }
-function erroAjustes(err) { document.getElementById('ajustes-erro').textContent = err ? (err.message || 'Algo deu errado.') : ''; }
+function erroAjustes(err) {
+    document.getElementById('ajustes-erro').textContent = err ? (err.message || 'Algo deu errado.') : '';
+    // Ação feita pelo menu de uma pessoa (com os ajustes fechados): o erro aparece como aviso.
+    if (err && modalAjustes().style.display !== 'flex') mostrarNotificacao(err.message || 'Algo deu errado.');
+}
 
 // Faz uma alteração no servidor (só o dono) e atualiza a tela com a resposta.
 async function alterarServidor(corpo) {
@@ -4050,10 +4539,6 @@ function formatarValidade(ms) {
     return dias <= 1 ? 'vence hoje/amanhã' : `vence em ${dias} dias`;
 }
 
-async function copiarTexto(texto) {
-    try { await navigator.clipboard.writeText(texto); mostrarNotificacao('Copiado!', 'info'); }
-    catch (e) { mostrarNotificacao('Não consegui copiar. Selecione e copie à mão.'); }
-}
 
 async function renderizarConvites() {
     const lista = document.getElementById('ajustes-convites');
@@ -4071,6 +4556,35 @@ async function renderizarConvites() {
             ]));
         });
     } catch (err) { /* lista de convites é opcional; erro aparece em outras ações */ }
+}
+
+// Quem foi expulso e não pode voltar (só o dono vê). "Deixar voltar" tira da lista: a pessoa entra de novo com um convite.
+async function renderizarBanidos() {
+    let caixa = document.getElementById('ajustes-banidos');
+    if (!caixa) {
+        caixa = document.createElement('div');
+        caixa.id = 'ajustes-banidos';
+        caixa.style.cssText = 'display:flex; flex-direction:column; gap:4px; margin-top:10px;';
+        document.getElementById('ajustes-membros').insertAdjacentElement('afterend', caixa);
+    }
+    caixa.replaceChildren();
+    if (!servidorAtual.souDono) return;
+    const idServidor = servidorAtual.id;
+    try {
+        const d = await api('GET', `/servidores/${idServidor}/banidos`);
+        if (servidorAtual.id !== idServidor || !Array.isArray(d.banidos) || !d.banidos.length) return;
+        caixa.replaceChildren();
+        const titulo = document.createElement('div'); titulo.className = 'titulo-ajustes'; titulo.textContent = `Expulsos (não podem voltar) — ${d.banidos.length}`;
+        caixa.appendChild(titulo);
+        d.banidos.forEach((b) => {
+            caixa.appendChild(linhaDeLista(String(b.nome || b.usuario).slice(0, 40), 'expulso em ' + new Date(b.ts).toLocaleDateString('pt-BR'), [
+                { texto: 'Deixar voltar', acao: async () => {
+                    try { await api('DELETE', `/servidores/${idServidor}/banidos/${encodeURIComponent(b.usuario)}`); renderizarBanidos(); }
+                    catch (err) { erroAjustes(err); }
+                } }
+            ]));
+        });
+    } catch (err) { /* servidor antigo (sem esta lista): só não mostra */ }
 }
 
 function renderizarAjustes() {
@@ -4094,8 +4608,10 @@ function renderizarAjustes() {
             botoes.push({ texto: 'Dar o servidor', acao: () => transferirServidor(m) });
             botoes.push({ texto: 'Expulsar', perigo: true, acao: () => expulsarMembro(m) });
         }
-        membros.appendChild(linhaDeLista(m.nome + (ehVoce ? ' (você)' : ''), m.dono ? '👑 dono' : '', botoes));
+        const conta = contaDiferente(m.nome, m.conta);
+        membros.appendChild(linhaDeLista(m.nome + (ehVoce ? ' (você)' : ''), [conta ? `conta: ${conta}` : '', m.dono ? '👑 dono' : ''].filter(Boolean).join(' · '), botoes));
     });
+    renderizarBanidos();
 
     const perigo = document.getElementById('ajustes-perigo');
     perigo.textContent = dono ? 'Apagar servidor' : 'Sair do servidor';
@@ -4123,7 +4639,7 @@ async function transferirServidor(m) {
 }
 
 async function expulsarMembro(m) {
-    const r = await pedirTexto({ titulo: `Expulsar ${m.nome}?`, dica: 'Ele sai do servidor na hora e só volta com um convite novo.', semCampo: true, rotuloOk: 'Expulsar' });
+    const r = await pedirTexto({ titulo: `Expulsar ${m.nome}?`, dica: 'A pessoa sai do servidor na hora e NÃO consegue voltar, nem com convite (os convites que ela criou são cancelados). Para liberar depois: aqui nos ajustes, em "Expulsos" > "Deixar voltar".', semCampo: true, rotuloOk: 'Expulsar' });
     if (!r) return;
     try { await api('POST', `/servidores/${servidorAtual.id}/expulsar`, { alvo: m.usuario }); await recarregarServidorAtual(); }
     catch (err) { erroAjustes(err); }
@@ -4202,7 +4718,7 @@ function atualizarListaOnline() {
         item.innerHTML = `
             <span class="avatar-participante"></span>
             <span class="info-membro">
-                <span>${escaparHtml(info.nome)}</span>
+                <span>${htmlNomeComConta(info.nome, info.conta)}</span>
                 ${canal ? `<span class="legenda-canal-voz">🔊 ${escaparHtml(canal.nome)}</span>` : ''}
                 ${info.status ? `<span class="legenda-status" title="${escaparHtml(info.status)}">${escaparHtml(info.status)}</span>` : ''}
             </span>`;
@@ -4214,8 +4730,9 @@ function atualizarListaOnline() {
             item.addEventListener('contextmenu', (e) => { e.preventDefault(); abrirMenuPessoa(e.clientX, e.clientY, identity, info.nome); });
         } else {
             item.style.cursor = 'pointer';
-            item.title = 'Ver o meu perfil';
+            item.title = 'Ver o meu perfil (botão direito: mais opções)';
             item.addEventListener('click', () => abrirPerfil(identity));
+            item.addEventListener('contextmenu', (e) => { e.preventDefault(); abrirMenuPessoa(e.clientX, e.clientY, identity, info.nome); });
         }
         lista.appendChild(item);
     });
@@ -4234,11 +4751,12 @@ function atualizarListaOnline() {
         const nome = m.nome || m.usuario;
         const item = document.createElement('div');
         item.className = 'item-membro offline';
-        item.innerHTML = `<span class="avatar-participante"></span><span class="info-membro"><span>${escaparHtml(nome)}</span></span>`;
+        item.innerHTML = `<span class="avatar-participante"></span><span class="info-membro"><span>${htmlNomeComConta(nome, m.conta)}</span></span>`;
         aplicarAvatar(item.querySelector('.avatar-participante'), String(m.usuario), nome, null);
         { const medalhas = linhaConquistas(m.usuario); if (medalhas) item.querySelector('.info-membro').appendChild(medalhas); }
         item.style.cursor = 'pointer';
-        item.addEventListener('click', () => abrirPerfil(String(m.usuario)));
+        item.addEventListener('click', (e) => abrirMenuPessoa(e.clientX, e.clientY, String(m.usuario), nome));
+        item.addEventListener('contextmenu', (e) => { e.preventDefault(); abrirMenuPessoa(e.clientX, e.clientY, String(m.usuario), nome); });
         listaOff.appendChild(item);
     });
 }
@@ -4542,8 +5060,16 @@ document.getElementById('slider-fundo-desfoque').addEventListener('input', (even
     if (video[0]) destino('cfg-painel-video').appendChild(video[0]); // tamanho na tela
     if (video[1]) destino('cfg-painel-video').appendChild(video[1]); // qualidade do que envia
     if (video[2]) destino('cfg-painel-discord').appendChild(video[2]); // Discord
-    if (video[3]) destino('cfg-painel-aparencia').appendChild(video[3]); // Mensagens (prévia de links)
-    if (video[4]) destino('cfg-painel-aparencia').appendChild(video[4]); // Perfil e estatísticas
+    // Privacidade: perfil privado e registrar jogo, prévia de links e, por último, "Seus dados" (que já está lá no HTML).
+    const dados = destino('cfg-grupo-dados');
+    if (video[4]) destino('cfg-painel-privacidade').insertBefore(video[4], dados); // Perfil e estatísticas
+    if (video[3]) destino('cfg-painel-privacidade').insertBefore(video[3], dados); // Mensagens (prévia de links)
+    // Janela flutuante ganhou aba própria: leva o conteúdo (mesmos ids) e tira a caixa que abria/fechava.
+    const grupoFlutuante = document.getElementById('grupo-flutuante');
+    if (grupoFlutuante) {
+        [...grupoFlutuante.children].filter((c) => c.tagName !== 'SUMMARY').forEach((c) => destino('cfg-painel-flutuante').appendChild(c));
+        grupoFlutuante.remove();
+    }
     // "Sons do app" tem aba própria: leva o conteúdo (mesmos ids) e tira a caixa que abria/fechava.
     const grupoSons = document.getElementById('grupo-sons');
     if (grupoSons) {
@@ -5109,17 +5635,29 @@ function renderizarNovidades(lista) {
     const corpo = document.getElementById('novidades-corpo');
     corpo.replaceChildren();
     const el = (tag, classe, texto) => { const e = document.createElement(tag); if (classe) e.className = classe; if (texto != null) e.textContent = texto; return e; };
-    lista.forEach((n) => {
-        corpo.appendChild(el('div', 'nov-versao', 'VERSÃO ' + n.versao));
-        corpo.appendChild(el('div', 'nov-resumo', n.titulo));
-        n.itens.forEach((it) => {
+    // Resumido: só as primeiras novidades da versão mais nova aparecem; o resto fica atrás de "Ver tudo".
+    const VISIVEIS = 4;
+    let escondidas = 0;
+    lista.forEach((n, iv) => {
+        const extraVersao = iv > 0;
+        const cab = [el('div', 'nov-versao', 'VERSÃO ' + n.versao), el('div', 'nov-resumo', n.titulo)];
+        cab.forEach((c) => { if (extraVersao) c.classList.add('novidades-extra'); corpo.appendChild(c); });
+        n.itens.forEach((it, ii) => {
             const linha = el('div', 'nov-item');
             const txt = el('div');
             txt.append(el('b', '', it.t), el('div', 'nov-desc', it.d), el('div', 'nov-como', '📍 ' + it.c));
             linha.append(el('div', 'nov-icone', it.i), txt);
+            if (extraVersao || ii >= VISIVEIS) { linha.classList.add('novidades-extra'); escondidas++; }
             corpo.appendChild(linha);
         });
     });
+    corpo.classList.toggle('resumido', escondidas > 0);
+    if (escondidas > 0) {
+        const botao = el('button', 'novidades-ver-tudo', `Ver tudo (mais ${escondidas} novidade${escondidas > 1 ? 's' : ''})`);
+        botao.type = 'button';
+        botao.addEventListener('click', () => { corpo.classList.remove('resumido'); botao.remove(); });
+        corpo.appendChild(botao);
+    }
 }
 function abrirNovidades(lista) {
     if (!lista || !lista.length) return;
@@ -5157,9 +5695,391 @@ document.getElementById('cfg-ver-novidades').addEventListener('click', () => {
 })();
 
 // ---------- Preferências de áudio (guardadas só neste PC) ----------
+// ---------- Efeitos de voz criados pela pessoa ----------
+// Guardados só neste PC: { id, nome, perfil }. "perfil" são números (tom, timbre, robô, eco...), conferidos por Ruido.perfilDeVoz.
+// Efeitos antigos (criados a partir de uma gravação, só tom + timbre) continuam valendo e podem ser editados.
+const CHAVE_VOZES_CRIADAS = 'estrivisor_vozes_criadas';
+const MAX_VOZES_CRIADAS = 12;
+function vozesCriadas() {
+    let lista = [];
+    try { lista = JSON.parse(localStorage.getItem(CHAVE_VOZES_CRIADAS) || '[]'); } catch (e) { lista = []; }
+    if (!Array.isArray(lista)) return [];
+    return lista.filter((v) => v && /^voz:[a-z0-9]{6,12}$/.test(v.id) && typeof v.nome === 'string')
+        .map((v) => ({ id: v.id, nome: v.nome.slice(0, 24), perfil: window.Ruido.perfilDeVoz(v.perfil), painel: painelValido(v.painel) })).filter((v) => v.perfil).slice(0, MAX_VOZES_CRIADAS);
+}
+// Só a posição dos botões do editor (não muda o som): números dentro dos limites e nomes de pedais conhecidos.
+function painelValido(p) {
+    if (!p || typeof p !== 'object') return null;
+    const AJ = window.Ruido.AJUSTES_EFEITO, valores = {};
+    if (p.valores && typeof p.valores === 'object') for (const [k, [min, max]] of Object.entries(AJ)) { const n = Number(p.valores[k]); if (Number.isFinite(n)) valores[k] = Math.min(max, Math.max(min, n)); }
+    const ids = ['tom', 'eq', 'filtros', 'robo', 'dist', 'vib', 'trem', 'eco', 'amb'];
+    const desligados = Array.isArray(p.desligados) ? p.desligados.filter((d) => ids.includes(d)) : [];
+    return { valores, desligados };
+}
+function salvarVozesCriadas(lista) { try { localStorage.setItem(CHAVE_VOZES_CRIADAS, JSON.stringify(lista)); } catch (e) { mostrarNotificacao('Não consegui guardar o efeito neste computador.'); } }
+function vozCriadaPorId(id) { return typeof id === 'string' && id.startsWith('voz:') ? (vozesCriadas().find((v) => v.id === id) || null) : null; }
+let efeitoEmEdicao = null; // rascunho do editor: só o teste do microfone usa (nunca vai pra chamada)
+function nomeDoEfeito(id) {
+    if (window.Ruido.EFEITOS[id]) return window.Ruido.EFEITOS[id].nome;
+    const v = vozCriadaPorId(id);
+    return v ? '🎭 ' + v.nome : 'efeito';
+}
+// Põe as vozes criadas no seletor de efeitos e a lista (com o botão de apagar) logo abaixo.
+function popularEfeitosCriados() {
+    const sel = document.getElementById('cfg-efeito-voz');
+    sel.querySelectorAll('optgroup').forEach((g) => g.remove());
+    const lista = vozesCriadas();
+    if (lista.length) {
+        const g = document.createElement('optgroup'); g.label = 'Minhas vozes';
+        lista.forEach((v) => { const o = document.createElement('option'); o.value = v.id; o.textContent = '🎭 ' + v.nome; g.appendChild(o); });
+        sel.appendChild(g);
+    }
+    const area = document.getElementById('vozes-criadas');
+    area.replaceChildren();
+    lista.forEach((v) => {
+        const linha = document.createElement('div'); linha.className = 'voz-criada';
+        const nome = document.createElement('span'); nome.textContent = '🎭 ' + v.nome;
+        const editar = document.createElement('button'); editar.type = 'button'; editar.textContent = '✏️'; editar.title = 'Editar este efeito';
+        editar.setAttribute('aria-label', 'Editar o efeito ' + v.nome);
+        editar.addEventListener('click', () => abrirEditorEfeito(v.id));
+        const apagar = document.createElement('button'); apagar.type = 'button'; apagar.textContent = '🗑️'; apagar.title = 'Apagar este efeito';
+        apagar.setAttribute('aria-label', 'Apagar o efeito ' + v.nome);
+        apagar.addEventListener('click', async () => {
+            const r = await pedirTexto({ titulo: 'Apagar o efeito "' + v.nome + '"?', dica: 'Só some deste computador.', semCampo: true, rotuloOk: 'Apagar' });
+            if (!r) return;
+            salvarVozesCriadas(vozesCriadas().filter((x) => x.id !== v.id));
+            if (prefsAudio.efeito === v.id) { prefsAudio.efeito = 'nenhum'; atualizarFiltroRuidoAoVivo(); }
+            popularEfeitosCriados();
+            sel.value = prefsAudio.efeito;
+        });
+        linha.append(nome, editar, apagar);
+        area.appendChild(linha);
+    });
+}
+
+// ---------- Editor de efeito de voz (Configurações > Voz > Criar efeito) ----------
+// Montado como uma pedaleira: cada pedal é um efeito (liga/desliga) com botões de girar. Enquanto edita, só o
+// "Ouvir com meu microfone" usa o rascunho; a chamada continua com o efeito escolhido. Ao salvar, o efeito
+// entra na lista e já fica escolhido. O monitor desenha o som que sai do efeito (o que os outros ouviriam).
+const FMT = {
+    db: (v) => (v > 0 ? '+' : '') + String(v).replace('.', ',') + ' dB',
+    pct: (v) => Math.round(v) + '%',
+    hz: (v) => v.toFixed(1).replace('.', ',') + ' Hz'
+};
+// [chave, rótulo no botão, passo, formatar, explicação]
+const BOTOES_EFEITO = {
+    tom: ['Tom', 0.5, (v) => (v > 0 ? '+' : '') + String(v).replace('.', ','), 'Semitons. Para cima: voz mais fina. Para baixo: mais grossa. Não muda a velocidade da fala. 12 = uma oitava.'],
+    graves: ['Graves', 0.5, FMT.db, 'Corpo e peso da voz (abaixo de ~250 Hz).'],
+    medios: ['Médios', 0.5, FMT.db, 'Presença: mais = voz "na frente", nasal; menos = oca.'],
+    agudos: ['Agudos', 0.5, FMT.db, 'Brilho e chiado (acima de ~3 kHz).'],
+    cortaGraves: ['Corta grave', 10, (v) => (v <= 0 ? 'off' : Math.round(v) + ' Hz'), 'Tira o grave abaixo deste ponto. Uns 400 Hz dão cara de rádio/telefone.'],
+    cortaAgudos: ['Corta agudo', 100, (v) => (v >= 12000 ? 'off' : (v / 1000).toFixed(1).replace('.', ',') + ' kHz'), 'Abafa a voz acima deste ponto. Perto de 1 kHz parece debaixo d\'água.'],
+    roboInt: ['Força', 1, FMT.pct, 'Quanto da voz vira metálica.'],
+    roboVel: ['Frequência', 1, (v) => Math.round(v) + ' Hz', 'Baixo: robô antigo. Alto: voz de sino, alienígena.'],
+    distorcao: ['Drive', 1, FMT.pct, 'Voz rasgada, de megafone ou demônio. Muito alto fica difícil de entender.'],
+    vibInt: ['Força', 1, FMT.pct, 'Quanto o tom treme.'],
+    vibVel: ['Velocidade', 0.1, FMT.hz, 'Devagar (1 Hz): arrastado, bêbado. Rápido (9 Hz): tremido, alienígena.'],
+    tremInt: ['Força', 1, FMT.pct, 'Quanto o volume sobe e desce.'],
+    tremVel: ['Velocidade', 0.1, FMT.hz, 'Quantas vezes por segundo o volume pulsa.'],
+    ecoVol: ['Volume', 1, FMT.pct, 'Volume das repetições.'],
+    ecoAtraso: ['Tempo', 10, (v) => Math.round(v) + ' ms', 'Curto: sala pequena. Longo: estádio, montanha.'],
+    ecoRep: ['Repetições', 1, FMT.pct, 'Quanto o eco continua repetindo antes de sumir.'],
+    ambiente: ['Quantidade', 1, FMT.pct, 'Som de lugar grande: igreja, caverna, banheiro.'],
+    volume: ['Volume', 1, FMT.pct, 'Compensa se o efeito deixou a voz alta ou baixa demais.']
+};
+const PEDAIS_EFEITO = [
+    { id: 'tom', nome: 'Tom', icone: '🎚️', cor: '#8b7bff', desc: 'Voz mais fina ou mais grossa', ajustes: ['tom'] },
+    { id: 'eq', nome: 'Equalizador', icone: '🎛️', cor: '#3fb6ff', desc: 'O timbre da voz', ajustes: ['graves', 'medios', 'agudos'] },
+    { id: 'filtros', nome: 'Filtros', icone: '📻', cor: '#2fc59a', desc: 'Rádio, telefone, abafada', ajustes: ['cortaGraves', 'cortaAgudos'] },
+    { id: 'robo', nome: 'Robô', icone: '🤖', cor: '#a9b6c8', desc: 'Voz metálica', ajustes: ['roboInt', 'roboVel'] },
+    { id: 'dist', nome: 'Distorção', icone: '🔥', cor: '#ff6a3d', desc: 'Voz rasgada', ajustes: ['distorcao'] },
+    { id: 'vib', nome: 'Vibrato', icone: '〰️', cor: '#e05ad8', desc: 'O tom treme', ajustes: ['vibInt', 'vibVel'] },
+    { id: 'trem', nome: 'Pulsar', icone: '💓', cor: '#ff4d7a', desc: 'O volume pulsa', ajustes: ['tremInt', 'tremVel'] },
+    { id: 'eco', nome: 'Eco', icone: '🏔️', cor: '#f2b53a', desc: 'Repete o que você fala', ajustes: ['ecoVol', 'ecoAtraso', 'ecoRep'] },
+    { id: 'amb', nome: 'Ambiente', icone: '⛪', cor: '#56c3e0', desc: 'Lugar grande', ajustes: ['ambiente'] },
+    { id: 'saida', nome: 'Saída', icone: '🔊', cor: '#c9d1dc', desc: 'Volume final', ajustes: ['volume'], semChave: true }
+];
+// valores = posição dos botões; desligados = pedais desligados (os botões guardam a posição, mas o efeito usa o padrão)
+const editorEfeito = { id: null, bandas: [], mexeu: false, valores: {}, desligados: new Set(), comparando: false };
+const padraoAjuste = (k) => window.Ruido.AJUSTES_EFEITO[k][2];
+function pedalDoAjuste(k) { return PEDAIS_EFEITO.find((p) => p.ajustes.includes(k)); }
+function lerControlesEfeito() {
+    const p = { versao: 2, bandas: editorEfeito.bandas };
+    for (const [k, v] of Object.entries(editorEfeito.valores)) p[k] = editorEfeito.desligados.has(pedalDoAjuste(k).id) ? padraoAjuste(k) : v;
+    return window.Ruido.perfilDeVoz(p);
+}
+// Ponto do arco do botão (ângulo em graus, 0 = em cima).
+function pontoArco(cx, cy, r, ang) { const a = (ang - 90) * Math.PI / 180; return [cx + r * Math.cos(a), cy + r * Math.sin(a)]; }
+function caminhoArco(a0, a1) {
+    if (Math.abs(a1 - a0) < 0.5) return '';
+    const [x0, y0] = pontoArco(32, 32, 24, Math.min(a0, a1)), [x1, y1] = pontoArco(32, 32, 24, Math.max(a0, a1));
+    return `M ${x0.toFixed(2)} ${y0.toFixed(2)} A 24 24 0 ${Math.abs(a1 - a0) > 180 ? 1 : 0} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
+}
+function desenharBotao(botao) {
+    const k = botao.dataset.ajuste, [min, max] = window.Ruido.AJUSTES_EFEITO[k];
+    const v = editorEfeito.valores[k], fr = (v - min) / (max - min);
+    const ang = -135 + fr * 270;
+    const centro = min < 0 && max > 0 ? -135 + ((0 - min) / (max - min)) * 270 : -135;
+    botao.querySelector('.arco-valor').setAttribute('d', caminhoArco(centro, ang));
+    botao.querySelector('.ponteiro').setAttribute('transform', `rotate(${ang} 32 32)`);
+    const texto = BOTOES_EFEITO[k][2](v);
+    botao.parentElement.querySelector('.botao-valor').textContent = texto;
+    botao.setAttribute('aria-valuenow', String(v));
+    botao.setAttribute('aria-valuetext', texto);
+    botao.parentElement.classList.toggle('mexido', v !== padraoAjuste(k));
+}
+function mudarAjuste(k, v, porPessoa) {
+    const [min, max] = window.Ruido.AJUSTES_EFEITO[k], passo = BOTOES_EFEITO[k][1];
+    v = Math.min(max, Math.max(min, Math.round(v / passo) * passo));
+    v = Math.round(v * 100) / 100;
+    if (v === editorEfeito.valores[k]) return;
+    editorEfeito.valores[k] = v;
+    const botao = document.querySelector(`#efeito-controles .botao-girar[data-ajuste="${k}"]`);
+    if (botao) desenharBotao(botao);
+    if (porPessoa) {
+        editorEfeito.mexeu = true;
+        const pedal = pedalDoAjuste(k);
+        if (editorEfeito.desligados.has(pedal.id)) alternarPedal(pedal.id, true); // mexeu num pedal desligado: liga
+        marcarModelo(null);
+        atualizarRascunhoEfeito();
+    }
+}
+function alternarPedal(id, ligar) {
+    const card = document.querySelector(`#efeito-controles .pedal[data-pedal="${id}"]`);
+    if (ligar) editorEfeito.desligados.delete(id); else editorEfeito.desligados.add(id);
+    if (card) {
+        card.classList.toggle('desligado', !ligar);
+        const chave = card.querySelector('.pedal-chave');
+        if (chave) { chave.setAttribute('aria-pressed', ligar ? 'true' : 'false'); chave.title = ligar ? 'Desligar este pedal' : 'Ligar este pedal'; }
+    }
+}
+function criarBotaoGirar(k, cor) {
+    const [min, max] = window.Ruido.AJUSTES_EFEITO[k], [rotulo, passo, , dica] = BOTOES_EFEITO[k];
+    const caixa = document.createElement('div'); caixa.className = 'botao-caixa'; caixa.title = dica + '\nArraste para cima/baixo ou use a rodinha. Clique duplo volta ao padrão.';
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 64 64'); svg.classList.add('botao-girar');
+    svg.dataset.ajuste = k;
+    svg.setAttribute('role', 'slider'); svg.setAttribute('tabindex', '0');
+    svg.setAttribute('aria-label', `${rotulo} (${pedalDoAjuste(k).nome})`);
+    svg.setAttribute('aria-valuemin', String(min)); svg.setAttribute('aria-valuemax', String(max));
+    svg.style.setProperty('--cor', cor);
+    const trilho = document.createElementNS(NS, 'path'); trilho.setAttribute('d', caminhoArco(-135, 135)); trilho.setAttribute('class', 'arco-trilho');
+    const valor = document.createElementNS(NS, 'path'); valor.setAttribute('class', 'arco-valor');
+    const corpo = document.createElementNS(NS, 'circle'); corpo.setAttribute('cx', '32'); corpo.setAttribute('cy', '32'); corpo.setAttribute('r', '17'); corpo.setAttribute('class', 'botao-corpo');
+    const ponteiro = document.createElementNS(NS, 'line'); ponteiro.setAttribute('x1', '32'); ponteiro.setAttribute('y1', '19'); ponteiro.setAttribute('x2', '32'); ponteiro.setAttribute('y2', '26'); ponteiro.setAttribute('class', 'ponteiro');
+    svg.append(trilho, valor, corpo, ponteiro);
+    const nome = document.createElement('div'); nome.className = 'botao-rotulo'; nome.textContent = rotulo;
+    const mostra = document.createElement('div'); mostra.className = 'botao-valor';
+    caixa.append(svg, mostra, nome);
+    // arrastar na vertical (Shift = ajuste fino), rodinha, teclado e clique duplo
+    let arrasto = null;
+    svg.addEventListener('pointerdown', (e) => { e.preventDefault(); svg.focus(); svg.setPointerCapture(e.pointerId); arrasto = { y: e.clientY, v: editorEfeito.valores[k] }; svg.classList.add('girando'); });
+    svg.addEventListener('pointermove', (e) => {
+        if (!arrasto) return;
+        const faixa = (max - min) * (e.shiftKey ? 0.2 : 1);
+        mudarAjuste(k, arrasto.v + ((arrasto.y - e.clientY) / 180) * faixa, true);
+    });
+    const soltar = () => { arrasto = null; svg.classList.remove('girando'); };
+    svg.addEventListener('pointerup', soltar); svg.addEventListener('pointercancel', soltar);
+    svg.addEventListener('wheel', (e) => { e.preventDefault(); const n = Math.max(1, Math.round((max - min) / passo / 40)); mudarAjuste(k, editorEfeito.valores[k] + (e.deltaY < 0 ? 1 : -1) * passo * (e.shiftKey ? 1 : n), true); }, { passive: false });
+    svg.addEventListener('dblclick', () => mudarAjuste(k, padraoAjuste(k), true));
+    svg.addEventListener('keydown', (e) => {
+        const n = Math.max(1, Math.round((max - min) / passo / 20));
+        const mapa = { ArrowUp: passo, ArrowRight: passo, ArrowDown: -passo, ArrowLeft: -passo, PageUp: passo * n, PageDown: -passo * n };
+        if (e.key in mapa) { e.preventDefault(); mudarAjuste(k, editorEfeito.valores[k] + mapa[e.key], true); }
+        else if (e.key === 'Home') { e.preventDefault(); mudarAjuste(k, min, true); }
+        else if (e.key === 'End') { e.preventDefault(); mudarAjuste(k, max, true); }
+        else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); mudarAjuste(k, padraoAjuste(k), true); }
+    });
+    return caixa;
+}
+function montarControlesEfeito() {
+    const area = document.getElementById('efeito-controles');
+    if (area.childElementCount) return;
+    for (const k of Object.keys(window.Ruido.AJUSTES_EFEITO)) editorEfeito.valores[k] = padraoAjuste(k);
+    PEDAIS_EFEITO.forEach((p) => {
+        const card = document.createElement('section'); card.className = 'pedal' + (p.ajustes.length > 2 ? ' largo' : ''); card.dataset.pedal = p.id;
+        card.style.setProperty('--cor', p.cor);
+        card.setAttribute('aria-label', 'Pedal ' + p.nome);
+        const topo = document.createElement('div'); topo.className = 'pedal-topo';
+        const ic = document.createElement('span'); ic.className = 'pedal-icone'; ic.textContent = p.icone; ic.setAttribute('aria-hidden', 'true');
+        const tx = document.createElement('div'); tx.className = 'pedal-textos';
+        const nm = document.createElement('div'); nm.className = 'pedal-nome'; nm.textContent = p.nome;
+        const ds = document.createElement('div'); ds.className = 'pedal-desc'; ds.textContent = p.desc;
+        tx.append(nm, ds);
+        topo.append(ic, tx);
+        if (!p.semChave) {
+            const chave = document.createElement('button'); chave.type = 'button'; chave.className = 'pedal-chave';
+            chave.setAttribute('aria-label', 'Ligar ou desligar o pedal ' + p.nome); chave.setAttribute('aria-pressed', 'true');
+            chave.addEventListener('click', () => { alternarPedal(p.id, editorEfeito.desligados.has(p.id)); editorEfeito.mexeu = true; marcarModelo(null); atualizarRascunhoEfeito(); });
+            topo.appendChild(chave);
+        }
+        const botoes = document.createElement('div'); botoes.className = 'pedal-botoes';
+        p.ajustes.forEach((k) => botoes.appendChild(criarBotaoGirar(k, p.cor)));
+        card.append(topo, botoes);
+        area.appendChild(card);
+    });
+    area.querySelectorAll('.botao-girar').forEach(desenharBotao);
+    const chips = document.getElementById('efeito-modelos');
+    Object.entries(window.Ruido.MODELOS_EFEITO).forEach(([k, m]) => {
+        const b = document.createElement('button'); b.type = 'button'; b.className = 'chip-modelo'; b.dataset.modelo = k;
+        b.textContent = k === 'zero' ? '✨ Do zero' : m.nome;
+        b.addEventListener('click', () => {
+            editorEfeito.bandas = [];
+            mostrarControlesEfeito(window.Ruido.perfilDoModelo(k), null);
+            marcarModelo(k);
+            editorEfeito.mexeu = true;
+            atualizarRascunhoEfeito();
+        });
+        chips.appendChild(b);
+    });
+}
+function marcarModelo(k) { document.querySelectorAll('#efeito-modelos .chip-modelo').forEach((b) => b.classList.toggle('ativo', b.dataset.modelo === k)); }
+// Põe os valores nos botões. Sem "desligados" salvos, liga só os pedais que mudam alguma coisa.
+function mostrarControlesEfeito(perfil, painel) {
+    for (const k of Object.keys(window.Ruido.AJUSTES_EFEITO)) {
+        const guardado = painel && painel.valores && Number.isFinite(painel.valores[k]) ? painel.valores[k] : perfil[k];
+        editorEfeito.valores[k] = guardado;
+    }
+    document.querySelectorAll('#efeito-controles .botao-girar').forEach(desenharBotao);
+    PEDAIS_EFEITO.forEach((p) => {
+        if (p.semChave) return;
+        const ligado = painel && Array.isArray(painel.desligados) ? !painel.desligados.includes(p.id) : p.ajustes.some((k) => editorEfeito.valores[k] !== padraoAjuste(k));
+        alternarPedal(p.id, ligado);
+    });
+}
+let esperaRascunho = 0;
+function atualizarRascunhoEfeito() {
+    efeitoEmEdicao = editorEfeito.comparando ? window.Ruido.perfilDoModelo('zero') : lerControlesEfeito();
+    clearTimeout(esperaRascunho);
+    esperaRascunho = setTimeout(async () => {
+        if (!microfoneTesteAtivo) return;
+        if (cadeiaTesteMic) cadeiaTesteMic.ajustar(opcoesFiltroRuido(true));
+        else if (filtroRuidoNecessario(true)) { pararTesteMicrofone(); await alternarTesteMicrofone(); }
+    }, 40);
+}
+// ---------- Monitor: onda e espectro do que sai do efeito ----------
+let quadroMonitor = 0;
+function desenharMonitorEfeito() {
+    cancelAnimationFrame(quadroMonitor);
+    const tela = document.getElementById('efeito-monitor');
+    const painel = document.getElementById('cfg-painel-efeito');
+    if (!tela || !painel.classList.contains('ativo')) return;
+    const dpr = window.devicePixelRatio || 1, w = tela.clientWidth, h = tela.clientHeight;
+    if (tela.width !== Math.round(w * dpr)) { tela.width = Math.round(w * dpr); tela.height = Math.round(h * dpr); }
+    const c = tela.getContext('2d');
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.clearRect(0, 0, w, h);
+    c.strokeStyle = 'rgba(255,255,255,0.05)'; c.lineWidth = 1;
+    for (let x = 0; x < w; x += 40) { c.beginPath(); c.moveTo(x + 0.5, 0); c.lineTo(x + 0.5, h); c.stroke(); }
+    c.beginPath(); c.moveTo(0, h / 2 + 0.5); c.lineTo(w, h / 2 + 0.5); c.stroke();
+    const an = analisadorMedidor;
+    const legenda = document.getElementById('efeito-monitor-legenda');
+    if (!an || !microfoneTesteAtivo) {
+        legenda.textContent = 'Clique em "Ouvir com meu microfone" e fale: aqui aparece o som que sai do efeito.';
+        legenda.style.display = '';
+        quadroMonitor = requestAnimationFrame(desenharMonitorEfeito);
+        return;
+    }
+    legenda.style.display = 'none';
+    const freq = new Uint8Array(an.frequencyBinCount); an.getByteFrequencyData(freq);
+    const barras = 64, maxBin = Math.floor(freq.length * 0.55);
+    const grad = c.createLinearGradient(0, h, 0, 0); grad.addColorStop(0, 'rgba(139,123,255,0.15)'); grad.addColorStop(1, 'rgba(63,182,255,0.55)');
+    c.fillStyle = grad;
+    for (let i = 0; i < barras; i++) {
+        const b0 = Math.floor(Math.pow(i / barras, 1.8) * maxBin), b1 = Math.max(b0 + 1, Math.floor(Math.pow((i + 1) / barras, 1.8) * maxBin));
+        let m = 0; for (let b = b0; b < b1; b++) m = Math.max(m, freq[b]);
+        const alt = (m / 255) * h * 0.95, bw = w / barras;
+        c.fillRect(i * bw + 1, h - alt, bw - 2, alt);
+    }
+    const onda = new Uint8Array(an.fftSize); an.getByteTimeDomainData(onda);
+    c.strokeStyle = '#8ef0b0'; c.lineWidth = 2; c.beginPath();
+    for (let i = 0; i < onda.length; i++) { const x = (i / (onda.length - 1)) * w, y = (onda[i] / 255) * h; if (i) c.lineTo(x, y); else c.moveTo(x, y); }
+    c.stroke();
+    quadroMonitor = requestAnimationFrame(desenharMonitorEfeito);
+}
+function abrirEditorEfeito(id) {
+    montarControlesEfeito();
+    const existente = id ? vozCriadaPorId(id) : null;
+    if (!existente && vozesCriadas().length >= MAX_VOZES_CRIADAS) return mostrarNotificacao(`Você já tem ${MAX_VOZES_CRIADAS} efeitos criados. Apague algum antes.`);
+    editorEfeito.id = existente ? existente.id : null;
+    editorEfeito.bandas = existente ? existente.perfil.bandas : [];
+    editorEfeito.mexeu = false; editorEfeito.comparando = false;
+    document.getElementById('efeito-titulo').textContent = existente ? 'Editar efeito de voz' : 'Criar efeito de voz';
+    document.getElementById('efeito-nome').value = existente ? existente.nome : '';
+    mostrarControlesEfeito(existente ? existente.perfil : window.Ruido.perfilDoModelo('zero'), existente ? existente.painel : null);
+    marcarModelo(existente ? null : 'zero');
+    efeitoEmEdicao = lerControlesEfeito();
+    if (!configAberta()) abrirConfig('voz');
+    irParaSecaoConfig('efeito');
+    if (cadeiaTesteMic) cadeiaTesteMic.ajustar(opcoesFiltroRuido(true));
+    desenharMonitorEfeito();
+    document.getElementById('efeito-nome').focus();
+}
+function sairDoEditorEfeito() {
+    efeitoEmEdicao = null;
+    clearTimeout(esperaRascunho);
+    cancelAnimationFrame(quadroMonitor);
+    if (cadeiaTesteMic) cadeiaTesteMic.ajustar(opcoesFiltroRuido(true));
+}
+async function fecharEditorEfeito() {
+    if (editorEfeito.mexeu) {
+        const r = await pedirTexto({ titulo: 'Sair sem salvar?', dica: 'As mudanças neste efeito vão ser perdidas.', semCampo: true, rotuloOk: 'Sair sem salvar' });
+        if (!r) return;
+    }
+    sairDoEditorEfeito();
+    irParaSecaoConfig('voz');
+}
+document.getElementById('cfg-criar-voz').addEventListener('click', () => abrirEditorEfeito(null));
+document.getElementById('efeito-voltar').addEventListener('click', fecharEditorEfeito);
+document.getElementById('efeito-cancelar').addEventListener('click', fecharEditorEfeito);
+document.getElementById('efeito-ouvir').addEventListener('click', async () => { efeitoEmEdicao = lerControlesEfeito(); await alternarTesteMicrofone(); desenharMonitorEfeito(); });
+// Segurar "Sem efeito" toca a sua voz normal (pra comparar); soltar volta pro efeito.
+{
+    const comparar = document.getElementById('efeito-comparar');
+    const ligar = (v) => { if (editorEfeito.comparando === v) return; editorEfeito.comparando = v; comparar.classList.toggle('ativo', v); atualizarRascunhoEfeito(); };
+    comparar.addEventListener('pointerdown', () => ligar(true));
+    ['pointerup', 'pointerleave', 'pointercancel', 'blur'].forEach((t) => comparar.addEventListener(t, () => ligar(false)));
+    comparar.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); ligar(true); } });
+    comparar.addEventListener('keyup', () => ligar(false));
+}
+document.getElementById('efeito-zerar').addEventListener('click', () => {
+    editorEfeito.bandas = [];
+    mostrarControlesEfeito(window.Ruido.perfilDoModelo('zero'), null);
+    marcarModelo('zero');
+    editorEfeito.mexeu = true;
+    atualizarRascunhoEfeito();
+});
+document.getElementById('efeito-nome').addEventListener('input', () => { editorEfeito.mexeu = true; });
+document.getElementById('efeito-salvar').addEventListener('click', () => {
+    const perfil = lerControlesEfeito();
+    if (!perfil) return mostrarNotificacao('Não consegui ler os controles do efeito.');
+    const lista = vozesCriadas();
+    const nome = document.getElementById('efeito-nome').value.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 24)
+        || (editorEfeito.id ? (vozCriadaPorId(editorEfeito.id) || {}).nome : '') || 'Meu efeito ' + (lista.length + 1);
+    const guardar = { ...perfil }; delete guardar.fator; // o fator sai do tom; guarda só os controles
+    const painel = { valores: { ...editorEfeito.valores }, desligados: [...editorEfeito.desligados] };
+    let id = editorEfeito.id;
+    if (id && lista.some((v) => v.id === id)) {
+        salvarVozesCriadas(lista.map((v) => (v.id === id ? { id, nome, perfil: guardar, painel } : v)));
+    } else {
+        if (lista.length >= MAX_VOZES_CRIADAS) return mostrarNotificacao(`Você já tem ${MAX_VOZES_CRIADAS} efeitos criados. Apague algum antes.`);
+        do { id = 'voz:' + Math.random().toString(36).slice(2, 10).padEnd(8, 'x'); } while (lista.some((v) => v.id === id));
+        salvarVozesCriadas(lista.concat([{ id, nome, perfil: guardar, painel }]));
+    }
+    editorEfeito.mexeu = false;
+    sairDoEditorEfeito();
+    irParaSecaoConfig('voz');
+    popularEfeitosCriados();
+    const sel = document.getElementById('cfg-efeito-voz');
+    sel.value = id; sel.dispatchEvent(new Event('change'));
+    mostrarNotificacao(`Efeito "${nome}" salvo e ligado. Para trocar, use a lista de efeitos (ou o botão direito no seu nome na chamada).`, 'info');
+});
+
 const CHAVE_PREFS_AUDIO = 'estrivisor_audio';
 const BITRATE_VOZ = { normal: 32000, alta: 64000, muito_alta: 96000 };
-const PREFS_AUDIO_PADRAO = { microfoneId: '', saidaId: '', eco: true, ruido: true, ganho: true, qualidade: 'alta', dtx: true, red: true, ruidoAvancado: true, porta: false, limiarPorta: 12, efeito: 'nenhum' };
+const PREFS_AUDIO_PADRAO = { microfoneId: '', micAoEntrar: true, saidaId: '', eco: true, ruido: true, ganho: true, qualidade: 'alta', dtx: true, red: true, ruidoAvancado: true, porta: false, limiarPorta: 12, efeito: 'nenhum' };
 let prefsAudio = { ...PREFS_AUDIO_PADRAO };
 
 function carregarPreferenciasAudio() {
@@ -5170,6 +6090,7 @@ function carregarPreferenciasAudio() {
     prefsAudio = {
         microfoneId: typeof p.microfoneId === 'string' ? p.microfoneId.slice(0, 300) : '',
         saidaId: typeof p.saidaId === 'string' ? p.saidaId.slice(0, 300) : '',
+        micAoEntrar: bool(p.micAoEntrar, true),
         eco: bool(p.eco, true), ruido: bool(p.ruido, true), ganho: bool(p.ganho, true),
         qualidade: BITRATE_VOZ[p.qualidade] ? p.qualidade : 'alta',
         dtx: bool(p.dtx, true), red: bool(p.red, true),
@@ -5177,6 +6098,7 @@ function carregarPreferenciasAudio() {
         limiarPorta: window.Ruido.limiarValido(p.limiarPorta, 12),
         efeito: window.Ruido.efeitoValido(p.efeito)
     };
+    if (/^voz:/.test(prefsAudio.efeito) && !vozCriadaPorId(prefsAudio.efeito)) prefsAudio.efeito = 'nenhum'; // a voz foi apagada
 }
 function salvarPreferenciasAudio() {
     try { localStorage.setItem(CHAVE_PREFS_AUDIO, JSON.stringify(prefsAudio)); } catch (e) {}
@@ -5199,8 +6121,14 @@ function opcoesPublicacaoAudio() {
 let falhaFiltroRuido = false;
 let processadorRuido = null;
 function ruidoAvancadoAtivo() { return prefsAudio.ruidoAvancado && !falhaFiltroRuido; }
-function filtroRuidoNecessario() { return !falhaFiltroRuido && (prefsAudio.ruidoAvancado || prefsAudio.porta || prefsAudio.efeito !== 'nenhum'); }
-function opcoesFiltroRuido() { return { rnnoise: prefsAudio.ruidoAvancado, porta: prefsAudio.porta, limiar: prefsAudio.limiarPorta, efeito: prefsAudio.efeito }; }
+function filtroRuidoNecessario(paraTeste) { return !falhaFiltroRuido && (prefsAudio.ruidoAvancado || prefsAudio.porta || prefsAudio.efeito !== 'nenhum' || Boolean(paraTeste && efeitoEmEdicao)); }
+// paraTeste: o teste do microfone ouve o rascunho do editor de efeitos (se estiver aberto); a chamada nunca.
+function opcoesFiltroRuido(paraTeste) {
+    const base = { rnnoise: prefsAudio.ruidoAvancado, porta: prefsAudio.porta, limiar: prefsAudio.limiarPorta };
+    if (paraTeste && efeitoEmEdicao) return { ...base, efeito: 'voz:rascunho', perfil: efeitoEmEdicao };
+    const v = vozCriadaPorId(prefsAudio.efeito);
+    return { ...base, efeito: prefsAudio.efeito, perfil: v ? v.perfil : undefined };
+}
 
 // Liga, atualiza ou tira o filtro da trilha do microfone que está na chamada.
 async function aplicarFiltroRuidoNaChamada() {
@@ -5213,7 +6141,7 @@ async function aplicarFiltroRuidoNaChamada() {
             if (processadorRuido && trilha.getProcessor() === processadorRuido) processadorRuido.ajustar(opcoesFiltroRuido());
             else {
                 processadorRuido = window.Ruido.criarProcessadorLiveKit(opcoesFiltroRuido); await trilha.setProcessor(processadorRuido);
-                if (prefsAudio.efeito !== 'nenhum') mostrarNotificacao('Efeito de voz ligado: ' + window.Ruido.EFEITOS[prefsAudio.efeito].nome, 'info');
+                if (prefsAudio.efeito !== 'nenhum') mostrarNotificacao('Efeito de voz ligado: ' + nomeDoEfeito(prefsAudio.efeito), 'info');
             }
         } else if (trilha.getProcessor()) { await trilha.stopProcessor(); processadorRuido = null; }
     } catch (err) {
@@ -5226,38 +6154,71 @@ async function aplicarFiltroRuidoNaChamada() {
 }
 
 // Aplica uma mudança de áudio durante a chamada (se estiver numa).
-async function reaplicarAudioNaChamada(saidaMudou) {
-    if (!vozConectada()) return;
+// Trocar eco/ruído/ganho/microfone NÃO desliga nem republica a trilha: só refaz a captura no lugar (restartTrack),
+// então o microfone continua ligado e quem escuta não perde a sua voz. Só mudar as opções de ENVIO
+// (qualidade, DTX, RED) precisa publicar de novo. Várias mudanças seguidas viram uma só (fila).
+let micPendente = false, saidaPendente = false, republicarPendente = false, rodandoAudio = false;
+async function reaplicarAudioNaChamada(saidaMudou, publicacaoMudou) {
+    if (saidaMudou) saidaPendente = true; else micPendente = true;
+    if (publicacaoMudou) republicarPendente = true;
+    if (rodandoAudio) return;
+    rodandoAudio = true;
+    try {
+        while (micPendente || saidaPendente) {
+            const s = saidaPendente, m = micPendente, r = republicarPendente;
+            saidaPendente = micPendente = republicarPendente = false;
+            if (!vozConectada()) break;
+            await aplicarMudancaDeAudio(s, m, r);
+        }
+    } finally { rodandoAudio = false; atualizarBotaoMicrofone(); }
+}
+async function aplicarMudancaDeAudio(saidaMudou, micMudou, republicar) {
+    reaplicandoAudio++;
     try {
         if (saidaMudou) await roomVoz.switchActiveDevice('audiooutput', prefsAudio.saidaId || 'default');
-        if (!saidaMudou && microfoneAtivo) {
+        if (micMudou && microfoneAtivo) {
             const lp = roomVoz.localParticipant;
-            await lp.setMicrophoneEnabled(false);
-            await lp.setMicrophoneEnabled(true, opcoesCapturaMicrofone(), opcoesPublicacaoAudio());
+            const pegar = () => { const p = lp.getTrackPublication(LivekitClient.Track.Source.Microphone); return { pub: p, trilha: p && p.audioTrack }; };
+            let { trilha } = pegar();
+            let feito = false;
+            if (trilha && !republicar && typeof trilha.restartTrack === 'function') {
+                try { await trilha.restartTrack(opcoesCapturaMicrofone()); feito = true; } catch (err) { console.error('restartTrack falhou, publicando de novo:', err); }
+            }
+            if (!feito) { // opções de envio mudaram (ou não deu pra refazer no lugar): publica de novo
+                ({ trilha } = pegar());
+                if (trilha) await lp.unpublishTrack(trilha, true);
+                await lp.setMicrophoneEnabled(true, opcoesCapturaMicrofone(), opcoesPublicacaoAudio());
+            }
             await aplicarFiltroRuidoNaChamada();
+            const { pub, trilha: nova } = pegar();
+            { const r = nova && nova.mediaStreamTrack && resumoCaptura(nova.mediaStreamTrack); if (r) mostrarNotificacao(r, 'info'); }
+            if (pub && pub.isMuted && pub.audioTrack) await pub.audioTrack.unmute(); // garante que não ficou mudo por acidente
         }
     } catch (err) { mostrarNotificacao('Não consegui aplicar a mudança de áudio: ' + err.message); }
-    atualizarBotaoMicrofone();
+    finally { setTimeout(() => { reaplicandoAudio = Math.max(0, reaplicandoAudio - 1); }, 500); }
 }
 
 // ---------- Medidor de nível do microfone ----------
-let ctxMedidor = null, fonteMedidor = null, quadroMedidor = 0;
+let ctxMedidor = null, fonteMedidor = null, quadroMedidor = 0, analisadorMedidor = null;
 function iniciarMedidorMicrofone(stream) {
     pararMedidorMicrofone();
-    const barra = document.getElementById('cfg-medidor-barra');
-    if (!barra) return;
+    const barras = ['cfg-medidor-barra', 'efeito-medidor-barra'].map((id) => document.getElementById(id)).filter(Boolean);
+    if (!barras.length) return;
     try {
         ctxMedidor = new (window.AudioContext || window.webkitAudioContext)();
         fonteMedidor = ctxMedidor.createMediaStreamSource(stream);
         const analisador = ctxMedidor.createAnalyser();
-        analisador.fftSize = 512;
+        analisador.fftSize = 2048;
+        analisador.smoothingTimeConstant = 0.7;
+        analisadorMedidor = analisador;
         fonteMedidor.connect(analisador);
         const dados = new Uint8Array(analisador.fftSize);
         const quadro = () => {
             analisador.getByteTimeDomainData(dados);
             let pico = 0;
             for (let i = 0; i < dados.length; i++) pico = Math.max(pico, Math.abs(dados[i] - 128));
-            barra.style.width = Math.min(100, Math.round((pico / 128) * 140)) + '%';
+            const largura = Math.min(100, Math.round((pico / 128) * 140)) + '%';
+            barras.forEach((b) => { b.style.width = largura; });
             quadroMedidor = requestAnimationFrame(quadro);
         };
         quadro();
@@ -5268,13 +6229,14 @@ function pararMedidorMicrofone() {
     quadroMedidor = 0;
     try { if (fonteMedidor) fonteMedidor.disconnect(); } catch (e) {}
     try { if (ctxMedidor) ctxMedidor.close(); } catch (e) {}
-    fonteMedidor = null; ctxMedidor = null;
-    const barra = document.getElementById('cfg-medidor-barra');
-    if (barra) barra.style.width = '0';
+    fonteMedidor = null; ctxMedidor = null; analisadorMedidor = null;
+    ['cfg-medidor-barra', 'efeito-medidor-barra'].forEach((id) => { const b = document.getElementById(id); if (b) b.style.width = '0'; });
 }
 function atualizarBotaoTesteConfig() {
     const b = document.getElementById('cfg-testar-mic');
     if (b) b.textContent = microfoneTesteAtivo ? '⏹ Parar teste' : '🎧 Testar microfone';
+    const o = document.getElementById('efeito-ouvir');
+    if (o) { o.textContent = microfoneTesteAtivo ? '⏹ Parar de ouvir' : '🎧 Ouvir com meu microfone'; o.classList.toggle('ativo', microfoneTesteAtivo); }
 }
 
 // ---------- Lista de dispositivos ----------
@@ -5325,9 +6287,98 @@ function irParaSecaoConfig(nome) {
     document.querySelectorAll('.cfg-painel').forEach((p) => p.classList.toggle('ativo', p.id === 'cfg-painel-' + nome));
     if (nome === 'voz') preencherDispositivosAudio();
     if (nome === 'acesso') { abaAdmin = 'pedidos'; irParaAbaAdmin('pedidos'); carregarAcesso(false); }
-    if (nome !== 'voz' && microfoneTesteAtivo) pararTesteMicrofone();
-    try { localStorage.setItem('estrivisor_config_secao', nome); } catch (e) {}
+    if (nome !== 'voz' && nome !== 'efeito' && microfoneTesteAtivo) pararTesteMicrofone();
+    if (nome !== 'efeito' && efeitoEmEdicao) sairDoEditorEfeito();
+    if (nome === 'efeito') document.querySelectorAll('.cfg-item').forEach((b) => b.classList.toggle('ativo', b.dataset.cfg === 'voz'));
+    else { try { localStorage.setItem('estrivisor_config_secao', nome); } catch (e) {} }
+    marcarSecaoVista(nome);
+    if (nome !== 'busca') { const b = document.getElementById('cfg-busca'); if (b && b.value) b.value = ''; }
     modalConfig().querySelector('.cfg-conteudo').scrollTop = 0;
+}
+
+// Selo "novo" nas seções novas: some depois que a pessoa abre a seção uma vez.
+function marcarSecaoVista(nome) {
+    const selo = document.querySelector(`.cfg-novo[data-novo="${nome}"]`);
+    if (selo) { selo.remove(); try { localStorage.setItem('estrivisor_cfg_visto_' + nome, '1'); } catch (e) {} }
+}
+document.querySelectorAll('.cfg-novo[data-novo]').forEach((selo) => {
+    try { if (localStorage.getItem('estrivisor_cfg_visto_' + selo.dataset.novo)) selo.remove(); } catch (e) {}
+});
+
+// ---------- Procurar configuração ----------
+// Procura nos títulos e nas opções de todas as seções (menos Administração) e leva direto até a opção.
+const normalizarBusca = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+const NOMES_SECAO_CONFIG = { conta: 'Minha conta', privacidade: 'Privacidade', voz: 'Voz e áudio', video: 'Vídeo e transmissão', aparencia: 'Aparência', flutuante: 'Janela flutuante', som: 'Sons do app', discord: 'Discord', sobre: 'Sobre' };
+function textoDoAlvo(el) {
+    const b = el.matches('label') ? el.querySelector('b') : null;
+    return ((b || el).textContent || '').replace(/\s+/g, ' ').trim();
+}
+function procurarConfig(texto) {
+    const q = normalizarBusca(texto).trim();
+    let painel = document.getElementById('cfg-painel-busca');
+    if (!q) {
+        if (painel && painel.classList.contains('ativo')) {
+            let ultima = 'conta'; try { ultima = localStorage.getItem('estrivisor_config_secao') || 'conta'; } catch (e) {}
+            irParaSecaoConfig(NOMES_SECAO_CONFIG[ultima] ? ultima : 'conta');
+        }
+        return;
+    }
+    if (!painel) {
+        painel = document.createElement('section');
+        painel.className = 'cfg-painel'; painel.id = 'cfg-painel-busca';
+        modalConfig().querySelector('.cfg-conteudo').appendChild(painel);
+    }
+    const titulo = document.createElement('h2'); titulo.textContent = `Resultados para "${texto.trim()}"`;
+    const lista = document.createElement('div'); lista.className = 'busca-resultados';
+    const vistos = new Set();
+    document.querySelectorAll('.cfg-painel').forEach((p) => {
+        const sec = p.id.replace('cfg-painel-', '');
+        if (!NOMES_SECAO_CONFIG[sec]) return;
+        p.querySelectorAll('label, .cfg-grupo-titulo, .titulo-config, summary, .rotulo-config, .cfg-rotulo, button').forEach((alvo) => {
+            const t = textoDoAlvo(alvo);
+            if (!t || t.length > 90 || !normalizarBusca(t).includes(q)) return;
+            if (alvo.closest('[style*="display:none"], [style*="display: none"]')) return;
+            const chave = sec + '|' + t;
+            if (vistos.has(chave) || vistos.size >= 40) return;
+            vistos.add(chave);
+            const b = document.createElement('button'); b.type = 'button'; b.textContent = t;
+            const onde = document.createElement('span'); onde.textContent = NOMES_SECAO_CONFIG[sec]; b.appendChild(onde);
+            b.addEventListener('click', () => irParaConfigAchada(sec, alvo));
+            lista.appendChild(b);
+        });
+    });
+    if (!lista.children.length) {
+        const nada = document.createElement('div'); nada.className = 'cfg-dica';
+        nada.textContent = 'Nada encontrado. Tente outra palavra (ex.: microfone, ruído, tema, transmissão).';
+        lista.appendChild(nada);
+    }
+    painel.replaceChildren(titulo, lista);
+    document.querySelectorAll('.cfg-item').forEach((b) => b.classList.remove('ativo'));
+    document.querySelectorAll('.cfg-painel').forEach((p) => p.classList.toggle('ativo', p === painel));
+    if (microfoneTesteAtivo) pararTesteMicrofone();
+    modalConfig().querySelector('.cfg-conteudo').scrollTop = 0;
+}
+function irParaConfigAchada(sec, alvo) {
+    irParaSecaoConfig(sec);
+    // abre as caixas (Avançado, grupos da Aparência) que escondem a opção
+    for (let d = alvo.closest('details'); d; d = d.parentElement && d.parentElement.closest('details')) d.open = true;
+    const bloco = alvo.closest('label, .cfg-grupo, .secao-config') || alvo;
+    requestAnimationFrame(() => {
+        bloco.scrollIntoView({ block: 'center', behavior: 'auto' });
+        bloco.classList.remove('cfg-achado'); void bloco.offsetWidth; bloco.classList.add('cfg-achado');
+        setTimeout(() => bloco.classList.remove('cfg-achado'), 2000);
+        const campo = alvo.matches('input, select, button') ? alvo : (bloco.querySelector('input, select, textarea') || null);
+        if (campo && typeof campo.focus === 'function') campo.focus({ preventScroll: true });
+    });
+}
+{
+    const busca = document.getElementById('cfg-busca');
+    let espera = 0;
+    busca.addEventListener('input', () => { clearTimeout(espera); espera = setTimeout(() => procurarConfig(busca.value), 120); });
+    busca.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && busca.value) { e.stopPropagation(); busca.value = ''; procurarConfig(''); }
+        if (e.key === 'Enter') { const primeiro = document.querySelector('#cfg-painel-busca .busca-resultados button'); if (primeiro) primeiro.click(); }
+    });
 }
 
 function preencherContaConfig() {
@@ -5340,6 +6391,7 @@ function preencherContaConfig() {
     document.getElementById('cfg-codigo-amigo').textContent = amigosEstado.codigo || '—';
 }
 function preencherControlesAudio() {
+    document.getElementById('cfg-mic-ao-entrar').checked = prefsAudio.micAoEntrar !== false;
     document.getElementById('cfg-eco').checked = prefsAudio.eco;
     document.getElementById('cfg-ruido').checked = prefsAudio.ruido;
     document.getElementById('cfg-ganho').checked = prefsAudio.ganho;
@@ -5354,6 +6406,7 @@ function preencherControlesAudio() {
     document.getElementById('cfg-linha-limiar').style.display = prefsAudio.porta ? '' : 'none';
     document.getElementById('cfg-limiar-marca').style.display = prefsAudio.porta ? '' : 'none';
     document.getElementById('cfg-limiar-marca').style.left = prefsAudio.limiarPorta + '%';
+    popularEfeitosCriados();
     document.getElementById('cfg-efeito-voz').value = prefsAudio.efeito;
 }
 
@@ -5362,13 +6415,14 @@ function abrirConfig(secao) {
     preencherControlesAudio();
     let ultima = 'conta';
     try { ultima = localStorage.getItem('estrivisor_config_secao') || 'conta'; } catch (e) {}
-    const valida = ['conta', 'voz', 'video', 'aparencia', 'som', 'discord', 'sobre'];
+    const valida = ['conta', 'privacidade', 'voz', 'video', 'aparencia', 'flutuante', 'som', 'discord', 'sobre'];
     irParaSecaoConfig(valida.includes(secao) ? secao : (valida.includes(ultima) ? ultima : 'conta'));
     modalConfig().style.display = 'flex';
     window.electronAPI.versaoApp().then((v) => { document.getElementById('cfg-versao').textContent = 'versão ' + v; }).catch(() => {});
 }
 function fecharConfig() {
     if (microfoneTesteAtivo) pararTesteMicrofone();
+    if (efeitoEmEdicao) sairDoEditorEfeito();
     modalConfig().style.display = 'none';
 }
 
@@ -5420,11 +6474,12 @@ document.getElementById('cfg-select-saida').addEventListener('change', (e) => {
     if (audioTesteMic && audioTesteMic.setSinkId) audioTesteMic.setSinkId(prefsAudio.saidaId || '').catch(() => {});
     reaplicarAudioNaChamada(true);
 });
+document.getElementById('cfg-mic-ao-entrar').addEventListener('change', (e) => { prefsAudio.micAoEntrar = e.target.checked; salvarPreferenciasAudio(); });
 [['cfg-eco', 'eco'], ['cfg-ruido', 'ruido'], ['cfg-ganho', 'ganho'], ['cfg-dtx', 'dtx'], ['cfg-red', 'red']].forEach(([id, chave]) => {
     document.getElementById(id).addEventListener('change', async (e) => {
         prefsAudio[chave] = e.target.checked; salvarPreferenciasAudio();
         if (microfoneTesteAtivo) { pararTesteMicrofone(); await alternarTesteMicrofone(); }
-        reaplicarAudioNaChamada(false);
+        reaplicarAudioNaChamada(false, chave === 'dtx' || chave === 'red');
     });
 });
 // Filtro avançado e porta de ruído: valem na hora, sem reiniciar o teste nem a chamada
@@ -5432,7 +6487,7 @@ document.getElementById('cfg-select-saida').addEventListener('change', (e) => {
 function atualizarFiltroRuidoAoVivo() {
     salvarPreferenciasAudio();
     preencherControlesAudio();
-    if (cadeiaTesteMic) cadeiaTesteMic.ajustar(opcoesFiltroRuido());
+    if (cadeiaTesteMic) cadeiaTesteMic.ajustar(opcoesFiltroRuido(true));
     aplicarFiltroRuidoNaChamada();
 }
 document.getElementById('cfg-ruido-avancado').addEventListener('change', async (e) => {
@@ -5458,7 +6513,7 @@ document.getElementById('cfg-limiar-porta').addEventListener('input', (e) => {
 });
 document.getElementById('cfg-qualidade-voz').addEventListener('change', (e) => {
     prefsAudio.qualidade = BITRATE_VOZ[e.target.value] ? e.target.value : 'alta'; salvarPreferenciasAudio();
-    reaplicarAudioNaChamada(false);
+    reaplicarAudioNaChamada(false, true);
 });
 
 // ---------- Menus do microfone e do fone (setinhas no cartão do usuário) ----------
@@ -5496,6 +6551,7 @@ async function abrirMenuDispositivos(tipo, botao) {
             });
         }
         itens.push({ separador: true });
+        if (!entrada) itens.push({ id: 'refazer-audio', rotulo: '🔄 Não ouço alguém: refazer o áudio', acao: () => refazerAudioDosOutros() });
         itens.push({ id: 'cfg-voz', rotulo: '⚙️ Configurações de voz', acao: () => abrirConfig('voz') });
         return { cabecalho: entrada ? 'Microfone' : 'Saída de áudio', itens };
     });
@@ -5648,11 +6704,13 @@ function iniciarAmigos() {
     pararAmigos();
     carregarAmigos();
     iniciarAcesso();
+    iniciarAvisosDaConta();
     temporizadorAmigos = setInterval(carregarAmigos, 10000);
 }
 function pararAmigos() {
     qualidadeConta = null;
     acessoAdmin = false; pararAcesso();
+    pararAvisosDaConta();
     if (temporizadorAmigos) { clearInterval(temporizadorAmigos); temporizadorAmigos = null; }
     amigosEstado = { codigo: '', amigos: [], recebidos: [], enviados: [] };
     dmAtual = null;
@@ -5776,8 +6834,15 @@ const ROTULOS_ACAO = {
     'denuncia-ignorar': 'ignorou uma denúncia contra', 'denuncia-remover-mensagem': 'removeu uma mensagem de',
     'denuncia-suspender': 'suspendeu (denúncia)', 'denuncia-banir': 'baniu (denúncia)',
     'gerar-chaves': 'gerou chaves de qualidade', 'ativar-chave': 'ativou uma chave de qualidade', 'apagar-chave': 'apagou uma chave não usada',
-    'revogar-qualidade': 'revogou a qualidade de'
+    'revogar-qualidade': 'revogou a qualidade de',
+    'liberar-por-id': 'liberou pelo ID', 'encerrar-sessoes': 'encerrou as sessões de', advertir: 'advertiu',
+    'aviso-geral': 'publicou um aviso geral', 'tirar-aviso-geral': 'tirou o aviso geral', 'tirar-da-chamada': 'tirou da chamada',
+    'expulsar-do-servidor': 'expulsou de um servidor', 'liberar-volta-ao-servidor': 'liberou a volta a um servidor de', 'trocar-dono-do-servidor': 'passou um servidor para',
+    'compactar-imagens': 'compactou imagens', 'mudar-configuracao': 'mudou uma configuração', 'ligar-recurso': 'ligou um recurso', 'desligar-recurso': 'desligou um recurso',
+    'tornar-moderador': 'tornou moderador', 'tirar-moderador': 'tirou de moderador', 'apagou-a-propria-conta': 'apagou a própria conta'
 };
+let papelAdmin = 'admin';            // 'admin' ou 'moderador' (o servidor diz)
+const filtroAdmin = {};              // texto da busca de cada aba
 
 function textoSeguro(t) { const d = document.createElement('div'); d.textContent = String(t == null ? '' : t); return d.innerHTML; }
 const dataHora = (ts) => ts ? new Date(ts).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
@@ -5814,6 +6879,9 @@ async function carregarAcesso(avisar) {
         const d = await api('GET', '/admin/acesso');
         d.pedidos = Array.isArray(d.pedidos) ? d.pedidos : [];
         acessoAdmin = true;
+        papelAdmin = d.papel === 'moderador' ? 'moderador' : 'admin';
+        document.querySelectorAll('.adm-aba[data-so-admin]').forEach((b) => { b.style.display = papelAdmin === 'admin' ? '' : 'none'; });
+        if (papelAdmin !== 'admin' && document.querySelector(`.adm-aba[data-aba="${abaAdmin}"][data-so-admin]`)) { abaAdmin = 'pedidos'; document.querySelectorAll('.adm-aba').forEach((b) => b.classList.toggle('ativa', b.dataset.aba === 'pedidos')); }
         document.getElementById('cfg-item-acesso').style.display = '';
         atualizarContadoresAdmin(d);
         const ids = new Set(d.pedidos.map((p) => p.usuario));
@@ -5822,7 +6890,8 @@ async function carregarAcesso(avisar) {
             if (novos.length) mostrarNotificacao(`${novos[0].nome || 'Alguém'} pediu acesso ao Estrivisor. Veja em Configurações > Administração.`, 'info');
         }
         acessoPedidosVistos = ids;
-        const digitando = abaAdmin === 'chaves' && document.getElementById('adm-conteudo').contains(document.activeElement); // não rouba o foco de quem está digitando
+        const focado = document.activeElement;
+        const digitando = Boolean(focado && /^(INPUT|TEXTAREA|SELECT)$/.test(focado.tagName) && document.getElementById('adm-conteudo').contains(focado)) || ['aovivo', 'avisos', 'espaco', 'sistema'].includes(abaAdmin); // não rouba o foco de quem está digitando
         if (!digitando && modalConfig().style.display === 'flex' && document.getElementById('cfg-painel-acesso').classList.contains('ativo')) desenharAbaAdmin(d);
     } catch (err) {
         if (err.status === 403) { acessoAdmin = false; pararAcesso(); }
@@ -5846,14 +6915,15 @@ async function desenharAbaAdmin(dadosAcesso) {
         if (minha === 'pedidos') {
             dica.textContent = 'Quem tenta entrar sem estar liberado aparece aqui. Só libere quem você conhece e sabe que é maior de 18 anos.';
             const d = dadosAcesso || await api('GET', '/admin/acesso');
+            if (papelAdmin === 'admin') nova.appendChild(formLiberarPorId()); // liberar quem nunca pediu é só do administrador
             if (!d.pedidos.length) nova.appendChild(vazioAdmin('Nenhum pedido no momento.'));
             d.pedidos.forEach((p) => nova.appendChild(linhaAdmin({
                 usuario: p.usuario, avatar: p.avatar, titulo: p.nome || p.usuario, sub: `${String(p.usuario).replace('discord:', 'ID ')} · pediu em ${dataHora(p.ts)}`,
                 botoes: [
                     { texto: 'Liberar', acao: () => agirAdmin('POST', '/admin/acesso/autorizar', { usuario: p.usuario }) },
                     { texto: 'Negar', perigo: true, acao: () => agirAdmin('POST', '/admin/acesso/negar', { usuario: p.usuario }) },
-                    { texto: 'Banir', perigo: true, acao: () => punirPessoa(p, 'ban') }
-                ]
+                    papelAdmin === 'admin' ? { texto: 'Banir', perigo: true, acao: () => punirPessoa(p, 'ban') } : null
+                ].filter(Boolean)
             })));
         } else if (minha === 'pessoas') {
             dica.textContent = 'Todas as pessoas com acesso. Suspender tem data de fim; banir vale até você desfazer.';
@@ -5867,8 +6937,10 @@ async function desenharAbaAdmin(dadosAcesso) {
                 if (p.estado === 'suspenso') selos.push({ texto: 'suspenso até ' + dataHora(p.punicao && p.punicao.ate), tom: 'ruim' });
                 if (p.estado === 'removido') selos.push({ texto: 'sem acesso', tom: 'ruim' });
                 if (!p.aceite) selos.push({ texto: 'sem aceite dos termos' });
-                const botoes = [];
-                if (!p.admin) {
+                if (p.moderador) selos.push({ texto: 'moderador', tom: 'bom' });
+                const botoes = [{ texto: 'Ficha', acao: () => abrirFichaAdmin(p.usuario) }];
+                if (!p.admin && p.estado === 'ok' && (papelAdmin === 'admin' || !p.moderador)) botoes.push({ texto: 'Advertir', acao: () => advertirPessoa(p) });
+                if (!p.admin && papelAdmin === 'admin') {
                     if (p.estado === 'banido' || p.estado === 'suspenso') botoes.push({ texto: 'Desfazer punição', acao: () => agirAdmin('POST', '/admin/desfazer-punicao', { usuario: p.usuario }) });
                     else if (p.estado === 'removido') botoes.push({ texto: 'Liberar', acao: () => agirAdmin('POST', '/admin/acesso/autorizar', { usuario: p.usuario }) });
                     else {
@@ -5889,7 +6961,7 @@ async function desenharAbaAdmin(dadosAcesso) {
             if (!d.servidores.length) nova.appendChild(vazioAdmin('Nenhum servidor criado.'));
             d.servidores.forEach((s) => nova.appendChild(linhaAdmin({
                 titulo: s.nome, sub: `Dono: ${s.donoNome || s.dono} · ${s.membros} membro(s) · ${s.canais} canal(is) · criado em ${dataHora(s.criadoEm)}`,
-                botoes: [{ texto: 'Apagar servidor', perigo: true, acao: () => apagarServidorAdmin(s) }]
+                botoes: [{ texto: 'Gerenciar', acao: () => abrirServidorAdmin(s.id) }, { texto: 'Apagar servidor', perigo: true, acao: () => apagarServidorAdmin(s) }]
             })));
         } else if (minha === 'denuncias') {
             dica.textContent = 'Você só vê o trecho que a pessoa denunciou, nada além disso.';
@@ -5900,6 +6972,18 @@ async function desenharAbaAdmin(dadosAcesso) {
             dica.textContent = 'Chaves liberam qualidades acima de 720p30. Cada chave vale para uma conta. O texto da chave só aparece uma vez, quando você gera: copie na hora.';
             const d = await api('GET', '/admin/chaves');
             desenharAbaChaves(nova, d);
+        } else if (minha === 'aovivo') {
+            dica.textContent = 'Quem está em cada chamada neste momento. Tirar alguém só desconecta da chamada: a pessoa pode entrar de novo.';
+            await desenharAbaAoVivo(nova);
+        } else if (minha === 'avisos') {
+            dica.textContent = 'Uma mensagem sua que aparece no topo do app de todo mundo (manutenção, novidade, recado).';
+            await desenharAbaAvisos(nova);
+        } else if (minha === 'espaco') {
+            dica.textContent = 'Quanto cada servidor ocupa em imagens e sons. Compactar troca as imagens originais pela versão reduzida: nada some, só perde qualidade.';
+            await desenharAbaEspaco(nova);
+        } else if (minha === 'sistema') {
+            dica.textContent = 'Ajustes que valem na hora, sem mexer no servidor. Em branco = usa o que está no arquivo de configuração.';
+            await desenharAbaSistema(nova);
         } else {
             dica.textContent = 'Tudo o que foi feito pelo painel, do mais novo para o mais antigo.';
             const d = await api('GET', '/admin/historico');
@@ -5909,10 +6993,399 @@ async function desenharAbaAdmin(dadosAcesso) {
             })));
         }
         if (minha !== abaAdmin) return; // trocou de aba enquanto carregava
+        if (['pessoas', 'servidores', 'historico'].includes(minha)) porBuscaAdmin(nova, minha);
         alvo.replaceChildren(...nova.childNodes);
     } catch (err) {
         if (minha === abaAdmin) { alvo.replaceChildren(vazioAdmin('Não consegui carregar: ' + err.message)); }
     }
+}
+
+
+// ============================================================
+// Administração, parte 2: busca, liberar por ID, ficha da pessoa, advertência, aviso geral, chamadas ao vivo,
+// gerenciar servidor por dentro, espaço, configurações ao vivo, interruptores e moderadores.
+// ============================================================
+const semAcento = (t) => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+function botaoAdmin(texto, acao, perigo) {
+    const b = document.createElement('button'); b.type = 'button'; b.textContent = texto;
+    if (perigo) b.className = 'cfg-btn-perigo';
+    b.addEventListener('click', acao);
+    return b;
+}
+function subtituloAdmin(texto) { const d = document.createElement('div'); d.className = 'adm-subtitulo'; d.textContent = texto; return d; }
+const tamanhoAdmin = (bytes) => (bytes >= 1073741824 ? (bytes / 1073741824).toFixed(2).replace('.', ',') + ' GB' : bytes >= 1048576 ? (bytes / 1048576).toFixed(1).replace('.', ',') + ' MB' : Math.round(bytes / 1024) + ' KB');
+function duracaoAdmin(seg) { const h = Math.floor(seg / 3600), m = Math.floor((seg % 3600) / 60); return h ? `${h} h ${m} min` : `${m} min`; }
+
+// Campo de busca no topo da lista: esconde as linhas que não têm o texto digitado.
+function porBuscaAdmin(nova, aba) {
+    const campo = document.createElement('input');
+    campo.type = 'text'; campo.className = 'adm-busca'; campo.placeholder = '🔎 Buscar nesta lista...'; campo.maxLength = 60;
+    campo.value = filtroAdmin[aba] || '';
+    const aplicar = (raiz) => {
+        const q = semAcento(campo.value.trim());
+        raiz.querySelectorAll(':scope > .acesso-linha').forEach((l) => { l.style.display = !q || semAcento(l.textContent).includes(q) ? '' : 'none'; });
+    };
+    campo.addEventListener('input', () => { filtroAdmin[aba] = campo.value; aplicar(campo.parentElement); });
+    nova.insertBefore(campo, nova.firstChild);
+    aplicar(nova);
+}
+
+// Pedidos: liberar alguém direto pelo ID do Discord, sem a pessoa precisar pedir antes.
+function formLiberarPorId() {
+    const f = document.createElement('div'); f.className = 'adm-form';
+    const id = document.createElement('input'); id.type = 'text'; id.placeholder = 'ID do Discord (só números)'; id.maxLength = 25; id.style.flex = '1 1 180px';
+    const nome = document.createElement('input'); nome.type = 'text'; nome.placeholder = 'Nome (pra você reconhecer)'; nome.maxLength = 40; nome.style.flex = '1 1 160px';
+    f.append(id, nome, botaoAdmin('Liberar pelo ID', async () => {
+        const v = id.value.replace(/\D/g, '');
+        if (v.length < 17 || v.length > 20) return mostrarNotificacao('O ID do Discord tem de 17 a 20 números. No Discord: clique com o botão direito na pessoa > "Copiar ID do usuário" (precisa do Modo desenvolvedor ligado).');
+        await agirAdmin('POST', '/admin/acesso/autorizar', { usuario: v, nome: nome.value.trim() });
+    }));
+    return f;
+}
+
+async function advertirPessoa(p) {
+    const m = await pedirTexto({ titulo: 'Advertir ' + (p.nome || 'esta pessoa'), dica: 'A pessoa vai ver este texto numa janela e precisa clicar em "Entendi". Fica registrado no histórico e na ficha dela.', max: 400, multilinha: true, rotuloOk: 'Enviar advertência' });
+    if (!m || !m.texto.trim()) return;
+    try { await api('POST', '/admin/advertir', { usuario: p.usuario, texto: m.texto }); mostrarNotificacao('Advertência enviada.', 'info'); }
+    catch (err) { mostrarNotificacao('Não foi possível advertir: ' + err.message); }
+}
+
+// ---- Janela de detalhes (ficha da pessoa / servidor por dentro) ----
+let detalheAdminAtual = 0;
+function abrirDetalheAdmin(titulo) {
+    detalheAdminAtual++;
+    document.getElementById('adm-detalhe-titulo').textContent = titulo;
+    const corpo = document.getElementById('adm-detalhe-corpo');
+    corpo.replaceChildren(vazioAdmin('Carregando...'));
+    document.getElementById('tela-adm-detalhe').style.display = 'flex';
+    return { corpo, id: detalheAdminAtual };
+}
+function fecharDetalheAdmin() { detalheAdminAtual++; document.getElementById('tela-adm-detalhe').style.display = 'none'; }
+document.getElementById('adm-detalhe-fechar').addEventListener('click', fecharDetalheAdmin);
+function camposAdmin(pares) {
+    const g = document.createElement('div'); g.className = 'adm-campos';
+    pares.filter(Boolean).forEach(([rotulo, valor]) => { const c = document.createElement('div'); c.className = 'adm-campo'; const b = document.createElement('b'); b.textContent = rotulo; c.append(b, document.createTextNode(valor === null || valor === undefined || valor === '' ? '—' : String(valor))); g.appendChild(c); });
+    return g;
+}
+
+async function abrirFichaAdmin(usuario) {
+    const { corpo, id } = abrirDetalheAdmin('Ficha da pessoa');
+    let d;
+    try { d = await api('GET', `/admin/pessoas/${encodeURIComponent(usuario)}`); }
+    catch (err) { if (id === detalheAdminAtual) corpo.replaceChildren(vazioAdmin('Não consegui carregar: ' + err.message)); return; }
+    if (id !== detalheAdminAtual) return;
+    const p = d.pessoa;
+    document.getElementById('adm-detalhe-titulo').textContent = 'Ficha: ' + p.nome;
+    const recarregar = () => abrirFichaAdmin(usuario);
+    const partes = [];
+    const estado = p.admin ? 'administrador' : p.moderador ? 'moderador' : p.estado === 'ok' ? 'com acesso' : p.estado === 'banido' ? 'banido' : p.estado === 'suspenso' ? 'suspenso até ' + dataHora(p.punicao && p.punicao.ate) : 'sem acesso';
+    partes.push(camposAdmin([
+        ['Situação', estado + (p.online ? ' · online agora' : '')],
+        ['ID', String(p.usuario).replace('discord:', '')],
+        ['Última vez', p.online ? 'agora' : dataHora(p.ultimaVez)],
+        ['Liberado em', dataHora(p.liberadoEm) + (p.liberadoPor && p.liberadoPor !== 'migracao' ? ' por ' + p.liberadoPor : '')],
+        ['Termos de uso', p.aceite ? `aceitou a versão ${p.aceite.versao} em ${dataHora(p.aceite.ts)}` : 'ainda não aceitou'],
+        ['Versão do app', d.app.versao || 'desconhecida'],
+        ['Aparelhos logados', d.sessoes.aparelhos],
+        ['Dias de uso (últimos 31)', d.app.diasAtivos31],
+        ['Tempo em chamada', duracaoAdmin(d.uso.vozSegundos)],
+        ['Mensagens enviadas', d.uso.mensagens],
+        ['Amigos', d.amigos],
+        ['Qualidade de transmissão', d.qualidade.nome + (d.qualidade.ate ? ' até ' + dataHora(d.qualidade.ate) : '')],
+        ['Denúncias contra', `${d.denuncias.contra} (${d.denuncias.contraAbertas} aberta(s))`],
+        ['Denúncias que fez', d.denuncias.feitas],
+        p.punicao ? ['Motivo da punição', p.punicao.motivo] : null,
+    ]));
+    // Ações
+    const acoes = document.createElement('div'); acoes.className = 'adm-form';
+    if (!p.admin && p.estado === 'ok' && (papelAdmin === 'admin' || !p.moderador)) acoes.appendChild(botaoAdmin('Advertir', async () => { await advertirPessoa(p); recarregar(); }));
+    if (papelAdmin === 'admin') {
+        acoes.appendChild(botaoAdmin('Encerrar sessões', async () => {
+            const r = await pedirTexto({ titulo: 'Encerrar as sessões de ' + p.nome + '?', dica: 'A pessoa é desconectada de todos os aparelhos e precisa entrar de novo com o Discord. Útil se a conta ou o PC dela foi comprometido.', semCampo: true, rotuloOk: 'Encerrar' });
+            if (!r) return;
+            try { const x = await api('POST', '/admin/sessoes/encerrar', { usuario: p.usuario }); mostrarNotificacao(`Sessões encerradas (${x.aparelhos} aparelho(s)).`, 'info'); recarregar(); }
+            catch (err) { mostrarNotificacao('Não foi possível: ' + err.message); }
+        }, true));
+        if (!p.admin && p.estado === 'ok' && /^discord:/.test(p.usuario)) {
+            acoes.appendChild(botaoAdmin(p.moderador ? 'Tirar de moderador' : 'Tornar moderador', async () => {
+                if (!p.moderador) {
+                    const r = await pedirTexto({ titulo: 'Tornar ' + p.nome + ' moderador?', dica: 'Moderadores podem: liberar e negar pedidos de acesso, ver a lista de pessoas e as fichas, advertir, cuidar das denúncias (ignorar, remover a mensagem, suspender por até 7 dias) e ver o histórico. Não podem banir, mexer em servidores, chaves, avisos nem no sistema.', semCampo: true, rotuloOk: 'Tornar moderador' });
+                    if (!r) return;
+                }
+                try { if (p.moderador) await api('DELETE', `/admin/moderadores/${encodeURIComponent(p.usuario)}`); else await api('POST', '/admin/moderadores', { usuario: p.usuario }); recarregar(); desenharAbaAdmin(); }
+                catch (err) { mostrarNotificacao('Não foi possível: ' + err.message); }
+            }));
+        }
+    }
+    if (acoes.childNodes.length) partes.push(acoes);
+    // Servidores
+    partes.push(subtituloAdmin(`Servidores (${d.servidores.length})`));
+    if (!d.servidores.length) partes.push(vazioAdmin('Não está em nenhum servidor.'));
+    d.servidores.forEach((s) => partes.push(linhaAdmin({ titulo: s.nome, sub: `${s.papel}${s.apelido && s.apelido !== p.nome ? ' · apelido: ' + s.apelido : ''}`, botoes: papelAdmin === 'admin' ? [{ texto: 'Gerenciar', acao: () => abrirServidorAdmin(s.id) }] : [] })));
+    // Notas internas
+    partes.push(subtituloAdmin('Notas internas (só a administração vê)'));
+    const fNota = document.createElement('div'); fNota.className = 'adm-form';
+    const campoNota = document.createElement('input'); campoNota.type = 'text'; campoNota.maxLength = 300; campoNota.placeholder = 'Escreva uma nota sobre esta pessoa...'; campoNota.style.flex = '1 1 240px';
+    fNota.append(campoNota, botaoAdmin('Anotar', async () => {
+        if (!campoNota.value.trim()) return;
+        try { await api('POST', `/admin/pessoas/${encodeURIComponent(usuario)}/notas`, { texto: campoNota.value }); recarregar(); }
+        catch (err) { mostrarNotificacao('Não consegui anotar: ' + err.message); }
+    }));
+    partes.push(fNota);
+    d.notas.forEach((n) => partes.push(linhaAdmin({ titulo: n.texto, sub: `${n.porNome || 'administração'} · ${dataHora(n.ts)}`, botoes: papelAdmin === 'admin' ? [{ texto: 'Apagar', perigo: true, acao: async () => {
+        try { await api('DELETE', `/admin/pessoas/${encodeURIComponent(usuario)}/notas/${encodeURIComponent(n.id)}`); recarregar(); } catch (err) { mostrarNotificacao('Não consegui apagar: ' + err.message); }
+    } }] : [] })));
+    // Advertências e histórico
+    partes.push(subtituloAdmin(`Advertências (${d.advertencias.length})`));
+    if (!d.advertencias.length) partes.push(vazioAdmin('Nenhuma advertência.'));
+    d.advertencias.forEach((a) => partes.push(linhaAdmin({ titulo: a.texto, selos: [a.lidaEm ? { texto: 'lida em ' + dataHora(a.lidaEm), tom: 'bom' } : { texto: 'ainda não leu', tom: 'ruim' }], sub: `${a.porNome || 'administração'} · ${dataHora(a.ts)}` })));
+    partes.push(subtituloAdmin('Histórico de moderação desta pessoa'));
+    if (!d.historico.length) partes.push(vazioAdmin('Nada registrado.'));
+    d.historico.forEach((h) => partes.push(linhaAdmin({ titulo: `${h.porNome || h.por} ${ROTULOS_ACAO[h.acao] || h.acao}`, sub: `${dataHora(h.ts)}${h.detalhe ? ' · ' + h.detalhe : ''}` })));
+    corpo.replaceChildren(...partes);
+}
+
+async function abrirServidorAdmin(servidorId) {
+    const { corpo, id } = abrirDetalheAdmin('Servidor');
+    let d;
+    try { d = await api('GET', `/admin/servidores/${encodeURIComponent(servidorId)}`); }
+    catch (err) { if (id === detalheAdminAtual) corpo.replaceChildren(vazioAdmin('Não consegui carregar: ' + err.message)); return; }
+    if (id !== detalheAdminAtual) return;
+    const s = d.servidor;
+    document.getElementById('adm-detalhe-titulo').textContent = 'Servidor: ' + s.nome;
+    const recarregar = () => { abrirServidorAdmin(servidorId); desenharAbaAdmin(); };
+    const fazer = async (metodo, caminho, corpoPedido) => { try { await api(metodo, caminho, corpoPedido); recarregar(); } catch (err) { mostrarNotificacao('Não foi possível: ' + err.message); } };
+    const partes = [camposAdmin([['Criado em', dataHora(s.criadoEm)], ['Membros', s.membros.length], ['Canais', s.canais.length], ['Convites ativos', s.convitesAtivos]])];
+    partes.push(subtituloAdmin(`Membros (${s.membros.length})`));
+    s.membros.forEach((m) => {
+        const botoes = [{ texto: 'Ficha', acao: () => abrirFichaAdmin(m.usuario) }];
+        if (!m.dono) {
+            botoes.push({ texto: 'Tornar dono', acao: async () => {
+                const r = await pedirTexto({ titulo: `Passar "${s.nome}" para ${m.conta || m.apelido}?`, dica: 'O dono atual vira membro comum. Só funciona se essa pessoa ainda não for dona de outro servidor.', semCampo: true, rotuloOk: 'Trocar o dono' });
+                if (r) fazer('POST', `/admin/servidores/${encodeURIComponent(s.id)}/transferir`, { novoDono: m.usuario });
+            } });
+            botoes.push({ texto: 'Expulsar', perigo: true, acao: async () => {
+                const r = await pedirTexto({ titulo: `Expulsar ${m.conta || m.apelido} de "${s.nome}"?`, dica: 'A pessoa sai do servidor e não volta com convite até alguém liberar.', semCampo: true, rotuloOk: 'Expulsar' });
+                if (r) fazer('POST', `/admin/servidores/${encodeURIComponent(s.id)}/expulsar`, { alvo: m.usuario });
+            } });
+        }
+        partes.push(linhaAdmin({ titulo: m.conta || m.apelido, selos: [m.dono ? { texto: '👑 dono', tom: 'bom' } : null, m.online ? { texto: 'online', tom: 'bom' } : null].filter(Boolean), sub: `${m.apelido && m.apelido !== m.conta ? 'apelido: ' + m.apelido + ' · ' : ''}entrou em ${dataHora(m.entrouEm)}`, botoes }));
+    });
+    partes.push(subtituloAdmin(`Canais (${s.canais.length})`));
+    s.canais.forEach((c) => partes.push(linhaAdmin({ titulo: (c.tipo === 'voz' ? '🔊 ' : '# ') + c.nome, sub: c.tipo === 'voz' ? (c.aprovacao ? 'voz · entrada com aprovação' : 'voz') : `texto · ${c.mensagens || 0} mensagem(ns) já enviadas` })));
+    if (s.banidos.length) {
+        partes.push(subtituloAdmin(`Expulsos que não podem voltar (${s.banidos.length})`));
+        s.banidos.forEach((b) => partes.push(linhaAdmin({ titulo: b.nome || b.usuario, sub: 'expulso em ' + dataHora(b.ts), botoes: [{ texto: 'Deixar voltar', acao: () => fazer('DELETE', `/admin/servidores/${encodeURIComponent(s.id)}/banidos/${encodeURIComponent(b.usuario)}`) }] })));
+    }
+    corpo.replaceChildren(...partes);
+}
+
+// ---- Aba "Ao vivo" ----
+async function desenharAbaAoVivo(nova) {
+    const d = await api('GET', '/admin/chamadas');
+    const topo = document.createElement('div'); topo.className = 'adm-form';
+    const total = d.chamadas.reduce((n, c) => n + c.pessoas.length, 0);
+    const txt = document.createElement('span'); txt.textContent = `${d.chamadas.length} chamada(s) · ${total} pessoa(s)`; txt.style.flex = '1';
+    topo.append(txt, botaoAdmin('🔄 Atualizar', () => desenharAbaAdmin()));
+    nova.appendChild(topo);
+    if (!d.chamadas.length) nova.appendChild(vazioAdmin('Ninguém em chamada agora.'));
+    d.chamadas.forEach((c) => {
+        nova.appendChild(subtituloAdmin(`${c.servidor} › 🔊 ${c.canal} (${c.pessoas.length})`));
+        c.pessoas.forEach((p) => nova.appendChild(linhaAdmin({
+            usuario: p.usuario, titulo: p.conta && p.conta !== p.usuario ? p.conta : p.nome,
+            selos: [p.transmitindo ? { texto: 'transmitindo a tela', tom: 'bom' } : null, { texto: p.microfone ? 'microfone ligado' : 'microfone mudo' }].filter(Boolean),
+            sub: p.nome && p.nome !== p.conta ? 'apelido: ' + p.nome : '',
+            botoes: [{ texto: 'Ficha', acao: () => abrirFichaAdmin(p.usuario) }, { texto: 'Tirar da chamada', perigo: true, acao: async () => {
+                const r = await pedirTexto({ titulo: `Tirar ${p.conta || p.nome} da chamada?`, dica: 'Só desconecta agora. Para impedir a volta, suspenda ou expulse do servidor.', semCampo: true, rotuloOk: 'Tirar' });
+                if (r) agirAdmin('POST', '/admin/chamadas/remover', { sala: c.sala, usuario: p.usuario });
+            } }]
+        })));
+    });
+}
+
+// ---- Aba "Aviso geral" ----
+async function desenharAbaAvisos(nova) {
+    const d = await api('GET', '/admin/aviso');
+    if (d.aviso) {
+        nova.appendChild(subtituloAdmin('Aviso no ar'));
+        nova.appendChild(linhaAdmin({ titulo: d.aviso.texto, sub: `publicado em ${dataHora(d.aviso.ts)} · some sozinho em ${dataHora(d.aviso.ate)}`, botoes: [{ texto: 'Tirar do ar', perigo: true, acao: () => agirAdmin('DELETE', '/admin/aviso') }] }));
+    } else nova.appendChild(vazioAdmin('Nenhum aviso no ar.'));
+    nova.appendChild(subtituloAdmin(d.aviso ? 'Trocar por outro' : 'Publicar um aviso'));
+    const f = document.createElement('div'); f.className = 'adm-form';
+    const texto = document.createElement('textarea'); texto.maxLength = 300; texto.placeholder = 'Ex.: Hoje às 22h o Estrivisor fica fora do ar por uns 10 minutos para atualização.';
+    const dur = document.createElement('select');
+    [['1', '1 hora'], ['6', '6 horas'], ['24', '1 dia'], ['72', '3 dias'], ['168', '7 dias']].forEach(([v, r]) => { const o = document.createElement('option'); o.value = v; o.textContent = 'Fica ' + r; dur.appendChild(o); });
+    dur.value = '24';
+    f.append(texto, dur, botaoAdmin('Publicar para todos', async () => {
+        if (!texto.value.trim()) return mostrarNotificacao('Escreva o aviso.');
+        await agirAdmin('POST', '/admin/aviso', { texto: texto.value, horas: Number(dur.value) });
+    }));
+    nova.appendChild(f);
+}
+
+// ---- Aba "Espaço" ----
+async function desenharAbaEspaco(nova) {
+    const d = await api('GET', '/admin/espaco');
+    const pct = d.total.teto ? Math.min(100, Math.round(d.total.bytes / d.total.teto * 1000) / 10) : 0;
+    const topo = document.createElement('div'); topo.className = 'adm-form'; topo.style.flexDirection = 'column'; topo.style.alignItems = 'stretch';
+    const t = document.createElement('div'); t.textContent = `Imagens do chat: ${tamanhoAdmin(d.total.bytes)} de ${d.tetoGB} GB (${String(pct).replace('.', ',')}%) · ${d.total.originais} original(is), ${d.total.compactadas} compactada(s) · conversas privadas e canais apagados: ${tamanhoAdmin(d.conversasPrivadas.bytes)}`;
+    const barra = document.createElement('div'); barra.className = 'adm-barra'; const dentro = document.createElement('div'); dentro.style.width = pct + '%'; barra.appendChild(dentro);
+    topo.append(t, barra);
+    nova.appendChild(topo);
+    if (!d.servidores.length) nova.appendChild(vazioAdmin('Nenhum servidor.'));
+    d.servidores.forEach((s) => nova.appendChild(linhaAdmin({
+        titulo: s.nome,
+        sub: `imagens: ${tamanhoAdmin(s.imagens.bytes)} (${s.imagens.originais} original(is), ${s.imagens.compactadas} compactada(s)) · sons: ${s.sons.quantidade} (${tamanhoAdmin(s.sons.bytes)}) · ${s.mensagens} mensagem(ns) guardada(s)`,
+        botoes: s.imagens.originais ? [{ texto: 'Compactar imagens', acao: async () => {
+            const r = await pedirTexto({ titulo: `Compactar as imagens de "${s.nome}"?`, dica: 'As imagens originais deste servidor que têm versão reduzida passam a existir só nela. Continuam abrindo, com menos qualidade (GIF vira imagem parada). Não dá para desfazer.', semCampo: true, rotuloOk: 'Compactar' });
+            if (!r) return;
+            try { const x = await api('POST', '/admin/espaco/compactar', { servidorId: s.id }); mostrarNotificacao(`${x.feitas} imagem(ns) compactada(s), ${tamanhoAdmin(x.liberado)} liberados.`, 'info'); desenharAbaAdmin(); }
+            catch (err) { mostrarNotificacao('Não foi possível: ' + err.message); }
+        } }] : []
+    })));
+}
+
+// ---- Aba "Sistema" ----
+async function desenharAbaSistema(nova) {
+    const d = await api('GET', '/admin/sistema');
+    const salvar = async (corpo) => { try { await api('POST', '/admin/sistema/config', corpo); mostrarNotificacao('Salvo. Já está valendo.', 'info'); desenharAbaAdmin(); } catch (err) { mostrarNotificacao('Não foi possível salvar: ' + err.message); } };
+    // Manutenção
+    nova.appendChild(subtituloAdmin('Modo manutenção'));
+    const fm = document.createElement('div'); fm.className = 'adm-form';
+    const textoM = document.createElement('input'); textoM.type = 'text'; textoM.maxLength = 200; textoM.placeholder = 'Recado (ex.: Volto às 23h)'; textoM.value = d.config.manutencaoTexto || ''; textoM.style.flex = '1 1 240px';
+    const estadoM = document.createElement('span'); estadoM.textContent = d.config.manutencao ? '🔴 LIGADO: só você consegue usar o app.' : 'Desligado.'; estadoM.style.flex = '1 1 100%';
+    fm.append(estadoM, textoM, botaoAdmin(d.config.manutencao ? 'Desligar manutenção' : 'Ligar manutenção', async () => {
+        if (!d.config.manutencao) {
+            const r = await pedirTexto({ titulo: 'Ligar o modo manutenção?', dica: 'Todo mundo, menos os administradores, deixa de conseguir usar o app (chat, servidores, entrar em chamada) e vê o seu recado. Quem já está numa chamada continua nela.', semCampo: true, rotuloOk: 'Ligar' });
+            if (!r) return;
+        }
+        salvar({ manutencao: !d.config.manutencao, manutencaoTexto: textoM.value });
+    }, !d.config.manutencao));
+    nova.appendChild(fm);
+    // Limites
+    nova.appendChild(subtituloAdmin('Limites'));
+    const fl = document.createElement('div'); fl.className = 'adm-form';
+    const vmin = document.createElement('input'); vmin.type = 'text'; vmin.maxLength = 14; vmin.placeholder = d.doArquivo.versaoMinima ? `padrão: ${d.doArquivo.versaoMinima}` : 'ex.: 3.15.0 (em branco = qualquer)'; vmin.value = d.config.versaoMinima || '';
+    const lv = document.createElement('label'); lv.append('Versão mínima do app', vmin);
+    const maxs = document.createElement('input'); maxs.type = 'text'; maxs.maxLength = 3; maxs.placeholder = `padrão: ${d.doArquivo.maxPorSala}`; maxs.value = d.config.maxPorSala === null || d.config.maxPorSala === undefined ? '' : String(d.config.maxPorSala); maxs.style.width = '90px';
+    const lm = document.createElement('label'); lm.append('Máximo por chamada (0 = sem limite)', maxs);
+    fl.append(lv, lm, botaoAdmin('Salvar limites', () => salvar({ versaoMinima: vmin.value.trim(), maxPorSala: maxs.value.trim() === '' ? null : Number(maxs.value) })));
+    const valendo = document.createElement('div'); valendo.className = 'cfg-dica'; valendo.style.flex = '1 1 100%';
+    valendo.textContent = `Valendo agora: versão mínima ${d.valendo.versaoMinima || 'nenhuma'} · máximo por chamada ${d.valendo.maxPorSala || 'sem limite'}. Cuidado com a versão mínima: quem estiver numa versão mais antiga é barrado até atualizar.`;
+    fl.appendChild(valendo);
+    nova.appendChild(fl);
+    // Interruptores
+    nova.appendChild(subtituloAdmin('Recursos (desligue se algo estiver dando problema)'));
+    const fr = document.createElement('div'); fr.className = 'adm-form';
+    [['imagens', 'Envio de imagens e GIFs no chat'], ['previas', 'Prévia de links'], ['sons', 'Envio de sons do servidor (soundboard)']].forEach(([nome, rotulo]) => {
+        const l = document.createElement('label'); l.style.flex = '1 1 100%';
+        const c = document.createElement('input'); c.type = 'checkbox'; c.checked = d.recursos[nome] !== false;
+        c.addEventListener('change', async () => {
+            try { await api('POST', '/admin/sistema/recurso', { nome, ligado: c.checked }); mostrarNotificacao(`${rotulo}: ${c.checked ? 'ligado' : 'desligado'}.`, 'info'); }
+            catch (err) { c.checked = !c.checked; mostrarNotificacao('Não foi possível: ' + err.message); }
+        });
+        l.append(c, rotulo);
+        fr.appendChild(l);
+    });
+    nova.appendChild(fr);
+    // Moderadores
+    nova.appendChild(subtituloAdmin(`Moderadores (${d.moderadores.length})`));
+    if (!d.moderadores.length) nova.appendChild(vazioAdmin('Nenhum moderador. Para nomear: aba Pessoas > Ficha > "Tornar moderador".'));
+    d.moderadores.forEach((m) => nova.appendChild(linhaAdmin({ usuario: m.usuario, titulo: m.nome, sub: 'moderador desde ' + dataHora(m.desde), botoes: [{ texto: 'Ficha', acao: () => abrirFichaAdmin(m.usuario) }, { texto: 'Tirar', perigo: true, acao: () => agirAdmin('DELETE', '/admin/moderadores/' + encodeURIComponent(m.usuario)) }] })));
+}
+
+// ============================================================
+// O que a administração manda pra você: aviso geral (faixa no topo), modo manutenção e advertências.
+// ============================================================
+const CHAVE_AVISO_VISTO = 'estrivisor_aviso_visto';
+let temporizadorAvisos = null;
+let advertenciaNaTela = false;
+function faixaDeAvisos() {
+    let f = document.getElementById('faixa-aviso');
+    if (!f) { f = document.createElement('div'); f.id = 'faixa-aviso'; f.className = 'faixa-aviso'; document.body.appendChild(f); }
+    return f;
+}
+function desenharFaixaDeAvisos(d) {
+    const f = faixaDeAvisos();
+    f.replaceChildren();
+    if (d && typeof d.manutencao === 'string' && d.manutencao) {
+        const m = document.createElement('div'); m.className = 'manutencao'; m.textContent = '🛠️ ' + d.manutencao.slice(0, 200);
+        f.appendChild(m);
+    }
+    const a = d && d.aviso;
+    let visto = '';
+    try { visto = localStorage.getItem(CHAVE_AVISO_VISTO) || ''; } catch (e) { /* sem armazenamento */ }
+    if (a && typeof a.texto === 'string' && typeof a.id === 'string' && a.id !== visto) {
+        const caixa = document.createElement('div');
+        const t = document.createElement('span'); t.style.flex = '1'; t.textContent = '📢 ' + a.texto.slice(0, 300);
+        const x = document.createElement('button'); x.type = 'button'; x.textContent = '✖'; x.title = 'Fechar este aviso';
+        x.addEventListener('click', () => { try { localStorage.setItem(CHAVE_AVISO_VISTO, a.id); } catch (e) { /* ok */ } caixa.remove(); });
+        caixa.append(t, x);
+        f.appendChild(caixa);
+    }
+}
+// O cargo mudou (virou moderador, deixou de ser...): mostra ou esconde "Administração" na hora, sem reiniciar.
+function aplicarPapelDaConta(papel) {
+    if (papel === 'admin' || papel === 'moderador') {
+        if (!acessoAdmin || papelAdmin !== papel) iniciarAcesso(); // descobre o resto (pedidos, contadores) e liga a checagem
+        return;
+    }
+    if (papel === null && acessoAdmin) {
+        acessoAdmin = false;
+        pararAcesso();
+        if (configAberta() && document.getElementById('cfg-painel-acesso').classList.contains('ativo')) irParaSecaoConfig('conta');
+    }
+}
+const TEXTO_CARGO = {
+    entrou: {
+        titulo: '🛡️ Você se tornou moderador do Estrivisor',
+        dica: 'O administrador te deu o cargo de moderador. Agora você pode:\n• liberar ou negar os pedidos de acesso;\n• ver a lista de pessoas e a ficha de cada uma;\n• advertir e escrever notas internas;\n• cuidar das denúncias: ignorar, remover a mensagem ou suspender por até 7 dias.\n\nTudo fica em Configurações > Administração, e cada ação sua aparece no histórico. Use com cuidado.',
+    },
+    saiu: {
+        titulo: 'Você não é mais moderador do Estrivisor',
+        dica: 'O administrador tirou o seu cargo de moderador. A opção "Administração" saiu das suas Configurações. O resto do app continua igual pra você.',
+    },
+};
+let cargoNaTela = false;
+async function mostrarAvisoDeCargo(c) {
+    if (!c || cargoNaTela || !TEXTO_CARGO[c.tipo] || typeof c.id !== 'string') return;
+    cargoNaTela = true;
+    try {
+        const t = TEXTO_CARGO[c.tipo];
+        const r = await pedirTexto({ titulo: t.titulo, dica: t.dica + '\n\n' + dataHora(c.ts) + '.', semCampo: true, rotuloOk: 'Entendi' });
+        if (r) { try { await api('POST', `/conta/cargo/${encodeURIComponent(c.id)}/visto`); } catch (e) { /* aparece de novo depois */ } }
+        if (r && c.tipo === 'entrou') { await carregarAcesso(false); if (acessoAdmin) { abrirConfig('conta'); irParaSecaoConfig('acesso'); } }
+    } finally { cargoNaTela = false; }
+}
+
+async function carregarAvisosDaConta() {
+    let d;
+    try { d = await api('GET', '/conta/avisos'); } catch (e) { return; } // servidor antigo ou fora do ar: nada a mostrar
+    desenharFaixaDeAvisos(d);
+    if (d && Object.prototype.hasOwnProperty.call(d, 'papel')) aplicarPapelDaConta(d.papel);
+    // Se a pessoa está digitando numa janela (motivo de uma suspensão, por exemplo), o aviso espera o próximo ciclo.
+    if (resolverModalTexto) return;
+    if (d && d.cargo && !advertenciaNaTela) await mostrarAvisoDeCargo(d.cargo);
+    const pendentes = Array.isArray(d.advertencias) ? d.advertencias : [];
+    if (pendentes.length && !advertenciaNaTela) {
+        advertenciaNaTela = true;
+        try {
+            for (const a of pendentes.slice(0, 5)) {
+                const r = await pedirTexto({ titulo: '⚠️ Advertência da administração do Estrivisor', dica: String(a.texto || '').slice(0, 400) + '\n\nRecebida em ' + dataHora(a.ts) + '.', semCampo: true, rotuloOk: 'Entendi' });
+                if (!r) break; // fechou sem confirmar: aparece de novo depois
+                try { await api('POST', `/conta/advertencias/${encodeURIComponent(a.id)}/lida`); } catch (e) { break; }
+            }
+        } finally { advertenciaNaTela = false; }
+    }
+}
+function iniciarAvisosDaConta() {
+    pararAvisosDaConta();
+    carregarAvisosDaConta();
+    temporizadorAvisos = setInterval(carregarAvisosDaConta, 60000);
+}
+function pararAvisosDaConta() {
+    if (temporizadorAvisos) { clearInterval(temporizadorAvisos); temporizadorAvisos = null; }
+    const f = document.getElementById('faixa-aviso'); if (f) f.replaceChildren();
 }
 
 // ---- Aba "Chaves" (gerar, listar e revogar chaves de qualidade) ----
@@ -6067,7 +7540,7 @@ function cartaoDenuncia(x) {
         add('Ignorar', false, () => agirAdmin('POST', `/admin/denuncias/${x.id}/resolver`, { acao: 'ignorar' }));
         if (x.origem) add('Remover mensagem', true, () => agirAdmin('POST', `/admin/denuncias/${x.id}/resolver`, { acao: 'remover-mensagem' }));
         add('Suspender', true, () => punirPessoa({ usuario: x.alvo, nome: x.alvoNome }, 'suspensao', x.id));
-        add('Banir', true, () => punirPessoa({ usuario: x.alvo, nome: x.alvoNome }, 'ban', x.id));
+        if (papelAdmin === 'admin') add('Banir', true, () => punirPessoa({ usuario: x.alvo, nome: x.alvoNome }, 'ban', x.id));
         card.appendChild(bt);
     } else if (x.resolucao) {
         const r = document.createElement('div');
@@ -6086,10 +7559,11 @@ async function agirAdmin(metodo, caminho, corpo) {
 async function punirPessoa(p, tipo, denunciaId) {
     let dias;
     if (tipo === 'suspensao') {
-        const d = await pedirTexto({ titulo: `Suspender ${p.nome || 'esta pessoa'}`, dica: 'Por quantos dias? (1 a 365)', valor: '7', max: 3 });
+        const maxDias = papelAdmin === 'admin' ? 365 : 7; // moderador suspende por até 7 dias
+        const d = await pedirTexto({ titulo: `Suspender ${p.nome || 'esta pessoa'}`, dica: `Por quantos dias? (1 a ${maxDias})`, valor: String(Math.min(7, maxDias)), max: 3 });
         if (!d) return;
         dias = Number(d.texto);
-        if (!Number.isFinite(dias) || dias < 1 || dias > 365) return mostrarNotificacao('Digite um número de dias entre 1 e 365.');
+        if (!Number.isInteger(dias) || dias < 1 || dias > maxDias) return mostrarNotificacao(`Digite um número de dias entre 1 e ${maxDias}.`);
     }
     const m = await pedirTexto({
         titulo: (tipo === 'ban' ? 'Banir ' : 'Suspender ') + (p.nome || 'esta pessoa'),
@@ -6331,8 +7805,70 @@ function itemAmizade(usuario) {
     if (amigosEstado.recebidos.some((p) => p.usuario === usuario)) return { id: 'aceitar', rotulo: '✔ Aceitar pedido de amizade', acao: () => acaoAmizade('POST', '/amigos/aceitar', { usuario }, 'Não consegui aceitar:') };
     return { id: 'add', rotulo: '➕ Adicionar amigo', acao: () => pedirAmizadePorUsuario(usuario) };
 }
+// Menu de uma pessoa (clique ou botão direito no nome, online ou offline). As opções mudam conforme quem você é:
+// todo mundo vê perfil, amizade, chamada, copiar e denunciar; o dono do servidor vê "dar o servidor" e "expulsar";
+// a administração vê ficha e advertir; o Fundador vê também tornar/tirar moderador.
 function abrirMenuPessoa(x, y, usuario, nome) {
-    abrirMenu(x, y, () => ({ cabecalho: nome, itens: [{ id: 'perfil', rotulo: '👤 Ver perfil', acao: () => abrirPerfil(usuario) }, itemAmizade(usuario), itemDenunciar(usuario, nome)] }));
+    abrirMenu(x, y, () => ({ cabecalho: nome, itens: itensDePessoa(String(usuario), nome) }));
+}
+// As opções sobre uma pessoa (usadas no menu da lista de membros e no menu de quem está na chamada).
+// naChamada = o menu veio da lista da chamada (não mostra "entrar na chamada").
+function itensDePessoa(usuario, nome, { naChamada = false } = {}) {
+    const eu = obterIdentidadeUsuario();
+    const ehEu = usuario === eu;
+    const idDiscord = /^discord:(\d+)$/.exec(usuario);
+    {
+        const itens = [{ id: 'perfil', rotulo: ehEu ? '👤 Ver o meu perfil' : '👤 Ver perfil', acao: () => abrirPerfil(usuario) }];
+        if (ehEu) {
+            itens.push({ id: 'status', rotulo: '💬 Mudar o meu status', acao: () => editarStatusPersonalizado() });
+        } else {
+            itens.push(itemAmizade(usuario));
+            // Está numa chamada deste servidor? Dá pra entrar direto na mesma.
+            const info = presencaParticipantes.get(usuario);
+            const canal = !naChamada && info && info.canalVoz ? (servidorAtual.canais || []).find((c) => c.id === info.canalVoz && c.tipo === 'voz') : null;
+            if (canal && !(vozConectada() && canalVozAtual && canalVozAtual.id === canal.id)) {
+                itens.push({ id: 'chamada', rotulo: `🔊 Entrar na chamada (${String(canal.nome).slice(0, 24)})`, acao: () => entrarCanalVoz(canal) });
+            }
+        }
+        itens.push({ separador: true });
+        itens.push({ id: 'copiar-nome', rotulo: '📋 Copiar o nome', acao: () => copiarTexto(String(nome || ''), 'Nome copiado!') });
+        if (idDiscord) itens.push({ id: 'copiar-id', rotulo: '🆔 Copiar o ID do Discord', acao: () => copiarTexto(idDiscord[1], 'ID copiado!') });
+        const membro = (servidorAtual.membros || []).find((m) => String(m.usuario) === usuario);
+        // Dono do servidor: gerenciar o membro.
+        if (!ehEu && servidorAtual.souDono && membro && !membro.dono) {
+            itens.push({ separador: true });
+            itens.push({ id: 'dar-servidor', rotulo: '👑 Dar o servidor pra esta pessoa', acao: () => transferirServidor(membro) });
+            itens.push({ id: 'expulsar', rotulo: '🚪 Expulsar do servidor', perigo: true, acao: () => expulsarMembro(membro) });
+        }
+        // Administração do Estrivisor.
+        if (!ehEu && acessoAdmin) {
+            const cargos = cargosDe(usuario);
+            const ehFundador = cargos.includes('fundador');
+            const ehMod = cargos.includes('moderador');
+            itens.push({ separador: true });
+            itens.push({ id: 'ficha', rotulo: '🗂️ Ficha (administração)', acao: () => abrirFichaAdmin(usuario) });
+            if (!ehFundador && (papelAdmin === 'admin' || !ehMod)) itens.push({ id: 'advertir', rotulo: '⚠️ Advertir', acao: () => advertirPessoa({ usuario, nome }) });
+            if (papelAdmin === 'admin' && !ehFundador && idDiscord) {
+                itens.push({ id: 'moderador', rotulo: ehMod ? '🛡️ Tirar de moderador' : '🛡️ Tornar moderador', acao: () => alternarModeradorPeloMenu(usuario, nome, ehMod) });
+            }
+        }
+        if (!ehEu) { itens.push({ separador: true }); itens.push(itemDenunciar(usuario, nome)); }
+        return itens;
+    }
+}
+async function alternarModeradorPeloMenu(usuario, nome, ehMod) {
+    const r = await pedirTexto({
+        titulo: ehMod ? `Tirar ${nome} de moderador?` : `Tornar ${nome} moderador?`,
+        dica: ehMod ? 'A pessoa perde os poderes na hora e recebe um aviso.' : 'Moderadores liberam pedidos de acesso, advertem, escrevem notas e cuidam das denúncias (suspensão de até 7 dias). Não podem banir. A pessoa recebe um aviso.',
+        semCampo: true, rotuloOk: ehMod ? 'Tirar' : 'Tornar moderador',
+    });
+    if (!r) return;
+    try {
+        if (ehMod) await api('DELETE', `/admin/moderadores/${encodeURIComponent(usuario)}`);
+        else await api('POST', '/admin/moderadores', { usuario });
+        mostrarNotificacao(ehMod ? `${nome} não é mais moderador.` : `${nome} agora é moderador.`, 'info');
+        carregarConquistasMembros();
+    } catch (err) { mostrarNotificacao('Não foi possível: ' + err.message); }
 }
 
 // ============================================================

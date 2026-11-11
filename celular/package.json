@@ -1,0 +1,22 @@
+{
+  "name": "estrivisor-celular",
+  "private": true,
+  "description": "App do Estrivisor para Android (Capacitor). Usa a mesma tela e o mesmo código do app do PC.",
+  "scripts": {
+    "montar": "node montar-www.js",
+    "android": "node montar-www.js && npx cap sync android && node ajustar-android.js"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.0.0",
+    "@capacitor/app": "^7.0.0",
+    "@capacitor/browser": "^7.0.0",
+    "@capacitor/core": "^7.0.0",
+    "@capacitor/filesystem": "^7.0.0",
+    "@capacitor/preferences": "^7.0.0",
+    "@capacitor/share": "^7.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.0.0",
+    "esbuild": "^0.25.0"
+  }
+}

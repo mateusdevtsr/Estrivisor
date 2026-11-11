@@ -2,7 +2,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const crypto = require('crypto');
-const { app, BrowserWindow, globalShortcut, ipcMain, desktopCapturer, session, dialog, Tray, Menu, nativeImage, shell, safeStorage, screen } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain, desktopCapturer, session, dialog, Tray, Menu, nativeImage, shell, safeStorage, screen, clipboard } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const { migrarDadosAntigos } = require('./migrar-dados');
 const { lerConfiguracao, salvarConfiguracao } = require('./configuracao');
@@ -240,6 +240,24 @@ function createWindow() {
   // dela) nem abrir janelas novas.
   win.webContents.on('will-navigate', (evento) => evento.preventDefault());
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  // Botão direito: recortar/copiar/colar nos campos de texto, copiar texto selecionado, copiar link e imagem.
+  // (Quando a tela trata o botão direito sozinha — lista de pessoas, por exemplo — este menu nem aparece.)
+  win.webContents.on('context-menu', (evento, params) => {
+    const itens = [];
+    const texto = (params.selectionText || '').trim();
+    if (params.isEditable) {
+      const f = params.editFlags || {};
+      itens.push({ label: 'Desfazer', role: 'undo', enabled: !!f.canUndo }, { label: 'Refazer', role: 'redo', enabled: !!f.canRedo }, { type: 'separator' },
+        { label: 'Recortar', role: 'cut', enabled: !!f.canCut }, { label: 'Copiar', role: 'copy', enabled: !!f.canCopy },
+        { label: 'Colar', role: 'paste', enabled: !!f.canPaste }, { type: 'separator' }, { label: 'Selecionar tudo', role: 'selectAll' });
+    } else {
+      if (texto) itens.push({ label: 'Copiar', role: 'copy' });
+      if (/^https?:\/\//i.test(params.linkURL || '')) itens.push({ label: 'Copiar endereço do link', click: () => clipboard.writeText(params.linkURL) });
+      if (params.mediaType === 'image') itens.push({ label: 'Copiar imagem', click: () => win.webContents.copyImageAt(params.x, params.y) });
+      if (!itens.length && params.pageURL && !/^https?:/i.test(params.pageURL)) itens.push({ label: 'Selecionar tudo', role: 'selectAll' });
+    }
+    if (itens.length) Menu.buildFromTemplate(itens).popup({ window: win });
+  });
   // DevTools só em desenvolvimento, não em builds distribuídos
   if (!app.isPackaged) win.webContents.openDevTools();
   janelaPrincipal = win;
@@ -767,18 +785,59 @@ async function pedirModeracao(sala, acao, identidadeAlvo) {
 }
 responder('forcar-parar-transmissao', (evento, { sala, identidadeAlvo } = {}) => pedirModeracao(sala, 'parar-transmissao', identidadeAlvo));
 responder('forcar-mutar-microfone', (evento, { sala, identidadeAlvo } = {}) => pedirModeracao(sala, 'mutar-microfone', identidadeAlvo));
+responder('forcar-tirar-da-chamada', (evento, { sala, identidadeAlvo } = {}) => pedirModeracao(sala, 'tirar-da-chamada', identidadeAlvo));
 
 // ---------- Servidores, canais, convites e presença ----------
 // A tela pede por este canal único; só passam caminhos que começam com /servidores, /convites, /amigos, /dm, /admin, /termos, /denuncias ou /qualidade.
 const METODOS_API = ['GET', 'POST', 'PATCH', 'DELETE'];
 const CAMINHO_API = /^\/(servidores|convites|amigos|dm|admin|termos|denuncias|qualidade|conta|previa|perfil)(\/[A-Za-z0-9._%\-]+)*(\?[A-Za-z0-9=&._\-]*)?$/;
 
+// Além do formato, recusa "." e ".." (inclusive disfarçados como %2e) e barras escondidas (%2f, %5c): sem isso,
+// "/servidores/../token" passava no formato e virava "/token" na hora de montar o endereço.
+function caminhoApiValido(caminho) {
+  if (typeof caminho !== 'string' || caminho.length > 600 || !CAMINHO_API.test(caminho)) return false;
+  const semConsulta = caminho.split('?')[0];
+  if (/%2e|%2f|%5c/i.test(semConsulta)) return false;
+  return !semConsulta.split('/').some((parte) => parte === '.' || parte === '..');
+}
+
 responder('api-servidor', async (evento, { metodo, caminho, corpo } = {}) => {
-  if (!METODOS_API.includes(metodo) || typeof caminho !== 'string' || !CAMINHO_API.test(caminho)) {
+  if (!METODOS_API.includes(metodo) || !caminhoApiValido(caminho)) {
     return { ok: false, status: 400, erro: 'Pedido inválido.' };
   }
   if (!sessao.chave) return { ok: false, status: 401, erro: 'Entre com a sua conta primeiro.', codigo: 'login' };
-  return chamarServidor(caminho, { metodo, corpo: metodo === 'GET' ? undefined : corpo });
+  // Envio de imagem do chat leva mais tempo (até 6 MB); o resto segue com o tempo normal.
+  const tempo = metodo === 'POST' && /\/imagens$/.test(caminho) ? 90000 : metodo === 'GET' && /\/imagem$/.test(caminho) ? 30000 : undefined;
+  return chamarServidor(caminho, { metodo, corpo: metodo === 'GET' ? undefined : corpo, ...(tempo ? { tempo } : {}) });
+});
+
+// ---------- Imagens do chat: copiar pra área de transferência e salvar em arquivo ----------
+const TIPOS_IMAGEM = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
+function imagemDoPedido(dados) {
+  if (!dados || typeof dados.base64 !== 'string' || dados.base64.length > 8.5 * 1024 * 1024 || !/^[A-Za-z0-9+/]+={0,2}$/.test(dados.base64)) return null;
+  if (!TIPOS_IMAGEM[dados.tipo]) return null;
+  return Buffer.from(dados.base64, 'base64');
+}
+responder('copiar-imagem', (evento, dados) => {
+  const buf = imagemDoPedido(dados);
+  if (!buf) return { ok: false };
+  const img = nativeImage.createFromBuffer(buf);
+  if (img.isEmpty()) return { ok: false };
+  clipboard.writeImage(img);
+  return { ok: true };
+});
+responder('salvar-imagem', async (evento, dados) => {
+  const buf = imagemDoPedido(dados);
+  if (!buf) return { ok: false, erro: 'Imagem inválida.' };
+  const ext = TIPOS_IMAGEM[dados.tipo];
+  const alvo = await dialog.showSaveDialog(janelaPrincipal || undefined, {
+    title: 'Salvar imagem',
+    defaultPath: path.join(app.getPath('pictures'), 'estrivisor-imagem.' + ext),
+    filters: [{ name: 'Imagem', extensions: [ext] }],
+  });
+  if (alvo.canceled || !alvo.filePath) return { ok: false, cancelado: true };
+  try { fs.writeFileSync(alvo.filePath, buf); } catch (e) { return { ok: false, erro: 'Não consegui salvar o arquivo nesse lugar.' }; }
+  return { ok: true, arquivo: alvo.filePath };
 });
 
 // ---------- Meus dados (exportar / apagar a conta) ----------

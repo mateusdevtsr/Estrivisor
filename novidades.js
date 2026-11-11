@@ -9,6 +9,30 @@
   // i = ícone, t = título curto, d = o que é, c = como usar / onde fica
   const NOVIDADES = [
     {
+      versao: '3.15.1', titulo: 'Ajuste da pedaleira de efeitos',
+      itens: [
+        { i: '🧹', t: 'Mais simples', d: 'Saiu o cartão do VB-CABLE (cabo de áudio virtual) da tela de criar efeito. A pedaleira de efeitos continua igual.', c: 'Configurações > Voz e áudio > Efeito de voz > "Criar efeito".' }
+      ]
+    },
+    {
+      versao: '3.15.0', titulo: 'Imagens no chat e configurações mais fáceis',
+      itens: [
+        { i: '⚙️', t: 'Configurações reorganizadas', d: 'Nada mudou no que você já tinha escolhido, só o lugar. Nova seção Privacidade (perfil privado, registrar jogo, prévia de links e seus dados) e Janela flutuante com seção própria. Em Voz e áudio ficaram primeiro o básico; os filtros de ruído, eco e qualidade estão em "Avançado". E tem uma busca: digite o que procura (ex.: "ruído") e clique no resultado para ir direto na opção.', c: 'Configurações (Ctrl + ,) > campo "Procurar configuração" no topo da lista.' },
+        { i: '🖼️', t: 'Enviar imagens, GIFs e prints', d: 'Mande PNG, JPG, GIF (animado) e WEBP nos canais e nas mensagens diretas, com legenda se quiser. As imagens ficam guardadas no servidor, como os sons: quem entrar depois ainda vê. Prints grandes são reduzidos sozinhos antes de enviar (máximo de 6 MB). Nenhuma imagem é apagada por falta de espaço: quando o servidor enche, as mais antigas ficam numa versão reduzida e continuam abrindo.', c: 'Botão 🖼️ ao lado da caixa de texto, ou Ctrl+V com um print copiado (Win+Shift+S), ou arraste a imagem pra cima do chat.' },
+        { i: '🔍', t: 'Ampliar, copiar e salvar', d: 'Clique numa imagem do chat pra ver grande. Lá dá pra copiar a imagem (pra colar em outro lugar) ou salvar no computador.', c: 'Clique na imagem da mensagem.' },
+        { i: '🎛️', t: 'Pedaleira de efeitos de voz', d: 'Crie o seu próprio efeito numa pedaleira: tom, equalizador, filtros (rádio, telefone, abafada), robô, distorção, vibrato, volume pulsando, eco, ambiente e volume final. Cada pedal liga e desliga, os botões giram com o mouse, e um monitor mostra o som na hora. Dá pra começar de um modelo (robô, demônio, estádio...) e segurar "sem efeito" para comparar com a sua voz normal.', c: 'Configurações > Voz e áudio > Efeito de voz > "Criar efeito" (ou botão direito no seu nome na chamada > Efeito de voz).' },
+        { i: '🎤', t: 'Mudar o áudio sem derrubar nada', d: 'Trocar supressão de ruído, eco, volume automático ou o microfone no meio da chamada não muda mais o microfone para mudo e não faz os outros pararem de te ouvir. Se alguém parar de ouvir outra pessoa, tem um botão para refazer o áudio sem sair da chamada.', c: 'Setinha ao lado do fone no rodapé > "Não ouço alguém: refazer o áudio".' },
+        { i: '🎭', t: 'Sete efeitos de voz novos', d: 'Rádio antigo, Megafone, Caverna, Alienígena, Demônio, Debaixo d\'água e Bêbado, além de Robô, Voz grossa e Voz fina que já existiam. (O Eco saiu.) Todo mundo na chamada ouve o efeito.', c: 'Configurações > Voz > Efeito de voz. Teste com fone em "Testar microfone".' },
+        { i: '🛡️', t: 'Mais segurança', d: 'Quem é expulso de um servidor não volta mais com convite (o dono pode liberar depois, em Ajustes do servidor > Expulsos). Quando o apelido de alguém é diferente do nome da conta, o nome da conta aparece ao lado, entre parênteses, pra ninguém se passar por outra pessoa.', c: 'Ajustes do servidor > Membros > Expulsar, e a lista "Expulsos" logo abaixo.' },
+        { i: '🧰', t: 'Painel de administração maior', d: 'Para quem administra o Estrivisor: liberar pessoa pelo ID do Discord, ficha completa de cada pessoa (com notas internas), advertência, encerrar sessões, aviso geral para todos, chamadas ao vivo, gerenciar um servidor por dentro, espaço usado por imagens e sons, modo manutenção, limites e recursos que ligam e desligam na hora, moderadores com poderes limitados e busca nas listas. Para todo mundo: avisos da administração aparecem numa faixa no topo.', c: 'Configurações > Administração (só aparece para administradores e moderadores).' },
+        { i: '🔱', t: 'Cargos à vista', d: 'Embaixo do nome, junto das medalhas, aparecem os cargos: 🔱 Fundador (quem criou e administra o Estrivisor), 🛡️ Moderador e 👑 Dono do servidor. Também aparecem na lista da chamada. Quem vira moderador recebe um aviso, e a opção Administração aparece na hora.', c: 'Lista de membros, à direita.' },
+        { i: '🖱️', t: 'Menu completo no nome das pessoas', d: 'Clicar (ou clicar com o botão direito) no nome de alguém, online ou offline, abre um menu: ver perfil, mandar mensagem ou adicionar amigo, entrar na mesma chamada, copiar o nome ou o ID do Discord e denunciar. O dono do servidor também pode dar o servidor ou expulsar dali, e a administração vê a ficha, advertir e tornar moderador.', c: 'Lista de membros, à direita.' },
+        { i: '🎙️', t: 'Entrar já com o microfone ligado', d: 'Ao entrar numa chamada, o microfone liga sozinho assim que conecta (se você estiver ensurdecido, continua mudo). Prefere entrar mudo? Dá pra desligar a opção.', c: 'Configurações > Voz > Ao entrar numa chamada.' },
+        { i: '🎧', t: 'Menu de voz e transmissão na chamada', d: 'Botão direito no nome de quem está na chamada: silenciar só pra você, volume da voz, volume e mudo do som da transmissão, ver a transmissão em tela cheia ou numa janelinha por cima de tudo, e voltar os volumes ao normal. O dono do servidor também pode mutar o microfone pra todos, parar a transmissão e tirar da chamada. No seu próprio nome: microfone, ensurdecer, testar o microfone, transmitir ou parar, sair da chamada e trocar o efeito de voz direto numa lista ao lado, sem abrir as configurações.', c: 'Botão direito no nome, na lista da chamada.' },
+        { i: '📋', t: 'Copiar e colar textos', d: 'O botão direito agora tem Recortar, Copiar e Colar nos campos de texto, Copiar no texto selecionado e Copiar endereço nos links. Cada mensagem também tem um botão pra copiar o texto todo.', c: 'Botão direito em qualquer texto, ou o 📋 que aparece ao passar o mouse na mensagem.' },
+      ]
+    },
+    {
       versao: '3.14.0', titulo: 'Soundboard do servidor e sala de cinema',
       itens: [
         { i: '🔊', t: 'Soundboard compartilhado', d: 'Cada servidor tem uma lista de sons que todo mundo pode tocar na chamada. Qualquer membro pode enviar sons novos (até 6 segundos e 140 KB, em mp3, ogg, webm ou m4a). Quem enviou apaga o seu, e o dono do servidor apaga qualquer um.', c: 'Na chamada, clique no 🔈 da barra de baixo. Lá estão os sons do servidor e o botão "Enviar um som".' },
@@ -22,8 +46,8 @@
         { i: '👤', t: 'Cartão de perfil', d: 'Veja o perfil de qualquer pessoa do servidor: tempo em chamada, mensagens, quem mais te acompanha nas chamadas e os jogos mais transmitidos. O servidor mede tudo sozinho.', c: 'Clique na pessoa na lista de online ou offline e escolha "Ver perfil". Para ver o seu, clique na sua foto no canto de baixo.' },
         { i: '🏆', t: 'Conquistas', d: 'Medalhas engraçadas como "Coruja de plantão" (chamada de madrugada) e "Inseparáveis" (horas com a mesma pessoa). As que faltam mostram o progresso.', c: 'No cartão de perfil.' },
         { i: '📊', t: 'Meu resumo', d: 'Um resumo do seu mês passado, do mês atual ou do ano, no estilo "Wrapped": horas em chamada, dia mais falante, jogo mais transmitido e mais.', c: 'No seu perfil, botão "Meu resumo".' },
-        { i: '🔒', t: 'Você controla', d: 'Dá para deixar o perfil privado (só você vê). Registrar o nome do jogo que você transmite é opcional e vem desligado.', c: 'Configurações > Aparência > Perfil e estatísticas.' },
-        { i: '🔗', t: 'Prévia de links funcionando de verdade', d: 'Corrigimos o servidor: agora o cartão com título e descrição aparece quando alguém manda um link.', c: 'Configurações > Aparência > Mensagens.' }
+        { i: '🔒', t: 'Você controla', d: 'Dá para deixar o perfil privado (só você vê). Registrar o nome do jogo que você transmite é opcional e vem desligado.', c: 'Configurações > Privacidade > Perfil e estatísticas.' },
+        { i: '🔗', t: 'Prévia de links funcionando de verdade', d: 'Corrigimos o servidor: agora o cartão com título e descrição aparece quando alguém manda um link.', c: 'Configurações > Privacidade > Mensagens.' }
       ]
     },
     {
@@ -31,7 +55,7 @@
       itens: [
         { i: '😀', t: 'Reações nas mensagens', d: 'Reaja a qualquer mensagem com um emoji (👍 ❤️ 😂 🔥 e mais). Clique numa reação que já existe para reagir também ou para tirar a sua.', c: 'Passe o mouse sobre a mensagem e clique no 😀.' },
         { i: '💬', t: 'Status personalizado', d: 'Escreva uma frase curta embaixo do seu nome, como "🎮 jogando Wardogs". Todo mundo do servidor vê na lista de online.', c: 'Clique no seu nome no canto de baixo à esquerda. Para tirar, marque "Remover o meu status".' },
-        { i: '🔗', t: 'Prévia de links', d: 'Quando alguém manda um link, aparece um cartão com o título e a descrição da página. Quem abre a página é o servidor do Estrivisor, então o seu computador não acessa o site.', c: 'Para desligar: Configurações > Aparência (seção "Mensagens") > "Mostrar prévia dos links no chat".' }
+        { i: '🔗', t: 'Prévia de links', d: 'Quando alguém manda um link, aparece um cartão com o título e a descrição da página. Quem abre a página é o servidor do Estrivisor, então o seu computador não acessa o site.', c: 'Para desligar: Configurações > Privacidade (seção "Mensagens") > "Mostrar prévia dos links no chat".' }
       ]
     },
     {
