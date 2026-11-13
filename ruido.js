@@ -153,6 +153,7 @@
         no, contexto, ajustar,
         parar() {
           try { fonte.disconnect(); no.disconnect(); } catch (e) {}
+          try { destino.stream.getTracks().forEach((t) => t.stop()); } catch (e) {}
           try { contexto.close(); } catch (e) {}
         }
       };

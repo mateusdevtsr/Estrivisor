@@ -1367,7 +1367,9 @@ async function entrarCanalVoz(canal) {
         avisoConexaoVoz = 'conectando';
         atualizarStatusVozPersistente();
         const sala = new LivekitClient.Room({
-            adaptiveStream: true, dynacast: true,
+            // pixelDensity 'screen': pede a transmissão na resolução real da tela (conta o zoom do Windows),
+            // então uma tela que você aumenta chega com mais detalhe, e a pequena não gasta à toa.
+            adaptiveStream: { pixelDensity: 'screen' }, dynacast: true,
             audioCaptureDefaults: opcoesCapturaMicrofone(),
             publishDefaults: opcoesPublicacaoAudio(),
             audioOutput: prefsAudio.saidaId ? { deviceId: prefsAudio.saidaId } : undefined
@@ -2296,6 +2298,19 @@ async function refazerAudioDosOutros() {
     mostrarNotificacao('Áudio dos outros refeito.', 'info');
 }
 
+// Recarrega só o áudio de UMA pessoa (o mesmo que sair e entrar, mas sem sair).
+async function refazerAudioDe(identity, nome) {
+    if (!vozConectada()) return;
+    const p = roomVoz.remoteParticipants.get(identity);
+    if (!p) return;
+    const pubs = [...p.audioTrackPublications.values()];
+    for (const pub of pubs) { try { pub.setSubscribed(false); } catch (e) { /* segue */ } }
+    await new Promise((ok) => setTimeout(ok, 400));
+    for (const pub of pubs) { try { pub.setSubscribed(true); } catch (e) { /* segue */ } }
+    setTimeout(() => retomarAudioDe(identity), 600);
+    mostrarNotificacao(`Som de ${nome || 'quem você escolheu'} refeito.`, 'info');
+}
+
 function alternarSilencioDe(identity) {
     if (silenciadosPorIdentidade.has(identity)) silenciadosPorIdentidade.delete(identity);
     else silenciadosPorIdentidade.add(identity);
@@ -2858,9 +2873,20 @@ function abrirMenu(x, y, construir) {
                 menu.appendChild(linha);
                 return;
             }
+            if (item.titulo) { const t = document.createElement('div'); t.className = 'titulo-submenu'; t.textContent = item.titulo; menu.appendChild(t); return; }
             const botao = document.createElement('button');
-            botao.className = 'item-menu' + (item.perigo ? ' perigo' : '') + (item.submenu ? ' tem-submenu' : '');
+            botao.className = 'item-menu' + (item.perigo ? ' perigo' : '') + (item.submenu ? ' tem-submenu' : '') + (item.marcado ? ' marcado' : '') + (item.chave !== undefined ? ' com-chave' : '');
             botao.textContent = item.rotulo;
+            if (item.marcado !== undefined) botao.setAttribute('aria-checked', item.marcado ? 'true' : 'false');
+            if (item.chave !== undefined) {
+                // Liga/desliga: uma chavinha no canto direito do item.
+                botao.setAttribute('role', 'menuitemcheckbox');
+                botao.setAttribute('aria-checked', item.chave ? 'true' : 'false');
+                const ch = document.createElement('span');
+                ch.className = 'chave-menu' + (item.chave ? ' ligada' : '');
+                ch.setAttribute('aria-hidden', 'true');
+                botao.appendChild(ch);
+            }
             botao.dataset.acao = item.id || '';
             if (item.dica) botao.title = item.dica;
             botao.disabled = Boolean(item.desabilitado);
@@ -2959,6 +2985,7 @@ function abrirMenuContexto(identity, nome, ehVoce, x, y, estaTransmitindo) {
         if (vol.microfone !== 100 || vol.compartilhamento !== 100) {
             itens.push({ id: 'normal', rotulo: '↩️ Voltar os volumes ao normal (100%)', mantemAberto: true, acao: () => { definirVolume(identity, 'microfone', 100); definirVolume(identity, 'compartilhamento', 100); } });
         }
+        itens.push({ id: 'refazer', rotulo: '🔄 Som dessa pessoa estranho? Refazer', dica: 'Recarrega só o som dessa pessoa (baixo, alto demais, cortando), sem ninguém sair da chamada.', acao: () => refazerAudioDe(identity, nome) });
         // Transmissão dessa pessoa (tela).
         const tela = estaTransmitindo ? tileDaTransmissaoDe(identity) : null;
         if (estaTransmitindo) {
@@ -3156,9 +3183,123 @@ function criarElementoTile(trackSid, info, grande) {
 
     if (tiles.size > 1) {
         tile.classList.add('clicavel');
-        tile.addEventListener('click', () => { trackEmFoco = trackSid; renderizarVideo(); });
+        if (!trackEmFoco) {
+            // Lado a lado: clique escolhe a tela; dois cliques aumenta (ou volta ao tamanho igual).
+            tile.dataset.sid = trackSid;
+            if (tileEscolhido === trackSid) tile.classList.add('escolhido');
+            tile.addEventListener('click', (e) => { if (e.target.closest('button, input, .tile-volume, .controles-escolhido')) return; escolherTile(trackSid); });
+            tile.addEventListener('dblclick', (e) => { if (e.target.closest('button, input, .tile-volume, .controles-escolhido')) return; aumentarTile(trackSid, 'alternar'); });
+            tile.appendChild(controlesDoEscolhido(trackSid));
+        } else if (!grande) {
+            tile.addEventListener('click', () => { trackEmFoco = trackSid; renderizarVideo(); });
+        }
     }
     return tile;
+}
+
+// ---------- Várias transmissões ao mesmo tempo ----------
+// "Lado a lado": todas aparecem juntas. Clique numa pra escolher; aí ela ganha botões pra aumentar/diminuir,
+// e dá pra arrastar a divisória entre elas. Cada tela pede ao servidor a resolução do tamanho que está
+// ocupando, então aumentar uma tela também aumenta a qualidade dela.
+// "Uma por vez": uma grande e as outras em miniatura embaixo (clique numa miniatura pra trocar).
+let tileEscolhido = null;
+const pesosTiles = new Map(); // trackSid -> tamanho relativo (1 = normal)
+const PESO_MIN = 0.35, PESO_MAX = 4;
+const pesoDe = (sid) => pesosTiles.get(sid) || 1;
+
+function controlesDoEscolhido(sid) {
+    const caixa = document.createElement('div');
+    caixa.className = 'controles-escolhido';
+    const b = (txt, dica, acao) => { const x = document.createElement('button'); x.type = 'button'; x.textContent = txt; x.title = dica; x.setAttribute('aria-label', dica); x.addEventListener('click', (e) => { e.stopPropagation(); acao(); }); caixa.appendChild(x); };
+    b('＋ Maior', 'Aumentar esta tela', () => aumentarTile(sid, 1.35));
+    b('－ Menor', 'Diminuir esta tela', () => aumentarTile(sid, 1 / 1.35));
+    b('▣ Só esta', 'Assistir só esta (as outras ficam em miniatura)', () => { trackEmFoco = sid; renderizarVideo(); });
+    return caixa;
+}
+function escolherTile(sid, manter) {
+    tileEscolhido = (!manter && tileEscolhido === sid) ? null : sid;
+    document.querySelectorAll('#grade-video .fileira-juntas > .tile-video').forEach((t) => t.classList.toggle('escolhido', t.dataset.sid === tileEscolhido));
+}
+function aplicarPesosTiles() {
+    document.querySelectorAll('#grade-video .fileira-juntas > .tile-video').forEach((t) => { t.style.flexGrow = String(pesoDe(t.dataset.sid)); });
+}
+function aumentarTile(sid, fator) {
+    if (fator === 'alternar') {
+        const grande = pesoDe(sid) > 1.2;
+        tiles.forEach((_, s) => pesosTiles.set(s, 1));
+        if (!grande) pesosTiles.set(sid, 2.4);
+    } else {
+        pesosTiles.set(sid, Math.min(PESO_MAX, Math.max(PESO_MIN, pesoDe(sid) * fator)));
+    }
+    escolherTile(sid, true);
+    aplicarPesosTiles();
+}
+function igualarTiles() { pesosTiles.clear(); aplicarPesosTiles(); }
+
+// Divisória entre duas telas: arrastar muda o tamanho das duas (a soma fica igual).
+function criarDivisoria(sidA, sidB) {
+    const d = document.createElement('div');
+    d.className = 'divisoria-juntas';
+    d.title = 'Arraste para mudar o tamanho das telas';
+    d.setAttribute('role', 'separator');
+    d.addEventListener('pointerdown', (e) => {
+        const a = document.getElementById('tile-' + sidA), b = document.getElementById('tile-' + sidB);
+        if (!a || !b) return;
+        e.preventDefault();
+        d.setPointerCapture(e.pointerId);
+        d.classList.add('arrastando');
+        const x0 = e.clientX, wa = a.getBoundingClientRect().width, wb = b.getBoundingClientRect().width;
+        const soma = pesoDe(sidA) + pesoDe(sidB);
+        const mover = (ev) => {
+            const total = wa + wb;
+            const novaA = Math.min(total * 0.85, Math.max(total * 0.15, wa + (ev.clientX - x0)));
+            const pa = soma * novaA / total;
+            pesosTiles.set(sidA, pa); pesosTiles.set(sidB, soma - pa);
+            a.style.flexGrow = String(pa); b.style.flexGrow = String(soma - pa);
+        };
+        const soltar = () => { d.classList.remove('arrastando'); d.removeEventListener('pointermove', mover); d.removeEventListener('pointerup', soltar); d.removeEventListener('pointercancel', soltar); };
+        d.addEventListener('pointermove', mover);
+        d.addEventListener('pointerup', soltar);
+        d.addEventListener('pointercancel', soltar);
+    });
+    d.addEventListener('dblclick', () => { pesosTiles.set(sidA, 1); pesosTiles.set(sidB, 1); aplicarPesosTiles(); });
+    return d;
+}
+
+function barraTransmissoes() {
+    const barra = document.createElement('div');
+    barra.className = 'barra-transmissoes';
+    const juntas = !trackEmFoco;
+    const titulo = document.createElement('span');
+    titulo.className = 'bt-titulo';
+    titulo.textContent = `📺 ${tiles.size} transmissões`;
+    barra.appendChild(titulo);
+    const seg = document.createElement('div');
+    seg.className = 'segmentado bt-modos';
+    [['juntas', '▦ Lado a lado', 'Assistir todas ao mesmo tempo'], ['uma', '▣ Uma por vez', 'Uma grande e as outras em miniatura']].forEach(([modo, txt, dica]) => {
+        const b = document.createElement('button');
+        b.type = 'button'; b.textContent = txt; b.title = dica;
+        if ((modo === 'juntas') === juntas) b.classList.add('ativo');
+        b.addEventListener('click', () => {
+            if (modo === 'juntas') trackEmFoco = null;
+            else if (!trackEmFoco) trackEmFoco = (tileEscolhido && tiles.has(tileEscolhido)) ? tileEscolhido : [...tiles.keys()][0];
+            renderizarVideo();
+        });
+        seg.appendChild(b);
+    });
+    barra.appendChild(seg);
+    if (juntas) {
+        const igual = document.createElement('button');
+        igual.type = 'button'; igual.className = 'bt-igualar'; igual.textContent = '↔ Mesmo tamanho';
+        igual.title = 'Deixar todas as telas do mesmo tamanho';
+        igual.addEventListener('click', igualarTiles);
+        barra.appendChild(igual);
+        const dica = document.createElement('span');
+        dica.className = 'bt-dica';
+        dica.textContent = 'Clique numa tela pra escolher · arraste a divisória pra mudar o tamanho · dois cliques aumenta';
+        barra.appendChild(dica);
+    }
+    return barra;
 }
 
 function renderizarVideo() {
@@ -3175,16 +3316,29 @@ function renderizarVideo() {
         grade.appendChild(criarElementoTile(trackSid, info, true));
         return;
     }
-    if (trackEmFoco && tiles.has(trackEmFoco)) {
+    if (trackEmFoco && !tiles.has(trackEmFoco)) trackEmFoco = null;
+    if (tileEscolhido && !tiles.has(tileEscolhido)) tileEscolhido = null;
+    if (trackEmFoco) {
         grade.className = 'grade-video modo-foco';
+        grade.appendChild(barraTransmissoes());
         grade.appendChild(criarElementoTile(trackEmFoco, tiles.get(trackEmFoco), true));
         const linha = document.createElement('div');
         linha.className = 'linha-miniaturas';
         tiles.forEach((info, trackSid) => { if (trackSid !== trackEmFoco) linha.appendChild(criarElementoTile(trackSid, info, false)); });
         grade.appendChild(linha);
     } else {
-        grade.className = 'grade-video';
-        tiles.forEach((info, trackSid) => grade.appendChild(criarElementoTile(trackSid, info, true)));
+        grade.className = 'grade-video modo-juntas';
+        grade.appendChild(barraTransmissoes());
+        const fileira = document.createElement('div');
+        fileira.className = 'fileira-juntas' + (tiles.size >= 4 ? ' em-grade' : '');
+        const sids = [...tiles.keys()];
+        sids.forEach((trackSid, i) => {
+            if (i > 0 && tiles.size < 4) fileira.appendChild(criarDivisoria(sids[i - 1], trackSid));
+            const t = criarElementoTile(trackSid, tiles.get(trackSid), true);
+            t.style.flexGrow = String(pesoDe(trackSid));
+            fileira.appendChild(t);
+        });
+        grade.appendChild(fileira);
     }
 }
 
@@ -3194,6 +3348,8 @@ function adicionarTile(trackSid, elementoMidia, nome, ehVoce, extra = {}) {
 }
 function removerTile(trackSid) {
     tiles.delete(trackSid);
+    pesosTiles.delete(trackSid);
+    if (tileEscolhido === trackSid) tileEscolhido = null;
     if (trackEmFoco === trackSid) trackEmFoco = null;
     if (tiles.size === 0 && document.body.classList.contains('modo-cinema')) { alternarModoCinema(false); return; } // acabou a transmissão: volta ao normal
     renderizarVideo();
@@ -3987,6 +4143,7 @@ function desenharPerfil(d) {
     document.getElementById('perfil-desde').textContent = 'No Estrivisor desde ' + new Date(d.perfil.desde).toLocaleDateString('pt-BR') + (d.perfil.meu && d.perfil.privado ? ' · perfil privado' : '');
     aplicarAvatar(document.getElementById('perfil-avatar'), d.perfil.usuario, d.perfil.nome, urlAvatarSegura(d.perfil.avatar));
     document.getElementById('perfil-resumo').style.display = d.perfil.meu ? '' : 'none';
+    document.getElementById('perfil-status').style.display = d.perfil.meu ? '' : 'none';
     const corpo = document.getElementById('perfil-corpo');
     corpo.innerHTML = '';
     const n = d.numeros;
@@ -4037,9 +4194,25 @@ function fecharPerfil() { perfilEmAbertura++; document.getElementById('tela-perf
 document.getElementById('perfil-fechar').addEventListener('click', fecharPerfil);
 document.getElementById('tela-perfil').addEventListener('click', (e) => { if (e.target.id === 'tela-perfil') fecharPerfil(); });
 document.getElementById('tela-perfil').addEventListener('keydown', (e) => { if (e.key === 'Escape') fecharPerfil(); });
+// Clicar em você (foto ou nome, no rodapé): menu com o seu status e o seu perfil.
+function abrirMenuMeuPerfil(ancora) {
+    const r = ancora.getBoundingClientRect();
+    abrirMenu(r.left, r.top, () => {
+        const itens = [];
+        itens.push({ id: 'status', rotulo: statusPersonalizado ? '✏️ Mudar o status' : '🙂 Definir um status', dica: 'Uma frase curta embaixo do seu nome. Ex.: "🎮 jogando Wardogs"', acao: () => editarStatusPersonalizado() });
+        if (statusPersonalizado) itens.push({ id: 'tirar-status', rotulo: '🗑️ Tirar o status', acao: () => definirStatusPersonalizado('') });
+        itens.push({ separador: true });
+        itens.push({ id: 'perfil', rotulo: '👤 Ver o meu perfil', acao: () => abrirPerfil(obterIdentidadeUsuario()) });
+        itens.push({ id: 'config', rotulo: '⚙️ Configurações', acao: () => abrirConfig() });
+        return { cabecalho: (nomeUsuarioAtual || 'Você') + (statusPersonalizado ? ' · ' + statusPersonalizado : ' · sem status'), itens };
+    });
+}
 document.getElementById('avatar-usuario-exibido').style.cursor = 'pointer';
-document.getElementById('avatar-usuario-exibido').title = 'Ver o meu perfil';
-document.getElementById('avatar-usuario-exibido').addEventListener('click', () => abrirPerfil(obterIdentidadeUsuario()));
+document.getElementById('avatar-usuario-exibido').title = 'Seu perfil e seu status';
+document.getElementById('avatar-usuario-exibido').addEventListener('click', (e) => { e.stopPropagation(); abrirMenuMeuPerfil(e.currentTarget); });
+document.getElementById('info-usuario-rodape').addEventListener('click', (e) => { e.stopPropagation(); abrirMenuMeuPerfil(document.getElementById('avatar-usuario-exibido')); });
+document.getElementById('info-usuario-rodape').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); abrirMenuMeuPerfil(document.getElementById('avatar-usuario-exibido')); } });
+document.getElementById('perfil-status').addEventListener('click', () => { fecharPerfil(); editarStatusPersonalizado(); });
 
 let resumoEmAbertura = 0;
 async function mostrarResumo(periodo, nome) {
@@ -4098,7 +4271,7 @@ try { statusPersonalizado = window.Social.limparStatus(localStorage.getItem(CHAV
 function mostrarStatusPersonalizado() {
     const el = document.getElementById('status-personalizado-rodape');
     el.textContent = statusPersonalizado;
-    el.title = statusPersonalizado ? statusPersonalizado + ' (clique para mudar)' : 'Clique para definir o seu status';
+    el.title = statusPersonalizado ? statusPersonalizado + ' (clique no seu nome para mudar)' : '';
 }
 async function editarStatusPersonalizado() {
     const r = await pedirTexto({
@@ -4106,14 +4279,14 @@ async function editarStatusPersonalizado() {
         valor: statusPersonalizado, max: window.Social.MAX_STATUS, rotuloCheckbox: 'Remover o meu status', rotuloOk: 'Salvar'
     });
     if (!r) return;
-    statusPersonalizado = r.marcado ? '' : window.Social.limparStatus(r.texto);
+    definirStatusPersonalizado(r.marcado ? '' : r.texto);
+}
+function definirStatusPersonalizado(texto) {
+    statusPersonalizado = texto ? window.Social.limparStatus(texto) : '';
     try { localStorage.setItem(CHAVE_STATUS, statusPersonalizado); } catch (e) { /* sem armazenamento: vale só até fechar o app */ }
     mostrarStatusPersonalizado();
     fazerPing(); // aparece pros outros na hora, sem esperar o próximo aviso
 }
-document.getElementById('status-personalizado-rodape').addEventListener('click', editarStatusPersonalizado);
-document.getElementById('nome-usuario-exibido').addEventListener('click', editarStatusPersonalizado);
-document.getElementById('nome-usuario-exibido').style.cursor = 'pointer';
 mostrarStatusPersonalizado();
 
 // ============================================================
@@ -6242,44 +6415,63 @@ async function aplicarFiltroRuidoNaChamada() {
 }
 
 // Aplica uma mudança de áudio durante a chamada (se estiver numa).
-// Trocar eco/ruído/ganho/microfone NÃO desliga nem republica a trilha: só refaz a captura no lugar (restartTrack),
-// então o microfone continua ligado e quem escuta não perde a sua voz. Só mudar as opções de ENVIO
-// (qualidade, DTX, RED) precisa publicar de novo. Várias mudanças seguidas viram uma só (fila).
-let micPendente = false, saidaPendente = false, republicarPendente = false, rodandoAudio = false;
-async function reaplicarAudioNaChamada(saidaMudou, publicacaoMudou) {
+// Mudou microfone, eco, ruído ou volume automático: o microfone é MONTADO DE NOVO do zero, igual a quando você
+// entra na chamada. Antes ele só era "reiniciado no lugar", e às vezes o Windows ficava com parte das opções
+// antigas: quem escutava passava a ouvir você mais baixo (ou mais alto) até você sair e entrar de novo.
+// A sua voz some por menos de 1 segundo enquanto troca. Várias mudanças seguidas viram uma só (fila).
+let micPendente = false, saidaPendente = false, rodandoAudio = false;
+async function reaplicarAudioNaChamada(saidaMudou) {
     if (saidaMudou) saidaPendente = true; else micPendente = true;
-    if (publicacaoMudou) republicarPendente = true;
     if (rodandoAudio) return;
     rodandoAudio = true;
     try {
         while (micPendente || saidaPendente) {
-            const s = saidaPendente, m = micPendente, r = republicarPendente;
-            saidaPendente = micPendente = republicarPendente = false;
+            const s = saidaPendente, m = micPendente;
+            saidaPendente = micPendente = false;
             if (!vozConectada()) break;
-            await aplicarMudancaDeAudio(s, m, r);
+            await aplicarMudancaDeAudio(s, m);
         }
     } finally { rodandoAudio = false; atualizarBotaoMicrofone(); }
 }
-async function aplicarMudancaDeAudio(saidaMudou, micMudou, republicar) {
+
+// O que o Windows entregou bate com o que foi pedido (eco, ruído, volume automático)?
+function capturaConfere(mediaTrack) {
+    try {
+        const st = mediaTrack.getSettings(), q = opcoesCapturaMicrofone();
+        return !['echoCancellation', 'noiseSuppression', 'autoGainControl'].some((k) => st[k] !== undefined && st[k] !== q[k]);
+    } catch (e) { return true; }
+}
+
+// Tira o microfone da chamada (com o filtro) e publica um novo, do zero.
+async function montarMicrofoneDeNovo() {
+    const lp = roomVoz.localParticipant;
+    const pub = lp.getTrackPublication(LivekitClient.Track.Source.Microphone);
+    const trilha = pub && pub.audioTrack;
+    if (trilha) {
+        try { if (trilha.getProcessor && trilha.getProcessor()) await trilha.stopProcessor(); } catch (e) { /* segue */ }
+        await lp.unpublishTrack(trilha, true);
+    }
+    processadorRuido = null;
+    await new Promise((ok) => setTimeout(ok, 150)); // dá tempo do Windows soltar o microfone antes de abrir de novo
+    await lp.setMicrophoneEnabled(true, opcoesCapturaMicrofone(), opcoesPublicacaoAudio());
+    await aplicarFiltroRuidoNaChamada();
+    const nova = lp.getTrackPublication(LivekitClient.Track.Source.Microphone);
+    return nova && nova.audioTrack;
+}
+
+async function aplicarMudancaDeAudio(saidaMudou, micMudou) {
     reaplicandoAudio++;
     try {
         if (saidaMudou) await roomVoz.switchActiveDevice('audiooutput', prefsAudio.saidaId || 'default');
         if (micMudou && microfoneAtivo) {
-            const lp = roomVoz.localParticipant;
-            const pegar = () => { const p = lp.getTrackPublication(LivekitClient.Track.Source.Microphone); return { pub: p, trilha: p && p.audioTrack }; };
-            let { trilha } = pegar();
-            let feito = false;
-            if (trilha && !republicar && typeof trilha.restartTrack === 'function') {
-                try { await trilha.restartTrack(opcoesCapturaMicrofone()); feito = true; } catch (err) { console.error('restartTrack falhou, publicando de novo:', err); }
+            let trilha = await montarMicrofoneDeNovo();
+            // O Windows não aceitou as opções de primeira: tenta mais uma vez.
+            if (trilha && trilha.mediaStreamTrack && !capturaConfere(trilha.mediaStreamTrack)) {
+                await new Promise((ok) => setTimeout(ok, 400));
+                trilha = await montarMicrofoneDeNovo();
             }
-            if (!feito) { // opções de envio mudaram (ou não deu pra refazer no lugar): publica de novo
-                ({ trilha } = pegar());
-                if (trilha) await lp.unpublishTrack(trilha, true);
-                await lp.setMicrophoneEnabled(true, opcoesCapturaMicrofone(), opcoesPublicacaoAudio());
-            }
-            await aplicarFiltroRuidoNaChamada();
-            const { pub, trilha: nova } = pegar();
-            { const r = nova && nova.mediaStreamTrack && resumoCaptura(nova.mediaStreamTrack); if (r) mostrarNotificacao(r, 'info'); }
+            { const r = trilha && trilha.mediaStreamTrack && resumoCaptura(trilha.mediaStreamTrack); if (r) mostrarNotificacao(r, 'info'); }
+            const pub = roomVoz.localParticipant.getTrackPublication(LivekitClient.Track.Source.Microphone);
             if (pub && pub.isMuted && pub.audioTrack) await pub.audioTrack.unmute(); // garante que não ficou mudo por acidente
         }
     } catch (err) { mostrarNotificacao('Não consegui aplicar a mudança de áudio: ' + err.message); }
@@ -6619,29 +6811,43 @@ function escolherDispositivoAudio(entrada, id) {
 }
 async function abrirMenuDispositivos(tipo, botao) {
     const entrada = tipo === 'audioinput';
-    const r = botao.getBoundingClientRect();
+    const r = botao.closest('.grupo-icone') ? botao.closest('.grupo-icone').getBoundingClientRect() : botao.getBoundingClientRect();
     const dispositivos = await listarDispositivosAudio(tipo);
     abrirMenu(r.left, r.top, () => {
         const atualId = entrada ? prefsAudio.microfoneId : prefsAudio.saidaId;
-        const marca = (ok) => (ok ? '✓ ' : '  ');
-        const itens = [{ id: 'padrao', rotulo: marca(atualId === '') + 'Padrão do sistema', mantemAberto: true, acao: () => escolherDispositivoAudio(entrada, '') }];
+        const itens = [{ titulo: entrada ? 'Usar este microfone' : 'Ouvir por' }];
+        itens.push({ id: 'padrao', rotulo: 'Padrão do Windows', marcado: atualId === '', mantemAberto: true, acao: () => escolherDispositivoAudio(entrada, '') });
         dispositivos.forEach((d, i) => {
             const nome = (d.label || `${entrada ? 'Microfone' : 'Saída'} ${i + 1}`).slice(0, 44);
-            itens.push({ id: 'disp-' + i, rotulo: marca(atualId === d.deviceId) + nome, mantemAberto: true, acao: () => escolherDispositivoAudio(entrada, d.deviceId) });
+            itens.push({ id: 'disp-' + i, rotulo: nome, marcado: atualId === d.deviceId, dica: d.label || '', mantemAberto: true, acao: () => escolherDispositivoAudio(entrada, d.deviceId) });
         });
+        itens.push({ separador: true });
         if (entrada) {
-            itens.push({ separador: true });
-            [['eco', 'Cancelamento de eco'], ['ruido', 'Supressão de ruído'], ['ganho', 'Volume automático']].forEach(([chave, nome]) => {
+            itens.push({ titulo: 'Ajustes rápidos' });
+            const ajustes = [
+                ['eco', 'Cancelamento de eco', 'Evita que o som dos seus fones ou caixas volte pela sua voz.'],
+                ['ruidoAvancado', 'Filtro de ruído avançado', 'Tira barulho de fundo (teclado, ventilador) antes de enviar a sua voz.'],
+                ['ganho', 'Volume automático', 'Deixa a sua voz sempre no mesmo volume, aumentando quando você fala baixo.']
+            ];
+            if (!prefsAudio.ruidoAvancado) ajustes.splice(2, 0, ['ruido', 'Supressão de ruído comum', 'O filtro de ruído mais simples, do próprio Windows/Chromium.']);
+            ajustes.forEach(([chave, nome, dica]) => {
                 itens.push({
-                    id: 'proc-' + chave, rotulo: (prefsAudio[chave] ? '☑ ' : '☐ ') + nome, mantemAberto: true,
-                    acao: () => { prefsAudio[chave] = !prefsAudio[chave]; salvarPreferenciasAudio(); reaplicarAudioNaChamada(false); }
+                    id: 'proc-' + chave, rotulo: nome, dica, chave: Boolean(prefsAudio[chave]), mantemAberto: true,
+                    acao: async () => {
+                        prefsAudio[chave] = !prefsAudio[chave]; salvarPreferenciasAudio(); preencherControlesAudio();
+                        if (microfoneTesteAtivo) { pararTesteMicrofone(); await alternarTesteMicrofone(); }
+                        reaplicarAudioNaChamada(false);
+                    }
                 });
             });
+            itens.push({ id: 'efeito', rotulo: '🎭 Efeito de voz: ' + nomeDoEfeito(prefsAudio.efeito), submenu: itensEfeitoDeVoz });
+            itens.push({ separador: true });
+            itens.push({ id: 'testar', rotulo: microfoneTesteAtivo ? '⏹ Parar o teste do microfone' : '🎧 Testar o microfone (ouvir a sua voz)', mantemAberto: true, acao: () => alternarTesteMicrofone() });
+        } else {
+            if (vozConectada()) itens.push({ id: 'refazer-audio', rotulo: '🔄 Não ouço alguém: refazer o áudio', dica: 'Recarrega o som de todo mundo da chamada, sem você sair.', acao: () => refazerAudioDosOutros() });
         }
-        itens.push({ separador: true });
-        if (!entrada) itens.push({ id: 'refazer-audio', rotulo: '🔄 Não ouço alguém: refazer o áudio', acao: () => refazerAudioDosOutros() });
-        itens.push({ id: 'cfg-voz', rotulo: '⚙️ Configurações de voz', acao: () => abrirConfig('voz') });
-        return { cabecalho: entrada ? 'Microfone' : 'Saída de áudio', itens };
+        itens.push({ id: 'cfg-voz', rotulo: '⚙️ Mais ajustes de voz', acao: () => abrirConfig('voz') });
+        return { cabecalho: entrada ? '🎤 Microfone' : '🔊 Saída de áudio', itens };
     });
 }
 document.getElementById('btn-mic-seta').addEventListener('click', (e) => { e.stopPropagation(); abrirMenuDispositivos('audioinput', e.currentTarget); });

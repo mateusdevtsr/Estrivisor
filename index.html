@@ -105,8 +105,15 @@
             padding: 10px; border-top: 1px solid var(--borda); background: var(--painel2-vidro, var(--painel2));
             display: flex; flex-direction: column; gap: 8px;
         }
-        .cartao-usuario { display: flex; align-items: center; gap: 6px; padding: 4px 2px; }
-        .cartao-usuario .avatar-participante { width: 30px; height: 30px; font-size: 12px; flex-shrink: 0; }
+        .cartao-usuario { display: flex; flex-direction: column; gap: 8px; padding: 2px; }
+        .linha-usuario { display: flex; align-items: center; gap: 8px; min-width: 0; }
+        .cartao-usuario .avatar-participante { width: 32px; height: 32px; font-size: 12px; flex-shrink: 0; }
+        .linha-controles-audio { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+        .linha-controles-audio .grupo-icone { display: flex; min-width: 0; background: rgba(255,255,255,0.04); border: 1px solid var(--borda); border-radius: 8px; overflow: hidden; }
+        .linha-controles-audio .grupo-icone .icone-rodape { border-radius: 0; padding: 6px 8px; }
+        .linha-controles-audio .seta-rodape { flex: 1; min-width: 0; border-radius: 0; border-left: 1px solid var(--borda); font-size: 11.5px; padding: 6px 6px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .info-usuario-rodape { cursor: pointer; border-radius: 6px; padding: 2px 4px; margin: -2px -4px; }
+        .info-usuario-rodape:hover { background: rgba(255,255,255,0.06); }
         .info-usuario-rodape { flex: 1; display: flex; flex-direction: column; min-width: 0; gap: 0; }
         .nome-usuario-exibido { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .status-usuario-rodape { font-size: 10.5px; color: var(--texto-fraco); }
@@ -144,6 +151,14 @@
         .menu-contexto.submenu { min-width: 200px; max-height: 70vh; overflow-y: auto; z-index: 1101; }
         .item-menu.marcado { color: var(--texto); font-weight: 700; background: rgba(88,101,242,0.16); }
         .titulo-submenu { padding: 4px 10px 2px; font-size: 11.5px; font-weight: 700; color: var(--texto-fraco); letter-spacing: .04em; text-transform: uppercase; }
+        .menu-contexto > .titulo-submenu { padding: 8px 10px 4px; font-size: 10.5px; }
+        .menu-contexto:not(.submenu) > .item-menu[aria-checked]:not(.com-chave)::before { content: '●'; color: #5865f2; margin-right: 7px; font-size: 10px; visibility: hidden; }
+        .menu-contexto:not(.submenu) > .item-menu.marcado[aria-checked]:not(.com-chave)::before { visibility: visible; }
+        .item-menu.com-chave { display: flex; align-items: center; gap: 10px; }
+        .chave-menu { margin-left: auto; flex-shrink: 0; width: 30px; height: 17px; border-radius: 9px; background: rgba(255,255,255,0.16); position: relative; transition: background .15s; }
+        .chave-menu::after { content: ''; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: #c9ced6; transition: transform .15s; }
+        .chave-menu.ligada { background: #3bd671; }
+        .chave-menu.ligada::after { transform: translateX(13px); background: #fff; }
         .item-menu.perigo { color: var(--sinal); }
 
         /* Excluir canal (aparece ao passar o mouse) */
@@ -436,6 +451,27 @@
         .grade-video.modo-foco { display: flex; flex-direction: column; gap: 12px; }
         .grade-video.modo-foco > .tile-video--foco { flex: 1; min-height: 0; aspect-ratio: unset; }
         .linha-miniaturas { display: flex; gap: 10px; height: 100px; flex-shrink: 0; overflow-x: auto; }
+        /* Várias transmissões: barra de cima, lado a lado com divisórias, tela escolhida */
+        .barra-transmissoes { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; flex-shrink: 0; font-size: 12.5px; }
+        .bt-titulo { font-weight: 700; }
+        .bt-modos button { padding: 5px 10px; font-size: 12.5px; }
+        .bt-igualar { background: rgba(255,255,255,0.06); padding: 5px 10px; font-size: 12.5px; border-radius: 6px; }
+        .bt-dica { color: var(--texto-fraco); font-size: 11.5px; margin-left: auto; }
+        .grade-video.modo-juntas { display: flex; flex-direction: column; gap: 10px; }
+        .fileira-juntas { flex: 1; min-height: 0; display: flex; align-items: stretch; }
+        .fileira-juntas > .tile-video { flex: 1 1 0; min-width: 0; min-height: 0; aspect-ratio: unset; transition: flex-grow .18s ease; }
+        .fileira-juntas.em-grade { flex-wrap: wrap; gap: 10px; align-content: stretch; }
+        .fileira-juntas.em-grade > .tile-video { flex-basis: 40%; height: calc(50% - 5px); }
+        .divisoria-juntas { flex: 0 0 12px; cursor: col-resize; position: relative; touch-action: none; }
+        .divisoria-juntas::after { content: ''; position: absolute; top: 50%; left: 50%; width: 4px; height: 46px; transform: translate(-50%, -50%); border-radius: 3px; background: rgba(255,255,255,0.18); transition: background .15s, height .15s; }
+        .divisoria-juntas:hover::after, .divisoria-juntas.arrastando::after { background: #5865f2; height: 80px; }
+        .fileira-juntas:has(.divisoria-juntas.arrastando) > .tile-video { transition: none; }
+        .tile-video.escolhido { outline: 2px solid #5865f2; outline-offset: -2px; }
+        .controles-escolhido { position: absolute; top: 7px; left: 7px; right: 7px; z-index: 8; display: none; flex-wrap: wrap; gap: 4px; pointer-events: none; }
+        .controles-escolhido button { pointer-events: auto; white-space: nowrap; }
+        .tile-video.escolhido .controles-escolhido { display: flex; }
+        .controles-escolhido button { background: rgba(0,0,0,0.65); border: 1px solid rgba(255,255,255,0.18); color: var(--texto); font-size: 12px; padding: 4px 8px; border-radius: 6px; }
+        .controles-escolhido button:hover { background: #5865f2; }
         .linha-miniaturas .tile-video { width: 170px; height: 100%; flex-shrink: 0; aspect-ratio: unset; }
         .linha-miniaturas .tile-video:hover { outline: 2px solid var(--sinal); }
 
@@ -500,7 +536,13 @@
         body.layout-compacto .painel-usuario, body.layout-cinema .painel-usuario { padding: 8px 4px; align-items: center; }
         body.layout-compacto .info-usuario-rodape, body.layout-cinema .info-usuario-rodape,
         body.layout-compacto .texto-canal-servidor, body.layout-cinema .texto-canal-servidor { display: none; }
-        body.layout-compacto .cartao-usuario, body.layout-cinema .cartao-usuario { flex-direction: column; gap: 6px; }
+        body.layout-compacto .cartao-usuario, body.layout-cinema .cartao-usuario { gap: 6px; align-items: center; }
+        body.layout-compacto .linha-usuario, body.layout-cinema .linha-usuario { flex-direction: column; gap: 6px; }
+        body.layout-compacto .linha-controles-audio, body.layout-cinema .linha-controles-audio { grid-template-columns: 1fr; width: 100%; }
+        body.layout-compacto .linha-controles-audio .seta-rodape, body.layout-cinema .linha-controles-audio .seta-rodape { flex: 0 0 auto; padding: 4px 5px; }
+        body.layout-compacto .rotulo-seta, body.layout-cinema .rotulo-seta { display: none; }
+        body.layout-compacto .linha-controles-audio .grupo-icone, body.layout-cinema .linha-controles-audio .grupo-icone { justify-content: center; flex-wrap: nowrap; }
+        body.layout-compacto .linha-controles-audio .icone-rodape, body.layout-cinema .linha-controles-audio .icone-rodape { padding: 4px 3px; }
         body.layout-compacto .grupo-icone, body.layout-cinema .grupo-icone { flex-wrap: wrap; justify-content: center; gap: 0; }
         body.layout-compacto .painel-usuario .icone-rodape, body.layout-cinema .painel-usuario .icone-rodape, body.layout-compacto .seta-rodape, body.layout-cinema .seta-rodape { padding: 4px 3px; font-size: 13px; }
         body.layout-compacto .linha-topo-status-voz, body.layout-cinema .linha-topo-status-voz { flex-direction: column; gap: 6px; }
@@ -783,8 +825,7 @@
         .previa-link .previa-titulo { font-size: 13.5px; font-weight: 700; margin-top: 1px; word-break: break-word; }
         .previa-link .previa-desc { font-size: 12.5px; color: var(--texto-fraco); margin-top: 2px; word-break: break-word; }
         .status-personalizado { cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .status-personalizado:empty::before { content: '+ definir status'; opacity: 0; }
-        .cartao-usuario:hover .status-personalizado:empty::before { opacity: 0.8; }
+        .status-personalizado:empty { display: none; }
         .item-membro .legenda-conquistas { font-size: 12px; letter-spacing: 1px; cursor: default; }
         .linha-cargos { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 2px; }
         .selo-cargo { font-size: 10.5px; font-weight: 600; padding: 1px 6px; border-radius: 6px; line-height: 1.5; cursor: default; white-space: nowrap; }
@@ -1043,21 +1084,25 @@
                 </div>
 
                 <div class="cartao-usuario" id="cartao-usuario">
-                    <span class="avatar-participante" id="avatar-usuario-exibido"></span>
-                    <span class="info-usuario-rodape">
-                        <span id="nome-usuario-exibido" class="nome-usuario-exibido">—</span>
-                        <span id="status-usuario-rodape" class="status-usuario-rodape" style="display:none;">🔊 Em voz</span>
-                        <span id="status-personalizado-rodape" class="status-usuario-rodape status-personalizado" title="Clique para definir o seu status"></span>
-                    </span>
-                    <span class="grupo-icone">
-                        <button id="btn-microfone-rodape" class="icone-rodape" title="Entre num canal de voz pra usar o microfone" disabled>🎤</button>
-                        <button id="btn-mic-seta" class="seta-rodape" title="Escolher microfone e ajustes de voz" aria-label="Escolher microfone e ajustes de voz">▾</button>
-                    </span>
-                    <span class="grupo-icone">
-                        <button id="btn-surdo-rodape" class="icone-rodape" title="Silenciar áudio recebido">🔊</button>
-                        <button id="btn-fone-seta" class="seta-rodape" title="Escolher a saída de áudio" aria-label="Escolher a saída de áudio">▾</button>
-                    </span>
-                    <button id="btn-config-usuario" class="icone-rodape" title="Configurações do usuário (Ctrl+,)">⚙️</button>
+                    <div class="linha-usuario">
+                        <span class="avatar-participante" id="avatar-usuario-exibido"></span>
+                        <span class="info-usuario-rodape" id="info-usuario-rodape" role="button" tabindex="0" title="Seu perfil e seu status">
+                            <span id="nome-usuario-exibido" class="nome-usuario-exibido">—</span>
+                            <span id="status-usuario-rodape" class="status-usuario-rodape" style="display:none;">🔊 Em voz</span>
+                            <span id="status-personalizado-rodape" class="status-usuario-rodape status-personalizado"></span>
+                        </span>
+                        <button id="btn-config-usuario" class="icone-rodape" title="Configurações do usuário (Ctrl+,)" aria-label="Configurações do usuário">⚙️</button>
+                    </div>
+                    <div class="linha-controles-audio">
+                        <span class="grupo-icone">
+                            <button id="btn-microfone-rodape" class="icone-rodape" title="Entre num canal de voz pra usar o microfone" disabled>🎤</button>
+                            <button id="btn-mic-seta" class="seta-rodape" title="Escolher microfone e ajustes de voz" aria-label="Escolher microfone e ajustes de voz"><span class="rotulo-seta">Mic </span>▾</button>
+                        </span>
+                        <span class="grupo-icone">
+                            <button id="btn-surdo-rodape" class="icone-rodape" title="Silenciar áudio recebido">🔊</button>
+                            <button id="btn-fone-seta" class="seta-rodape" title="Escolher a saída de áudio" aria-label="Escolher a saída de áudio"><span class="rotulo-seta">Saída </span>▾</button>
+                        </span>
+                    </div>
                 </div>
 
             </div>
@@ -1646,6 +1691,7 @@
             </div>
             <div id="perfil-corpo"></div>
             <div class="perfil-botoes">
+                <button id="perfil-status" type="button" style="display:none;">🙂 Mudar meu status</button>
                 <button id="perfil-resumo" type="button" style="display:none;">📊 Meu resumo</button>
                 <button id="perfil-fechar" type="button">Fechar</button>
             </div>

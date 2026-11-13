@@ -111,3 +111,9 @@ body.celular .amigos-topo { padding-left: 56px; }
 
 /* Lightbox e menus por cima de tudo */
 body.celular .menu-contexto { z-index: 4000; }
+
+/* Várias transmissões no celular: uma embaixo da outra (sem divisória de arrastar). */
+body.celular .fileira-juntas { flex-direction: column; gap: 8px; }
+body.celular .fileira-juntas > .tile-video { flex: 1 1 0 !important; }
+body.celular .divisoria-juntas, body.celular .bt-dica, body.celular .bt-igualar { display: none; }
+body.celular .controles-escolhido button:not(:last-child) { display: none; }

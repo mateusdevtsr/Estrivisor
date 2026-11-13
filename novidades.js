@@ -11,6 +11,16 @@
   // (formato, limite, atalho, onde fica). Nada sobre servidor, código ou como foi feito por dentro.
   const NOVIDADES = [
     {
+      versao: '3.15.3', titulo: 'Duas transmissões juntas e áudio mais estável',
+      itens: [
+        { i: '📺', t: 'Assistir duas telas ao mesmo tempo', d: 'Quando mais de uma pessoa transmite, todas aparecem lado a lado. Clique numa tela pra escolher e use "Maior" e "Menor", ou arraste a divisória do meio. A tela que fica maior recebe mais resolução sozinha, então aumentar não deixa a imagem borrada.', c: 'Na chamada, em cima das transmissões: "Lado a lado" ou "Uma por vez". Dois cliques numa tela aumenta; "Mesmo tamanho" iguala.' },
+        { i: '🎙️', t: 'Sua voz no mesmo volume depois de mexer no áudio', d: 'Trocar o microfone, o eco, o filtro de ruído ou o volume automático no meio da chamada às vezes fazia os outros te ouvirem mais baixo até você sair e entrar. Agora o microfone é refeito do zero na hora, do mesmo jeito que quando você entra.', c: 'Sua voz some por menos de 1 segundo enquanto troca.' },
+        { i: '🔄', t: 'Som de alguém estranho?', d: 'Se uma pessoa ficar baixa, alta demais ou cortando, dá pra recarregar só o som dela, sem ninguém sair da chamada.', c: 'Botão direito no nome da pessoa na chamada > "Som dessa pessoa estranho? Refazer".' },
+        { i: '🙂', t: 'Status mais fácil de mudar', d: 'Clique na sua foto ou no seu nome, embaixo à esquerda, e escolha "Definir um status", "Mudar o status" ou "Tirar o status". Ali também tem "Ver o meu perfil". No seu perfil tem o botão "Mudar meu status".', c: 'Rodapé, à esquerda: clique em você.' },
+        { i: '🎛️', t: 'Rodapé e menu do microfone organizados', d: 'Embaixo, à esquerda, ficou seu nome numa linha e os botões de Mic e Saída na outra. A setinha do Mic abre um menu com o microfone escolhido marcado, chavinhas de liga/desliga para eco, ruído e volume automático, o efeito de voz e o teste do microfone.', c: 'Rodapé, à esquerda: "Mic ▾" e "Saída ▾".' }
+      ]
+    },
+    {
       versao: '3.15.2', titulo: 'Ajustes e o app do celular no site',
       itens: [
         { i: '📱', t: 'Android direto no site', d: 'Agora dá pra baixar o Estrivisor para Android no site, do lado do botão do Windows. É só mandar o link pros amigos.', c: 'estrivisor.com.br > "Baixar para Android".' },
