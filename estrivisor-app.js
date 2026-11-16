@@ -2272,8 +2272,9 @@ function aplicarAudioDePessoa(identity) {
     garantirEntradaAudio(identity);
     const volumes = volumesPorIdentidade.get(identity);
     const mudo = surdoAtivo || silenciadosPorIdentidade.has(identity);
+    const telaEscondida = telaDePessoaEscondida(identity); // você escondeu a transmissão dela: o som dela também some
     ['microfone', 'compartilhamento'].forEach((tipo) => {
-        entrada[tipo].forEach((el) => { el.volume = ganhoDoVolume(volumes[tipo]); el.muted = mudo; });
+        entrada[tipo].forEach((el) => { el.volume = ganhoDoVolume(volumes[tipo]); el.muted = mudo || (tipo === 'compartilhamento' && telaEscondida); });
     });
 }
 
@@ -2912,7 +2913,7 @@ function abrirMenu(x, y, construir) {
     }
     desenhar();
 
-    document.body.appendChild(menu);
+    (document.fullscreenElement || document.body).appendChild(menu); // em tela cheia, só o que está dentro dela aparece
     menu.style.left = '0px'; menu.style.top = '0px';
     const caixa = menu.getBoundingClientRect();
     const larguraTela = window.innerWidth || 1200, alturaTela = window.innerHeight || 800;
@@ -3180,8 +3181,9 @@ function criarElementoTile(trackSid, info, grande) {
     }
 
     if (info.identidade && info.origem && grande) ligarDesenhoNoTile(tile, info);
+    if (grande) ligarZoomNoTile(tile, trackSid, info.videoEl);
 
-    if (tiles.size > 1) {
+    if (tilesVisiveis.size > 1) {
         tile.classList.add('clicavel');
         if (!trackEmFoco) {
             // Lado a lado: clique escolhe a tela; dois cliques aumenta (ou volta ao tamanho igual).
@@ -3195,6 +3197,87 @@ function criarElementoTile(trackSid, info, grande) {
         }
     }
     return tile;
+}
+
+// ---------- Lupa: aproximar uma parte da transmissão ----------
+// Rodinha do mouse em cima da tela aproxima onde o mouse está (até 5x); com ela aproximada, arraste pra
+// andar pela imagem. O botão "🔍 2.0x ✕" volta ao normal. Cada tela guarda a sua lupa.
+const zoomTiles = new Map(); // trackSid -> { z, x, y } (x/y = deslocamento em fração do tamanho da tela, de 0 a 1-z)
+function ligarZoomNoTile(tile, sid, video) {
+    const ind = document.createElement('button');
+    ind.type = 'button'; ind.className = 'zoom-tile'; ind.title = 'Voltar ao tamanho normal';
+    tile.appendChild(ind);
+    const desenhando = () => Boolean(tile.querySelector('.canvas-desenho.ativo'));
+    // Guardado em fração do tamanho: continua certo se a tela mudar de tamanho (tela cheia, divisória).
+    const limitar = (z, x, y) => ({ z, x: Math.min(0, Math.max(1 - z, x)), y: Math.min(0, Math.max(1 - z, y)) });
+    const aplicar = () => {
+        const st = zoomTiles.get(sid);
+        const z = st ? st.z : 1;
+        video.style.transformOrigin = '0 0';
+        video.style.transform = z > 1 ? `translate(${st.x * 100}%, ${st.y * 100}%) scale(${z})` : '';
+        tile.classList.toggle('com-zoom', z > 1);
+        ind.textContent = `🔍 ${z.toFixed(1).replace('.', ',')}x ✕`;
+    };
+    ind.addEventListener('click', (e) => { e.stopPropagation(); zoomTiles.delete(sid); aplicar(); });
+    tile.addEventListener('wheel', (e) => {
+        if (desenhando() || e.target.closest('.tile-volume, .barra-desenho, .controles-escolhido')) return;
+        e.preventDefault();
+        const st = zoomTiles.get(sid) || { z: 1, x: 0, y: 0 };
+        const r = tile.getBoundingClientRect();
+        const px = (e.clientX - r.left) / r.width, py = (e.clientY - r.top) / r.height;
+        const z2 = Math.min(5, Math.max(1, st.z * (e.deltaY < 0 ? 1.2 : 1 / 1.2)));
+        if (z2 <= 1.001) { zoomTiles.delete(sid); aplicar(); return; }
+        zoomTiles.set(sid, limitar(z2, px - (px - st.x) * (z2 / st.z), py - (py - st.y) * (z2 / st.z)));
+        aplicar();
+    }, { passive: false });
+    // Arrastar com a lupa ligada anda pela imagem (e não conta como clique na tela).
+    let arraste = null, arrastou = false;
+    tile.addEventListener('pointerdown', (e) => {
+        const st = zoomTiles.get(sid);
+        if (!st || e.button !== 0 || desenhando() || e.target.closest('button, input, .tile-volume, .controles-escolhido')) return;
+        arraste = { x0: e.clientX, y0: e.clientY, sx: st.x, sy: st.y, id: e.pointerId, w: tile.clientWidth || 1, h: tile.clientHeight || 1 };
+        arrastou = false;
+        tile.setPointerCapture(e.pointerId);
+        tile.classList.add('arrastando-zoom');
+    });
+    tile.addEventListener('pointermove', (e) => {
+        if (!arraste || e.pointerId !== arraste.id) return;
+        const dx = e.clientX - arraste.x0, dy = e.clientY - arraste.y0;
+        if (Math.abs(dx) + Math.abs(dy) > 4) arrastou = true;
+        const st = zoomTiles.get(sid);
+        if (!st) return;
+        zoomTiles.set(sid, limitar(st.z, arraste.sx + dx / arraste.w, arraste.sy + dy / arraste.h));
+        aplicar();
+    });
+    const soltar = () => { arraste = null; tile.classList.remove('arrastando-zoom'); };
+    tile.addEventListener('pointerup', soltar);
+    tile.addEventListener('pointercancel', soltar);
+    tile.addEventListener('click', (e) => { if (arrastou) { e.stopPropagation(); e.preventDefault(); arrastou = false; } }, true);
+    tile.addEventListener('dblclick', (e) => { if (zoomTiles.has(sid)) { e.stopPropagation(); zoomTiles.delete(sid); aplicar(); } }, true);
+    aplicar();
+}
+
+// ---------- Tela cheia com todas as transmissões ----------
+// Diferente do ⤢ de cada tela: aqui a área inteira (todas as telas que você está vendo) vai pro monitor todo.
+function alternarTelaCheiaTodas() {
+    const grade = document.getElementById('grade-video');
+    if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); return; }
+    grade.requestFullscreen().catch(() => mostrarNotificacao('Não consegui abrir em tela cheia.'));
+}
+{
+    const grade = document.getElementById('grade-video');
+    let timer = 0;
+    // Em tela cheia a barra de cima some sozinha; mexer o mouse mostra de novo por alguns segundos.
+    grade.addEventListener('mousemove', () => {
+        if (document.fullscreenElement !== grade) return;
+        grade.classList.add('mostrar-barra');
+        clearTimeout(timer);
+        timer = setTimeout(() => grade.classList.remove('mostrar-barra'), 2500);
+    });
+    document.addEventListener('fullscreenchange', () => {
+        if (document.fullscreenElement !== grade) grade.classList.remove('mostrar-barra');
+        if (tiles.size) renderizarVideo(); // atualiza o botão "Tela cheia"/"Sair da tela cheia"
+    });
 }
 
 // ---------- Várias transmissões ao mesmo tempo ----------
@@ -3226,7 +3309,7 @@ function aplicarPesosTiles() {
 function aumentarTile(sid, fator) {
     if (fator === 'alternar') {
         const grande = pesoDe(sid) > 1.2;
-        tiles.forEach((_, s) => pesosTiles.set(s, 1));
+        tilesVisiveis.forEach((_, s) => pesosTiles.set(s, 1));
         if (!grande) pesosTiles.set(sid, 2.4);
     } else {
         pesosTiles.set(sid, Math.min(PESO_MAX, Math.max(PESO_MIN, pesoDe(sid) * fator)));
@@ -3272,8 +3355,36 @@ function barraTransmissoes() {
     const juntas = !trackEmFoco;
     const titulo = document.createElement('span');
     titulo.className = 'bt-titulo';
-    titulo.textContent = `📺 ${tiles.size} transmissões`;
+    titulo.textContent = tilesVisiveis.size === tiles.size
+        ? `📺 ${tiles.size} ${tiles.size === 1 ? 'transmissão' : 'transmissões'}`
+        : `📺 vendo ${tilesVisiveis.size} de ${tiles.size}`;
     barra.appendChild(titulo);
+    // Escolher quais telas ver (e esconder a sua).
+    const escolher = document.createElement('button');
+    escolher.type = 'button'; escolher.className = 'bt-escolher';
+    escolher.textContent = '👁 Escolher telas ▾';
+    escolher.title = 'Escolher quais transmissões você quer ver';
+    escolher.addEventListener('click', (e) => { e.stopPropagation(); abrirMenuEscolherTelas(escolher); });
+    barra.appendChild(escolher);
+    const minha = [...tiles.values()].find((i) => i.ehVoce && i.origem === 'tela');
+    if (minha) {
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'bt-minha' + (esconderMinhaTela ? ' ativo' : '');
+        b.textContent = esconderMinhaTela ? '🙈 Minha tela escondida' : '🙈 Não ver a minha tela';
+        b.title = esconderMinhaTela ? 'Clique pra voltar a ver a sua transmissão' : 'Esconde a sua própria transmissão daqui (os outros continuam vendo)';
+        b.addEventListener('click', () => definirEsconderMinhaTela(!esconderMinhaTela));
+        barra.appendChild(b);
+    }
+    if (tilesVisiveis.size >= 1) {
+        const cheia = document.createElement('button');
+        const emCheia = document.fullscreenElement === document.getElementById('grade-video');
+        cheia.type = 'button'; cheia.className = 'bt-cheia';
+        cheia.textContent = emCheia ? '⤡ Sair da tela cheia' : '⛶ Tela cheia';
+        cheia.title = emCheia ? 'Voltar ao normal (Esc)' : 'Todas as telas que você está vendo ocupam o monitor inteiro';
+        cheia.addEventListener('click', alternarTelaCheiaTodas);
+        barra.appendChild(cheia);
+    }
+    if (tilesVisiveis.size < 2) return barra; // com 0 ou 1 tela visível não tem "lado a lado"
     const seg = document.createElement('div');
     seg.className = 'segmentado bt-modos';
     [['juntas', '▦ Lado a lado', 'Assistir todas ao mesmo tempo'], ['uma', '▣ Uma por vez', 'Uma grande e as outras em miniatura']].forEach(([modo, txt, dica]) => {
@@ -3282,7 +3393,7 @@ function barraTransmissoes() {
         if ((modo === 'juntas') === juntas) b.classList.add('ativo');
         b.addEventListener('click', () => {
             if (modo === 'juntas') trackEmFoco = null;
-            else if (!trackEmFoco) trackEmFoco = (tileEscolhido && tiles.has(tileEscolhido)) ? tileEscolhido : [...tiles.keys()][0];
+            else if (!trackEmFoco) trackEmFoco = (tileEscolhido && tilesVisiveis.has(tileEscolhido)) ? tileEscolhido : [...tilesVisiveis.keys()][0];
             renderizarVideo();
         });
         seg.appendChild(b);
@@ -3296,45 +3407,124 @@ function barraTransmissoes() {
         barra.appendChild(igual);
         const dica = document.createElement('span');
         dica.className = 'bt-dica';
-        dica.textContent = 'Clique numa tela pra escolher · arraste a divisória pra mudar o tamanho · dois cliques aumenta';
+        dica.textContent = 'Clique numa tela pra escolher · arraste a divisória pra mudar o tamanho · rodinha do mouse aproxima';
         barra.appendChild(dica);
     }
     return barra;
 }
 
+// ---------- Quais telas ver ----------
+// Cada pessoa escolhe o que quer assistir: esconder transmissões (inclusive a própria) só muda a SUA tela.
+// Uma tela escondida também deixa de ser baixada (o app para de receber o vídeo dela) e o som dela fica mudo.
+var CHAVE_ESCONDER_MINHA = 'estrivisor_esconder_minha_tela';
+var esconderMinhaTela = (() => { try { return localStorage.getItem(CHAVE_ESCONDER_MINHA) === '1'; } catch (e) { return false; } })();
+var telasOcultas = new Set(); // trackSid das transmissões dos outros que você escondeu
+var tilesVisiveis = new Map();
+
+function tileOculto(trackSid, info) {
+    if (info.ehVoce) return esconderMinhaTela && info.origem === 'tela';
+    return telasOcultas.has(trackSid);
+}
+function definirEsconderMinhaTela(sim) {
+    esconderMinhaTela = Boolean(sim);
+    try { localStorage.setItem(CHAVE_ESCONDER_MINHA, esconderMinhaTela ? '1' : '0'); } catch (e) { /* vale até fechar */ }
+    renderizarVideo();
+}
+function alternarTelaOculta(trackSid) {
+    const info = tiles.get(trackSid);
+    if (!info) return;
+    if (info.ehVoce) { definirEsconderMinhaTela(!esconderMinhaTela); return; }
+    if (telasOcultas.has(trackSid)) telasOcultas.delete(trackSid); else telasOcultas.add(trackSid);
+    if (info.identidade) aplicarAudioDePessoa(info.identidade);
+    renderizarVideo();
+}
+function mostrarTodasAsTelas() {
+    const afetados = [...telasOcultas].map((sid) => tiles.get(sid)).filter(Boolean);
+    telasOcultas.clear();
+    afetados.forEach((i) => i.identidade && aplicarAudioDePessoa(i.identidade));
+    if (esconderMinhaTela) definirEsconderMinhaTela(false); else renderizarVideo();
+}
+// Som da transmissão de alguém fica mudo se você escondeu a tela dele.
+function telaDePessoaEscondida(identidade) {
+    for (const [sid, info] of tiles) if (!info.ehVoce && info.identidade === identidade && info.origem === 'tela' && telasOcultas.has(sid)) return true;
+    return false;
+}
+function abrirMenuEscolherTelas(botao) {
+    const r = botao.getBoundingClientRect();
+    abrirMenu(r.left, r.bottom + 4, () => {
+        const itens = [{ titulo: 'Ver estas transmissões' }];
+        tiles.forEach((info, sid) => {
+            const tipo = info.origem === 'camera' ? 'câmera' : 'tela';
+            const quem = info.ehVoce ? 'Você' : (info.nome || 'Alguém');
+            itens.push({
+                id: 'tela-' + sid, rotulo: `${info.origem === 'camera' ? '📷' : '🖥️'} ${quem} (${tipo})`,
+                dica: info.ehVoce ? 'Só esconde daqui: os outros continuam vendo a sua transmissão.' : 'Escondida, ela para de ser baixada e o som dela fica mudo.',
+                chave: !tileOculto(sid, info), mantemAberto: true, acao: () => alternarTelaOculta(sid)
+            });
+        });
+        itens.push({ separador: true });
+        itens.push({ id: 'todas', rotulo: '👁 Ver todas', mantemAberto: true, acao: mostrarTodasAsTelas });
+        return { cabecalho: '📺 Quais telas ver', itens };
+    });
+}
+
 function renderizarVideo() {
     const grade = document.getElementById('grade-video');
     grade.innerHTML = '';
+    tilesVisiveis = new Map([...tiles].filter(([sid, info]) => !tileOculto(sid, info)));
+    // Pausa quem está escondido: o vídeo sai da tela e o app para de baixar (economiza internet).
+    tiles.forEach((info, sid) => { if (!tilesVisiveis.has(sid) && info.videoEl && info.videoEl.isConnected) info.videoEl.remove(); });
+    const comBarra = tiles.size >= 2 || [...tiles.values()].some((i) => i.ehVoce && i.origem === 'tela');
     if (tiles.size === 0) {
         grade.className = 'grade-video';
         grade.innerHTML = '<div class="placeholder-vazio"><div class="icone">▢</div>Nenhuma transmissão ativa neste canal</div>';
         return;
     }
-    if (tiles.size === 1) {
-        grade.className = 'grade-video';
-        const [trackSid, info] = [...tiles.entries()][0];
-        grade.appendChild(criarElementoTile(trackSid, info, true));
+    if (tilesVisiveis.size === 0) {
+        grade.className = 'grade-video modo-juntas';
+        grade.appendChild(barraTransmissoes());
+        const vazio = document.createElement('div');
+        vazio.className = 'placeholder-vazio';
+        vazio.innerHTML = '<div class="icone">🙈</div>';
+        vazio.appendChild(document.createTextNode('Você escondeu todas as transmissões. Use "Escolher telas" pra voltar a ver.'));
+        grade.appendChild(vazio);
         return;
     }
-    if (trackEmFoco && !tiles.has(trackEmFoco)) trackEmFoco = null;
-    if (tileEscolhido && !tiles.has(tileEscolhido)) tileEscolhido = null;
+    if (tilesVisiveis.size === 1) {
+        const [trackSid, info] = [...tilesVisiveis.entries()][0];
+        if (comBarra) {
+            grade.className = 'grade-video modo-juntas';
+            grade.appendChild(barraTransmissoes());
+            const fileira = document.createElement('div');
+            fileira.className = 'fileira-juntas';
+            fileira.appendChild(criarElementoTile(trackSid, info, true));
+            grade.appendChild(fileira);
+        } else {
+            grade.className = 'grade-video';
+            grade.appendChild(criarElementoTile(trackSid, info, true));
+        }
+        return;
+    }
+    if (trackEmFoco && !tilesVisiveis.has(trackEmFoco)) trackEmFoco = null;
+    if (tileEscolhido && !tilesVisiveis.has(tileEscolhido)) tileEscolhido = null;
     if (trackEmFoco) {
         grade.className = 'grade-video modo-foco';
         grade.appendChild(barraTransmissoes());
-        grade.appendChild(criarElementoTile(trackEmFoco, tiles.get(trackEmFoco), true));
+        grade.appendChild(criarElementoTile(trackEmFoco, tilesVisiveis.get(trackEmFoco), true));
         const linha = document.createElement('div');
         linha.className = 'linha-miniaturas';
-        tiles.forEach((info, trackSid) => { if (trackSid !== trackEmFoco) linha.appendChild(criarElementoTile(trackSid, info, false)); });
+        tilesVisiveis.forEach((info, trackSid) => { if (trackSid !== trackEmFoco) linha.appendChild(criarElementoTile(trackSid, info, false)); });
         grade.appendChild(linha);
     } else {
         grade.className = 'grade-video modo-juntas';
         grade.appendChild(barraTransmissoes());
         const fileira = document.createElement('div');
-        fileira.className = 'fileira-juntas' + (tiles.size >= 4 ? ' em-grade' : '');
-        const sids = [...tiles.keys()];
+        const n = tilesVisiveis.size;
+        fileira.className = 'fileira-juntas' + (n >= 4 ? ' em-grade' : '');
+        const sids = [...tilesVisiveis.keys()];
         sids.forEach((trackSid, i) => {
-            if (i > 0 && tiles.size < 4) fileira.appendChild(criarDivisoria(sids[i - 1], trackSid));
-            const t = criarElementoTile(trackSid, tiles.get(trackSid), true);
+            if (i > 0 && n < 4) fileira.appendChild(criarDivisoria(sids[i - 1], trackSid));
+            const t = criarElementoTile(trackSid, tilesVisiveis.get(trackSid), true);
             t.style.flexGrow = String(pesoDe(trackSid));
             fileira.appendChild(t);
         });
@@ -3347,7 +3537,9 @@ function adicionarTile(trackSid, elementoMidia, nome, ehVoce, extra = {}) {
     renderizarVideo();
 }
 function removerTile(trackSid) {
+    const saiu = tiles.get(trackSid);
     tiles.delete(trackSid);
+    if (telasOcultas.delete(trackSid) && saiu && saiu.identidade) aplicarAudioDePessoa(saiu.identidade);
     pesosTiles.delete(trackSid);
     if (tileEscolhido === trackSid) tileEscolhido = null;
     if (trackEmFoco === trackSid) trackEmFoco = null;
@@ -5481,11 +5673,23 @@ function ligarDesenhoNoTile(tile, info) {
     cv.addEventListener('click', (e) => e.stopPropagation());
 }
 
+// Mensagens que chegam pela chamada (desenho, cinema, espectadores, ofertas de arquivo) são todas curtas.
+// Lê no máximo 8 mil letras: alguém mal-intencionado na sala não consegue mandar um texto gigante
+// pra travar o app de todo mundo (antes o app lia tudo antes de conferir o tamanho).
+async function lerTextoCurto(reader, max = 8000) {
+    let texto = '';
+    for await (const pedaco of reader) {
+        texto += pedaco;
+        if (texto.length > max) throw new Error('mensagem grande demais');
+    }
+    return texto;
+}
+
 function registrarDesenhoNaSala(sala) {
     sala.registerTextStreamHandler(window.Desenho.TOPICO, async (reader, quem) => {
         if (sala !== roomVoz) return;
         let m = null;
-        try { m = window.Desenho.lerMensagem(await reader.readAll()); } catch (e) { return; }
+        try { m = window.Desenho.lerMensagem(await lerTextoCurto(reader)); } catch (e) { return; }
         if (!m || !roomVoz.remoteParticipants.has(quem.identity)) return; // só gente que está na sala
         if (m.modo === 'limpar') desenhos.limpar(m.alvo, m.origem, quem.identity);
         else desenhos.adicionar(m.alvo, m.origem, quem.identity, m.modo, m.id, m.pontos, Date.now());
@@ -5611,7 +5815,7 @@ function registrarCinemaNaSala(sala) {
     sala.registerTextStreamHandler(window.Cinema.TOPICO, async (reader, quem) => {
         if (sala !== roomVoz) return;
         let m = null;
-        try { m = window.Cinema.lerMensagem(await reader.readAll()); } catch (e) { return; }
+        try { m = window.Cinema.lerMensagem(await lerTextoCurto(reader)); } catch (e) { return; }
         if (!m || !roomVoz.remoteParticipants.has(quem.identity)) return; // só gente que está na sala
         if (m.t === 'oferta') {
             if (cinema || conviteCinema) return; // já está numa sessão ou com um convite aberto
@@ -5697,7 +5901,7 @@ function registrarEspectadoresNaSala(sala) {
     sala.registerTextStreamHandler(window.Espectadores.TOPICO, async (reader, quem) => {
         if (sala !== roomVoz) return;
         let m = null;
-        try { m = window.Espectadores.lerMensagem(await reader.readAll()); } catch (e) { return; }
+        try { m = window.Espectadores.lerMensagem(await lerTextoCurto(reader)); } catch (e) { return; }
         if (!m || !roomVoz.remoteParticipants.has(quem.identity)) return; // só gente que está na sala
         if (m.acao === 'entrou') espectadores.entrou(quem.identity, nomeDeParticipante(quem.identity), m.origem);
         else espectadores.saiu(quem.identity, m.origem);
@@ -5774,7 +5978,7 @@ function atualizarCartaoEnvio(envio) {
 // Alguém respondeu a uma oferta minha: se aceitou, mando o arquivo só pra essa pessoa.
 async function aoReceberRespostaArquivo(reader, quem) {
     let r = null;
-    try { r = window.Arquivos.lerResposta(await reader.readAll()); } catch (e) { return; }
+    try { r = window.Arquivos.lerResposta(await lerTextoCurto(reader)); } catch (e) { return; }
     const envio = r && enviosArquivos.get(r.id);
     if (!envio || envio.resolvidos.has(quem.identity)) return;
     envio.resolvidos.add(quem.identity);
@@ -5799,7 +6003,7 @@ async function aoReceberRespostaArquivo(reader, quem) {
 // Alguém me ofereceu um arquivo.
 async function aoReceberOfertaArquivo(reader, quem) {
     let oferta = null;
-    try { oferta = window.Arquivos.lerOferta(await reader.readAll()); } catch (e) { return; }
+    try { oferta = window.Arquivos.lerOferta(await lerTextoCurto(reader)); } catch (e) { return; }
     if (!oferta || !vozConectada() || quem.identity === roomVoz.localParticipant.identity) return;
     const responder = (aceito) => roomVoz.localParticipant.sendText(window.Arquivos.criarResposta(oferta.id, aceito), { topic: window.Arquivos.TOPICOS.resposta, destinationIdentities: [quem.identity] }).catch(() => {});
     if (ofertasArquivos.has(oferta.id) || ofertasArquivos.size >= window.Arquivos.MAX_OFERTAS_PENDENTES) { responder(false); return; }

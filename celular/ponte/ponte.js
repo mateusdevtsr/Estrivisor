@@ -96,6 +96,8 @@ async function trocarTicket(ticket, verificador) {
   if (!r.ok) return { ok: false, erro: r.erro, cancelado: Boolean(r.dados && r.dados.cancelado) || /cancelad/i.test(r.erro || '') };
   sessao.chave = r.dados.sessao; sessao.conta = r.dados.conta;
   await gravarSessao();
+  // Entrou de novo (sem fechar o app): o celular volta a receber avisos ligado a este login novo.
+  if (notif.token) enviarAparelho().catch(() => {});
   return { ok: true, conta: sessao.conta };
 }
 // O link estrivisor://login?ticket=... chegou (com o app aberto ou abrindo o app).

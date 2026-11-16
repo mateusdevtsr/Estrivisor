@@ -455,7 +455,22 @@
         .barra-transmissoes { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; flex-shrink: 0; font-size: 12.5px; }
         .bt-titulo { font-weight: 700; }
         .bt-modos button { padding: 5px 10px; font-size: 12.5px; }
-        .bt-igualar { background: rgba(255,255,255,0.06); padding: 5px 10px; font-size: 12.5px; border-radius: 6px; }
+        .bt-igualar, .bt-escolher, .bt-minha { background: rgba(255,255,255,0.06); padding: 5px 10px; font-size: 12.5px; border-radius: 6px; }
+        .bt-minha.ativo { background: rgba(88,101,242,0.25); outline: 1px solid #5865f2; }
+        .bt-cheia { background: #5865f2; color: #fff; padding: 5px 10px; font-size: 12.5px; border-radius: 6px; }
+        /* Tela cheia com todas as transmissões: sem bordas, barra some e volta ao mexer o mouse */
+        #grade-video:fullscreen { background: #000; padding: 4px; gap: 4px; width: 100vw; height: 100vh; position: relative; }
+        #grade-video:fullscreen .barra-transmissoes { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 30; background: rgba(15,16,20,0.88); border: 1px solid rgba(255,255,255,0.12); padding: 6px 10px; border-radius: 10px; opacity: 0; transition: opacity .2s; max-width: calc(100% - 20px); }
+        #grade-video:fullscreen.mostrar-barra .barra-transmissoes, #grade-video:fullscreen .barra-transmissoes:hover { opacity: 1; }
+        #grade-video:fullscreen .bt-dica { display: none; }
+        #grade-video:fullscreen .tile-video { border: none; border-radius: 0; }
+        #grade-video:fullscreen .divisoria-juntas { flex-basis: 8px; }
+        #grade-video:fullscreen .menu-contexto { z-index: 40; }
+        /* Lupa */
+        .tile-video.com-zoom { cursor: grab; }
+        .tile-video.arrastando-zoom { cursor: grabbing; }
+        .zoom-tile { display: none; position: absolute; bottom: 8px; right: 8px; z-index: 8; background: rgba(0,0,0,0.7); border: 1px solid rgba(255,255,255,0.2); color: #fff; font-size: 12px; padding: 3px 8px; border-radius: 6px; }
+        .tile-video.com-zoom .zoom-tile { display: block; }
         .bt-dica { color: var(--texto-fraco); font-size: 11.5px; margin-left: auto; }
         .grade-video.modo-juntas { display: flex; flex-direction: column; gap: 10px; }
         .fileira-juntas { flex: 1; min-height: 0; display: flex; align-items: stretch; }

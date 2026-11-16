@@ -18,6 +18,10 @@ on:
         type: boolean
         default: false
 
+# Só lê o código: o anúncio usa o webhook do Discord, não precisa mexer no repositório.
+permissions:
+  contents: read
+
 jobs:
   anunciar:
     runs-on: ubuntu-latest

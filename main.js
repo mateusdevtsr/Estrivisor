@@ -911,6 +911,15 @@ app.whenReady().then(() => {
     else callback({ video: fonte });
   });
 
+  // Arquivo recebido de alguém pela chamada e salvo pelo app: o Windows passa a tratar como "baixado da
+  // internet" (marca Zone.Identifier). Assim, se for um programa, o Windows avisa antes de abrir.
+  session.defaultSession.on('will-download', (evento, item) => {
+    item.once('done', (e, estado) => {
+      if (estado !== 'completed' || process.platform !== 'win32') return;
+      try { fs.writeFileSync(item.getSavePath() + ':Zone.Identifier', '[ZoneTransfer]\r\nZoneId=3\r\n'); } catch (err) { /* disco sem suporte (ex.: pendrive FAT32) */ }
+    });
+  });
+
   // Sem isso, o pedido de microfone (getUserMedia de áudio) é negado
   // silenciosamente pelo Electron, mesmo com permissão do Windows.
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {

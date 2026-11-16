@@ -11,6 +11,18 @@
   // (formato, limite, atalho, onde fica). Nada sobre servidor, código ou como foi feito por dentro.
   const NOVIDADES = [
     {
+      versao: '3.15.4', titulo: 'Transmissões maiores, escolher telas e mais segurança',
+      itens: [
+        { i: '⛶', t: 'Tela cheia com todas as transmissões', d: 'O botão "Tela cheia" na barra das transmissões leva todas as telas que você está vendo pro monitor inteiro, lado a lado, sem as colunas e sem bordas. A barra de cima some sozinha e volta quando você mexe o mouse.', c: 'Na chamada: "⛶ Tela cheia". Esc volta.' },
+        { i: '🔍', t: 'Lupa nas transmissões', d: 'Gire a rodinha do mouse em cima de uma transmissão pra aproximar onde o mouse está (até 5x). Com ela aproximada, arraste pra andar pela imagem. Ótimo pra ler texto pequeno na tela de alguém.', c: 'Pra voltar: clique no "🔍 ✕" no canto da tela ou dê dois cliques nela.' },
+        { i: '👁', t: 'Escolher quais transmissões ver', d: 'Com várias pessoas transmitindo, o botão "Escolher telas" mostra todas, cada uma com uma chavinha. Deixe ligadas só as que você quer assistir. A tela que você esconde para de ser baixada (economiza internet) e o som dela fica mudo.', c: 'Na chamada, em cima das transmissões: "👁 Escolher telas". "Ver todas" mostra tudo de novo.' },
+        { i: '🙈', t: 'Não ver a minha própria tela', d: 'Quando você está transmitindo, dá pra esconder a sua transmissão da sua tela e ficar só com as dos outros. Quem está na chamada continua vendo você normalmente.', c: 'Botão "🙈 Não ver a minha tela". O app lembra da sua escolha.' },
+        { i: '🛡️', t: 'Arquivos recebidos pela chamada', d: 'Arquivos que alguém te manda pela chamada agora são salvos como "baixados da internet". Se for um programa, o Windows avisa antes de abrir.', c: 'Só aceite programas de quem você confia.' },
+        { i: '🔒', t: 'Chamada mais resistente', d: 'O app ignora mensagens grandes demais vindas da chamada, então ninguém consegue travar o seu Estrivisor mandando lixo pela sala.', c: 'Funciona sozinho, nada pra configurar.' },
+        { i: '📱', t: 'Notificações e login no celular', d: 'Se você sair da conta, for desconectado pela administração ou perder o acesso, o celular para de mostrar as mensagens na hora. O login do celular também não vai mais para o backup do Google: ao trocar de aparelho, é só entrar de novo com o Discord.', c: 'Depois desta atualização, abra o app do celular uma vez pra continuar recebendo notificações.' }
+      ]
+    },
+    {
       versao: '3.15.3', titulo: 'Duas transmissões juntas e áudio mais estável',
       itens: [
         { i: '📺', t: 'Assistir duas telas ao mesmo tempo', d: 'Quando mais de uma pessoa transmite, todas aparecem lado a lado. Clique numa tela pra escolher e use "Maior" e "Menor", ou arraste a divisória do meio. A tela que fica maior recebe mais resolução sozinha, então aumentar não deixa a imagem borrada.', c: 'Na chamada, em cima das transmissões: "Lado a lado" ou "Uma por vez". Dois cliques numa tela aumenta; "Mesmo tamanho" iguala.' },

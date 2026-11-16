@@ -58,6 +58,28 @@ if (!m.includes('android:scheme="estrivisor"')) {
                 <data android:scheme="estrivisor" android:host="login" />
             </intent-filter>` + m.slice(depois);
 }
+// Backup do Android: o login do app (sessão) não pode ir para o backup do Google nem passar para outro
+// celular na troca de aparelho. Quem troca de celular só entra de novo com o Discord.
+m = m.replace(/android:allowBackup="true"/, 'android:allowBackup="false"');
+if (!m.includes('android:allowBackup=')) m = m.replace('<application', '<application\n        android:allowBackup="false"');
+if (!m.includes('android:dataExtractionRules=')) m = m.replace('<application', '<application\n        android:dataExtractionRules="@xml/sem_backup"');
+if (!m.includes('android:fullBackupContent=')) m = m.replace('<application', '<application\n        android:fullBackupContent="false"');
+{
+  const pastaXml = path.join(APP, 'src', 'main', 'res', 'xml');
+  fs.mkdirSync(pastaXml, { recursive: true });
+  const tudo = ['root', 'file', 'database', 'sharedpref', 'external'].map((d) => `        <exclude domain="${d}" path="." />`).join('\n');
+  fs.writeFileSync(path.join(pastaXml, 'sem_backup.xml'), `<?xml version="1.0" encoding="utf-8"?>
+<!-- Nada do Estrivisor vai para backup nem para outro celular (o login fica só neste aparelho). -->
+<data-extraction-rules>
+    <cloud-backup>
+${tudo}
+    </cloud-backup>
+    <device-transfer>
+${tudo}
+    </device-transfer>
+</data-extraction-rules>
+`);
+}
 fs.writeFileSync(arqManifesto, m);
 
 // 3) Versão (igual à do PC). versionCode: 3.15.1 -> 31501
