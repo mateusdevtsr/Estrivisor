@@ -938,11 +938,13 @@ responder('ligacao-chegando', (evento, dados) => {
 });
 // ---- Mensagem de susto: janela em tela cheia por cima de tudo (até de jogos em janela sem borda) ----
 let janelaSusto = null;
+let escSusto = false; // o Esc foi "pego" enquanto o susto está na tela
 const IMAGEM_SUSTO = /^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
 const SOM_SUSTO = /^data:audio\/(mpeg|ogg|wav);base64,[A-Za-z0-9+/]+={0,2}$/;
 function fecharSusto() {
   const j = janelaSusto;
   janelaSusto = null;
+  if (escSusto) { try { globalShortcut.unregister('Escape'); } catch (e) { /* já saiu */ } escSusto = false; }
   if (j && !j.isDestroyed()) j.destroy();
 }
 responder('mostrar-susto', (evento, dados) => {
@@ -969,10 +971,12 @@ responder('mostrar-susto', (evento, dados) => {
   j.webContents.once('did-finish-load', () => {
     if (j.isDestroyed()) return;
     j.webContents.send('susto-dados', { imagem: d.imagem, som, mudo: d.mudo === true });
-    j.showInactive();
+    j.showInactive(); // sem roubar o foco (um jogo em tela cheia não minimiza)
     j.moveTop();
+    // Sem o foco a janela não recebe o teclado: o Esc fica "pego" só enquanto o susto está na tela.
+    try { if (janelaSusto === j && !escSusto && !globalShortcut.isRegistered('Escape')) escSusto = globalShortcut.register('Escape', fecharSusto); } catch (e) { /* sem Esc: clique ou espera fecha */ }
   });
-  j.on('closed', () => { if (janelaSusto === j) janelaSusto = null; });
+  j.on('closed', () => { if (janelaSusto === j) fecharSusto(); });
   setTimeout(() => { if (janelaSusto === j) fecharSusto(); }, 12000); // trava de segurança: nunca fica presa na tela
   j.loadFile(path.join(__dirname, 'susto.html'));
   return true;

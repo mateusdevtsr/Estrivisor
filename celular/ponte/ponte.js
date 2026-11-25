@@ -334,7 +334,7 @@ window.electronAPI = {
   apiServidor: depois(async ({ metodo, caminho, corpo } = {}) => {
     if (!METODOS_API.includes(metodo) || !caminhoApiValido(caminho)) return { ok: false, status: 400, erro: 'Pedido inválido.' };
     if (!sessao.chave) return { ok: false, status: 401, erro: 'Entre com a sua conta primeiro.', codigo: 'login' };
-    const tempo = metodo === 'POST' && /\/imagens$/.test(caminho) ? 90000 : metodo === 'GET' && /\/imagem$/.test(caminho) ? 30000 : undefined;
+    const tempo = metodo === 'POST' && /\/(imagens|admin\/sustos)$/.test(caminho) ? 90000 : metodo === 'GET' && /(\/imagem|^\/sustos\/[0-9a-f]+)$/.test(caminho) ? 30000 : undefined;
     return chamarServidor(caminho, { metodo, corpo: metodo === 'GET' ? undefined : corpo, ...(tempo ? { tempo } : {}) });
   }),
 

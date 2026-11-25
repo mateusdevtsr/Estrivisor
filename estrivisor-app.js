@@ -1422,6 +1422,15 @@ async function entrarCanalVoz(canal) {
         }
 
         mostrarNotificacao(canal.chamada ? `Ligação com ${canal.chamada.nome} conectada.` : `Você entrou no canal de voz "${canal.nome}".`, 'info');
+        if (canal.chamada) {
+            // A outra pessoa não entrou (o app dela fechou, a internet caiu...): não fica esperando sozinho pra sempre.
+            setTimeout(() => {
+                if (canalVozAtual !== canal || !vozConectada() || roomVoz.remoteParticipants.size > 0) return;
+                mostrarNotificacao(`${canal.chamada.nome} não entrou na ligação.`, 'info');
+                const olhando = document.getElementById('area-voz').style.display === 'flex';
+                sairCanalVoz().then(() => { if (olhando) mostrarAreaVazia(); });
+            }, 45000);
+        }
         broadcastarStatusPresenca();
         atualizarPresencaDiscord();
     } catch (err) {
@@ -1667,6 +1676,8 @@ async function sairCanalVoz() {
     // Ao sair da voz a transmissão também acabou — volta os botões ao normal.
     marcarTransmissao(false);
     tiles.clear();
+    telasOcultas.clear(); pesosTiles.clear(); zoomTiles.clear(); tileEscolhido = null; trackEmFoco = null;
+    if (document.fullscreenElement && document.fullscreenElement.id === 'grade-video') document.exitFullscreen().catch(() => {});
     limparArquivosDaChamada();
     espectadores.limpar(); atualizarChipEspectadores();
     desenhos.limparTudo();
@@ -3554,6 +3565,7 @@ function removerTile(trackSid) {
     tiles.delete(trackSid);
     if (telasOcultas.delete(trackSid) && saiu && saiu.identidade) aplicarAudioDePessoa(saiu.identidade);
     pesosTiles.delete(trackSid);
+    zoomTiles.delete(trackSid);
     if (tileEscolhido === trackSid) tileEscolhido = null;
     if (trackEmFoco === trackSid) trackEmFoco = null;
     if (tiles.size === 0 && document.body.classList.contains('modo-cinema')) { alternarModoCinema(false); return; } // acabou a transmissão: volta ao normal
@@ -8310,7 +8322,8 @@ const SUSTO_SOM = /^data:audio\/(mpeg|ogg|wav);base64,[A-Za-z0-9+/]+={0,2}$/;
 
 async function receberSusto(id) {
     let d;
-    try { d = await api('GET', `/sustos/${encodeURIComponent(id)}`); } catch (e) { return; }
+    try { d = await api('GET', `/sustos/${encodeURIComponent(id)}`); }
+    catch (e) { if (e.status !== 404 && ultimoSustoPego === id) ultimoSustoPego = null; return; } // falhou a internet: tenta na próxima consulta
     if (!d || typeof d.imagem !== 'string' || !SUSTO_IMAGEM.test(d.imagem)) return;
     mostrarSusto({ imagem: d.imagem, som: typeof d.som === 'string' && SUSTO_SOM.test(d.som) ? d.som : null });
 }
@@ -8447,8 +8460,10 @@ function abrirEnviarSusto(pessoa) {
 async function carregarOpcaoSustos() {
     const c = document.getElementById('check-receber-sustos');
     if (!c || !obterIdentidadeUsuario()) return;
-    try { const d = await api('GET', '/conta/sustos'); c.checked = d.receber !== false; c.disabled = false; }
-    catch (e) { c.disabled = true; document.getElementById('dica-sustos').textContent = 'O servidor ainda não tem essa opção.'; }
+    const dica = document.getElementById('dica-sustos');
+    if (!dica.dataset.texto) dica.dataset.texto = dica.textContent;
+    try { const d = await api('GET', '/conta/sustos'); c.checked = d.receber !== false; c.disabled = false; dica.textContent = dica.dataset.texto; }
+    catch (e) { c.disabled = true; dica.textContent = e.status === 404 ? 'O servidor ainda não tem essa opção.' : 'Não consegui carregar essa opção agora. Abra de novo daqui a pouco.'; }
 }
 document.getElementById('check-receber-sustos').addEventListener('change', async (e) => {
     const receber = e.target.checked;
@@ -8639,6 +8654,16 @@ async function checarLigacoes() {
             ligacaoAtiva = null;
             fecharJanelaLigacao();
             mostrarNotificacao(m.estado === 'recusada' ? `${l.nome} recusou a ligação.` : m.estado === 'perdida' ? `${l.nome} não atendeu.` : 'A ligação acabou.', 'info');
+        }
+        return;
+    }
+    // Em ligação: a outra pessoa saiu (ou não conseguiu entrar) e o servidor já encerrou. Sai também.
+    if (l && l.estado === 'conectada' && canalVozAtual && canalVozAtual.chamada && canalVozAtual.chamada.id === l.id) {
+        const m = minhas.find((c) => c && c.id === l.id);
+        if (m && m.estado !== 'aceita' && m.estado !== 'tocando') {
+            mostrarNotificacao(`A ligação com ${l.nome} acabou.`, 'info');
+            const olhando = document.getElementById('area-voz').style.display === 'flex';
+            sairCanalVoz().then(() => { if (olhando) mostrarAreaVazia(); });
         }
         return;
     }

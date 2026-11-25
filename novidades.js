@@ -11,6 +11,14 @@
   // (formato, limite, atalho, onde fica). Nada sobre servidor, código ou como foi feito por dentro.
   const NOVIDADES = [
     {
+      versao: '3.15.6', titulo: 'Ajustes nas ligações e nos sustos',
+      itens: [
+        { i: '📞', t: 'Ligação não fica "pendurada"', d: 'Se a outra pessoa atender mas não conseguir entrar (o app dela fechou ou a internet caiu), a ligação encerra sozinha depois de alguns segundos, em vez de você ficar esperando numa sala vazia. E se vocês deixarem de ser amigos, a ligação entre vocês acaba na hora.', c: 'Funciona sozinho, nada pra configurar.' },
+        { i: '😱', t: 'Esc fecha o susto até no meio do jogo', d: 'A imagem do susto aparece sem tirar o jogo da frente. Agora o Esc fecha ela na hora mesmo assim (antes só o clique fechava). Se a internet falhar bem na hora de chegar, o app tenta de novo sozinho.', c: 'Clique, Esc ou espere alguns segundos.' },
+        { i: '📺', t: 'Sair da chamada fecha a tela cheia', d: 'Se você estava assistindo as transmissões em tela cheia e saiu da chamada, a tela cheia fecha junto (antes ficava uma tela preta até apertar Esc).', c: 'Funciona sozinho.' },
+      ]
+    },
+    {
       versao: '3.15.5', titulo: 'Ligações entre amigos',
       itens: [
         { i: '📞', t: 'Ligar para um amigo', d: 'Agora dá pra ligar direto para um amigo, sem precisar de um servidor. Do outro lado aparece uma janela tocando com "Atender" e "Recusar" (e, no celular, uma notificação). Atendeu, vocês ficam numa sala de voz só de vocês dois: dá pra falar, transmitir a tela e usar a câmera, igual num canal de voz.', c: 'Amigos > abra a conversa > "📞 Ligar" (ou o 📞 ao lado do nome na lista de amigos). Pra desligar, use o 📞 vermelho da chamada.' },
