@@ -39,9 +39,12 @@ jobs:
       - name: Dependências do app (livekit-client)
         run: npm install --ignore-scripts --no-audit --no-fund
 
+      # Com o package-lock.json no repositório, instala EXATAMENTE as versões travadas (npm ci): uma
+      # biblioteca nova (ou adulterada) não entra sozinha no APK nem roda perto da chave de assinatura.
       - name: Dependências do celular
         working-directory: celular
-        run: npm install --no-audit --no-fund
+        run: |
+          if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
 
       - name: Montar a tela (www)
         working-directory: celular

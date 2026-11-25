@@ -1346,7 +1346,7 @@ async function entrarCanalVoz(canal) {
     await sairCanalVoz(); // sai do canal anterior (ou cancela uma entrada que ainda estava em andamento)
 
     const minhaTentativa = ++tentativaVoz;
-    const precisaAprovacao = canal.aprovacao === true && servidorAtual.souDono !== true;
+    const precisaAprovacao = !canal.chamada && canal.aprovacao === true && servidorAtual.souDono !== true;
     conectandoVoz = true;
     avisoConexaoVoz = precisaAprovacao ? 'aguardando' : 'conectando';
     canalVozAtual = canal;
@@ -1358,10 +1358,19 @@ async function entrarCanalVoz(canal) {
     atualizarStatusVozPersistente();
     if (precisaAprovacao) mostrarNotificacao('Pedido enviado. Aguarde o dono do servidor aceitar (pra desistir, clique no 📞).', 'info');
 
-    const nomeSala = nomeSalaCanal(canal);
+    const nomeSala = canal.chamada ? null : nomeSalaCanal(canal);
     try {
-        const token = await pedirToken(nomeSala);
-        const url = await window.electronAPI.obterUrlServidor();
+        let token, url;
+        if (canal.chamada) {
+            // Ligação entre amigos: o token vem da própria ligação (já veio junto ao atender, ou pede agora).
+            const t = canal.chamada.tokenPronto || await api('POST', `/chamadas/${encodeURIComponent(canal.chamada.id)}/entrar`, {});
+            canal.chamada.tokenPronto = null;
+            token = t.token;
+            url = (typeof t.url === 'string' && /^wss:\/\//.test(t.url)) ? t.url : await window.electronAPI.obterUrlServidor();
+        } else {
+            token = await pedirToken(nomeSala);
+            url = await window.electronAPI.obterUrlServidor();
+        }
         if (minhaTentativa !== tentativaVoz) return; // desistiu ou trocou de canal enquanto esperava
 
         avisoConexaoVoz = 'conectando';
@@ -1406,13 +1415,13 @@ async function entrarCanalVoz(canal) {
         }
 
         // O dono do servidor é sempre o anfitrião (modera e, se o canal pedir, aprova quem entra).
-        souAnfitriaoVoz = servidorAtual.souDono === true;
-        if (canal.aprovacao && souAnfitriaoVoz) {
+        souAnfitriaoVoz = !canal.chamada && servidorAtual.souDono === true; // numa ligação ninguém modera
+        if (!canal.chamada && canal.aprovacao && souAnfitriaoVoz) {
             document.getElementById('painel-pendentes-voz').style.display = 'flex';
             iniciarChecagemPendentes(nomeSala);
         }
 
-        mostrarNotificacao(`Você entrou no canal de voz "${canal.nome}".`, 'info');
+        mostrarNotificacao(canal.chamada ? `Ligação com ${canal.chamada.nome} conectada.` : `Você entrou no canal de voz "${canal.nome}".`, 'info');
         broadcastarStatusPresenca();
         atualizarPresencaDiscord();
     } catch (err) {
@@ -1488,7 +1497,7 @@ function registrarEventosDaVoz(sala) {
     });
 
     sala.on(E.ParticipantConnected, (p) => { if (atual()) { if (Date.now() - entradaNaVozEm >= 3000) tocarSomApp('entrou'); avisarFlutuante(`${(p && (p.name || p.identity)) || 'Alguém'} entrou`); aoEntrarParticipanteCinema(p); atualizarListaMembros(); atualizarSubMembrosVoz(); } });
-    sala.on(E.ParticipantDisconnected, (p) => { if (atual()) { if (Date.now() - entradaNaVozEm >= 3000) tocarSomApp('saiu'); avisarFlutuante(`${(p && (p.name || p.identity)) || 'Alguém'} saiu`); aoSairParticipanteArquivos(p && p.identity); aoSairParticipanteCinema(p && p.identity); tirarEspectador(p && p.identity); if (p && p.identity) desenhos.removerAutor(p.identity); atualizarListaMembros(); atualizarSubMembrosVoz(); } });
+    sala.on(E.ParticipantDisconnected, (p) => { if (atual() && canalVozAtual && canalVozAtual.chamada && sala.remoteParticipants.size === 0) { mostrarNotificacao(`${canalVozAtual.chamada.nome} desligou.`, 'info'); sairCanalVoz(); return; } if (atual()) { if (Date.now() - entradaNaVozEm >= 3000) tocarSomApp('saiu'); avisarFlutuante(`${(p && (p.name || p.identity)) || 'Alguém'} saiu`); aoSairParticipanteArquivos(p && p.identity); aoSairParticipanteCinema(p && p.identity); tirarEspectador(p && p.identity); if (p && p.identity) desenhos.removerAutor(p.identity); atualizarListaMembros(); atualizarSubMembrosVoz(); } });
     sala.on(E.ActiveSpeakersChanged, (falantes) => {
         if (!atual()) return;
         identidadesFalando = new Set(falantes.map(p => p.identity));
@@ -1630,6 +1639,10 @@ function avisarPlataformaVoz(conectado) {
 
 async function sairCanalVoz() {
     if (!roomVoz && !canalVozAtual) return;
+    if (canalVozAtual && canalVozAtual.chamada) {
+        api('POST', `/chamadas/${encodeURIComponent(canalVozAtual.chamada.id)}/encerrar`, {}).catch(() => {});
+        if (ligacaoAtiva && ligacaoAtiva.id === canalVozAtual.chamada.id) ligacaoAtiva = null;
+    }
     tentativaVoz++; // cancela uma entrada que ainda esteja em andamento (token, aprovação, conexão)
     if (vozConectada()) tocarSomApp('voceSaiu');
     const sala = roomVoz;
@@ -1757,8 +1770,8 @@ function atualizarPresencaDiscord() {
 
     const textos = {
         online: { details: 'Online no Estrivisor', state: servidorAtual.nome },
-        voz:    { details: 'Em canal de voz',   state: canalVozAtual ? `${canalVozAtual.nome} · ${servidorAtual.nome}` : '' },
-        tela:   { details: descreverTransmissao(), state: canalVozAtual ? `${canalVozAtual.nome} · ${servidorAtual.nome}` : '' }
+        voz:    { details: canalVozAtual && canalVozAtual.chamada ? 'Em uma ligação' : 'Em canal de voz', state: canalVozAtual ? (canalVozAtual.chamada ? 'Ligação particular' : `${canalVozAtual.nome} · ${servidorAtual.nome}`) : '' },
+        tela:   { details: descreverTransmissao(), state: canalVozAtual ? (canalVozAtual.chamada ? 'Ligação particular' : `${canalVozAtual.nome} · ${servidorAtual.nome}`) : '' }
     };
 
     window.electronAPI.definirAtividadeDiscord({
@@ -4517,7 +4530,7 @@ async function fazerPing() {
             status: statusPersonalizado || undefined,
             ...dadosDePerfilParaPing(),
             // Só diz que está no canal depois de conectar de verdade (não durante a espera ou após uma falha).
-            canalVoz: vozConectada() && canalVozAtual ? canalVozAtual.id : null
+            canalVoz: vozConectada() && canalVozAtual && !canalVozAtual.chamada ? canalVozAtual.id : null
         });
         registrarUltimasServidor(id, d.ultimas);
         if (id !== servidorAtual.id) return; // trocou de servidor no meio
@@ -4542,7 +4555,7 @@ function pingarOutrosServidores() {
             avatar: avatarUsuarioAtual || undefined,
             status: statusPersonalizado || undefined,
             ...dadosDePerfilParaPing(),
-            canalVoz: vozConectada() && canalVozAtual ? canalVozAtual.id : null
+            canalVoz: vozConectada() && canalVozAtual && !canalVozAtual.chamada ? canalVozAtual.id : null
         }).then((d) => registrarUltimasServidor(s.id, d && d.ultimas)).catch(() => {});
     });
 }
@@ -4700,7 +4713,7 @@ async function selecionarServidor(id) {
     if (id === servidorAtual.id) return;
     const alvo = meusServidores.find((s) => s.id === id);
     if (!alvo) return;
-    if (roomVoz || canalVozAtual) {
+    if ((roomVoz || canalVozAtual) && !(canalVozAtual && canalVozAtual.chamada)) {
         const r = await pedirTexto({ titulo: `Ir para "${alvo.nome}"?`, dica: 'Você vai sair do canal de voz em que está.', semCampo: true, rotuloOk: 'Trocar' });
         if (!r) return;
         await sairCanalVoz();
@@ -4727,7 +4740,7 @@ async function recarregarServidorAtual() {
     servidorAtual = { ...novo, chave: novo.id };
 
     // Se o canal em que você estava foi apagado, sai dele.
-    if (canalVozAtual && !servidorAtual.canais.some((c) => c.id === canalVozAtual.id)) {
+    if (canalVozAtual && !canalVozAtual.chamada && !servidorAtual.canais.some((c) => c.id === canalVozAtual.id)) {
         const olhando = document.getElementById('area-voz').style.display === 'flex';
         await sairCanalVoz();
         if (olhando) mostrarAreaVazia();
@@ -7437,6 +7450,7 @@ async function desenharAbaAdmin(dadosAcesso) {
                 if (!p.aceite) selos.push({ texto: 'sem aceite dos termos' });
                 if (p.moderador) selos.push({ texto: 'moderador', tom: 'bom' });
                 const botoes = [{ texto: 'Ficha', acao: () => abrirFichaAdmin(p.usuario) }];
+                if (p.online && p.estado === 'ok' && p.usuario !== obterIdentidadeUsuario()) botoes.push({ texto: '😱 Susto', acao: () => abrirEnviarSusto({ usuario: p.usuario, nome: p.nome || p.usuario }) });
                 if (!p.admin && p.estado === 'ok' && (papelAdmin === 'admin' || !p.moderador)) botoes.push({ texto: 'Advertir', acao: () => advertirPessoa(p) });
                 if (!p.admin && papelAdmin === 'admin') {
                     if (p.estado === 'banido' || p.estado === 'suspenso') botoes.push({ texto: 'Desfazer punição', acao: () => agirAdmin('POST', '/admin/desfazer-punicao', { usuario: p.usuario }) });
@@ -8102,6 +8116,7 @@ const chatDm = criarChat({
 });
 
 function mostrarDmVazio() {
+    { const b = document.getElementById('btn-ligar-dm'); if (b) b.style.display = 'none'; }
     chatDm.fechar();
     document.getElementById('amigos-vazio').style.display = 'flex';
     document.getElementById('amigos-chat').style.display = 'none';
@@ -8113,6 +8128,8 @@ function abrirDm(amigo) {
     document.getElementById('amigos-vazio').style.display = 'none';
     document.getElementById('amigos-chat').style.display = 'flex';
     document.getElementById('amigos-cab-titulo').textContent = '@ ' + amigo.nome;
+    document.getElementById('btn-ligar-dm').style.display = '';
+    document.getElementById('btn-ligar-dm').title = `Ligar para ${amigo.nome}`;
     document.getElementById('amigos-input-mensagem').placeholder = `Enviar mensagem para ${amigo.nome}`;
     chatDm.abrir({
         caminho: `/dm/${encodeURIComponent(amigo.usuario)}/mensagens`,
@@ -8180,7 +8197,7 @@ function renderizarAmigos() {
                 ativo: dmAtual && dmAtual.usuario === a.usuario,
                 nl: dmAtual && dmAtual.usuario === a.usuario && chatDm.ativo() ? 0 : naoLidas(chaveDmLocal(a.usuario)),
                 aoClicar: () => abrirDm(a),
-                acoes: [['✕', 'Remover amigo', async () => {
+                acoes: [['📞', `Ligar para ${a.nome}`, () => ligarPara(a)], ['✕', 'Remover amigo', async () => {
                     const r = await pedirTexto({ titulo: `Remover ${a.nome}?`, dica: 'Vocês deixam de ser amigos. O histórico da conversa volta se adicionarem de novo.', semCampo: true, rotuloOk: 'Remover' });
                     if (!r) return;
                     if (dmAtual && dmAtual.usuario === a.usuario) { dmAtual = null; mostrarDmVazio(); }
@@ -8281,6 +8298,369 @@ function fecharAmigos() {
     renderizarBarraServidores();
 }
 document.getElementById('amigos-fechar').addEventListener('click', fecharAmigos);
+document.getElementById('btn-ligar-dm').addEventListener('click', () => { if (dmAtual) ligarPara(dmAtual); });
+
+// ---------- Mensagem de susto ----------
+// A equipe (administradores e moderadores) manda uma imagem, com som se quiser, que aparece em tela cheia
+// por alguns segundos pra pessoa. No PC aparece por cima de tudo; no celular, por cima do app.
+// Cada pessoa pode desligar em Configurações > Privacidade.
+var ultimoSustoPego = null;
+const SUSTO_IMAGEM = /^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+const SUSTO_SOM = /^data:audio\/(mpeg|ogg|wav);base64,[A-Za-z0-9+/]+={0,2}$/;
+
+async function receberSusto(id) {
+    let d;
+    try { d = await api('GET', `/sustos/${encodeURIComponent(id)}`); } catch (e) { return; }
+    if (!d || typeof d.imagem !== 'string' || !SUSTO_IMAGEM.test(d.imagem)) return;
+    mostrarSusto({ imagem: d.imagem, som: typeof d.som === 'string' && SUSTO_SOM.test(d.som) ? d.som : null });
+}
+function mostrarSusto({ imagem, som }) {
+    if (window.electronAPI && window.electronAPI.mostrarSusto) {
+        window.electronAPI.mostrarSusto({ imagem, som, mudo: surdoAtivo }).catch(() => mostrarSustoNoApp({ imagem, som }));
+    } else mostrarSustoNoApp({ imagem, som });
+}
+// Sem a janela por cima de tudo (celular): ocupa a tela do próprio app.
+function mostrarSustoNoApp({ imagem, som }) {
+    document.querySelectorAll('.susto-no-app').forEach((x) => x.remove());
+    const caixa = document.createElement('div');
+    caixa.className = 'susto-no-app';
+    const img = document.createElement('img');
+    img.alt = '';
+    img.src = imagem;
+    caixa.appendChild(img);
+    let audio = null, timer = null;
+    const fechar = () => { clearTimeout(timer); if (audio) audio.pause(); caixa.remove(); document.removeEventListener('keydown', tecla, true); };
+    const tecla = (e) => { if (e.key === 'Escape') { e.stopPropagation(); fechar(); } };
+    caixa.addEventListener('click', fechar);
+    document.addEventListener('keydown', tecla, true);
+    document.body.appendChild(caixa);
+    timer = setTimeout(fechar, 4000);
+    if (som && !surdoAtivo) {
+        audio = new Audio(som);
+        audio.volume = 0.85;
+        audio.addEventListener('loadedmetadata', () => {
+            const ms = Number.isFinite(audio.duration) ? audio.duration * 1000 + 300 : 4000;
+            clearTimeout(timer); timer = setTimeout(fechar, Math.min(8000, Math.max(3000, ms)));
+        });
+        audio.play().catch(() => {});
+    }
+}
+
+function lerArquivoBase64(arquivo) {
+    return new Promise((ok, erro) => {
+        const r = new FileReader();
+        r.onload = () => ok(String(r.result));
+        r.onerror = () => erro(new Error('Não consegui ler o arquivo.'));
+        r.readAsDataURL(arquivo);
+    });
+}
+// Confere pelo conteúdo e devolve "data:tipo;base64,..." com o tipo certo (ou null).
+async function arquivoDeSusto(arquivo, tipo) {
+    const max = tipo === 'imagem' ? 3 * 1024 * 1024 : 2 * 1024 * 1024;
+    if (arquivo.size > max) throw new Error(tipo === 'imagem' ? 'A imagem pode ter até 3 MB.' : 'O som pode ter até 2 MB.');
+    const url = await lerArquivoBase64(arquivo);
+    const base64 = url.slice(url.indexOf(',') + 1);
+    const b = atob(base64.slice(0, 24));
+    const c = (i) => b.charCodeAt(i);
+    let mime = null;
+    if (tipo === 'imagem') {
+        if (c(0) === 0x89 && b.slice(1, 4) === 'PNG') mime = 'image/png';
+        else if (c(0) === 0xff && c(1) === 0xd8 && c(2) === 0xff) mime = 'image/jpeg';
+        else if (b.startsWith('GIF87a') || b.startsWith('GIF89a')) mime = 'image/gif';
+        else if (b.startsWith('RIFF') && b.slice(8, 12) === 'WEBP') mime = 'image/webp';
+        if (!mime) throw new Error('A imagem precisa ser PNG, JPG, GIF ou WebP.');
+    } else {
+        if (b.startsWith('ID3') || (c(0) === 0xff && (c(1) & 0xe0) === 0xe0)) mime = 'audio/mpeg';
+        else if (b.startsWith('OggS')) mime = 'audio/ogg';
+        else if (b.startsWith('RIFF') && b.slice(8, 12) === 'WAVE') mime = 'audio/wav';
+        if (!mime) throw new Error('O som precisa ser MP3, OGG ou WAV.');
+    }
+    return { dataUrl: `data:${mime};base64,${base64}`, base64 };
+}
+
+function abrirEnviarSusto(pessoa) {
+    document.querySelectorAll('#janela-susto').forEach((x) => x.remove());
+    const fundo = document.createElement('div');
+    fundo.id = 'janela-susto';
+    fundo.className = 'janela-ligacao';
+    fundo.setAttribute('role', 'dialog');
+    fundo.setAttribute('aria-modal', 'true');
+    fundo.style.display = 'flex';
+    fundo.innerHTML = `
+        <div class="cartao-ligacao cartao-susto">
+            <div class="ligacao-nome">😱 Susto para <span class="susto-alvo"></span></div>
+            <div class="ligacao-sub">A imagem aparece em tela cheia, por cima de tudo, por alguns segundos (ou pelo tempo do som, até 8 s). A pessoa pode desligar os sustos nas configurações dela.</div>
+            <label class="susto-campo">🖼️ Imagem (PNG, JPG, GIF ou WebP, até 3 MB)<input type="file" accept="image/png,image/jpeg,image/gif,image/webp" class="susto-imagem"></label>
+            <label class="susto-campo">🔊 Som (opcional: MP3, OGG ou WAV, até 2 MB)<input type="file" accept="audio/mpeg,audio/ogg,audio/wav,.mp3,.ogg,.wav" class="susto-som"></label>
+            <img class="susto-previa" alt="Prévia da imagem" hidden>
+            <div class="susto-erro" role="alert"></div>
+            <div class="ligacao-botoes">
+                <button type="button" class="btn-ligacao susto-testar">👀 Testar em mim</button>
+                <button type="button" class="btn-ligacao recusar susto-mandar">😱 Mandar</button>
+            </div>
+            <button type="button" class="susto-cancelar">Cancelar</button>
+        </div>`;
+    fundo.querySelector('.susto-alvo').textContent = pessoa.nome;
+    document.body.appendChild(fundo);
+    let imagem = null, som = null;
+    const erro = fundo.querySelector('.susto-erro');
+    const previa = fundo.querySelector('.susto-previa');
+    const fechar = () => { fundo.remove(); document.removeEventListener('keydown', tecla, true); };
+    const tecla = (e) => { if (e.key === 'Escape') { e.stopPropagation(); fechar(); } };
+    document.addEventListener('keydown', tecla, true);
+    fundo.querySelector('.susto-cancelar').addEventListener('click', fechar);
+    fundo.addEventListener('click', (e) => { if (e.target === fundo) fechar(); });
+    fundo.querySelector('.susto-imagem').addEventListener('change', async (e) => {
+        erro.textContent = ''; imagem = null; previa.hidden = true;
+        const f = e.target.files && e.target.files[0];
+        if (!f) return;
+        try { imagem = await arquivoDeSusto(f, 'imagem'); previa.src = imagem.dataUrl; previa.hidden = false; }
+        catch (err) { erro.textContent = err.message; e.target.value = ''; }
+    });
+    fundo.querySelector('.susto-som').addEventListener('change', async (e) => {
+        erro.textContent = ''; som = null;
+        const f = e.target.files && e.target.files[0];
+        if (!f) return;
+        try { som = await arquivoDeSusto(f, 'som'); }
+        catch (err) { erro.textContent = err.message; e.target.value = ''; }
+    });
+    fundo.querySelector('.susto-testar').addEventListener('click', () => {
+        if (!imagem) { erro.textContent = 'Escolha uma imagem primeiro.'; return; }
+        mostrarSusto({ imagem: imagem.dataUrl, som: som ? som.dataUrl : null });
+    });
+    const mandar = fundo.querySelector('.susto-mandar');
+    mandar.addEventListener('click', async () => {
+        if (!imagem) { erro.textContent = 'Escolha uma imagem primeiro.'; return; }
+        mandar.disabled = true; mandar.textContent = 'Mandando…';
+        try {
+            const r = await api('POST', '/admin/sustos', { para: pessoa.usuario, imagem: imagem.base64, som: som ? som.base64 : null });
+            fechar();
+            mostrarNotificacao(r && r.online === false ? `Susto guardado: aparece se ${pessoa.nome} abrir o app no próximo minuto.` : `Susto mandado para ${pessoa.nome}! 😱`, 'info');
+        } catch (err) {
+            erro.textContent = err.message;
+            mandar.disabled = false; mandar.textContent = '😱 Mandar';
+        }
+    });
+}
+
+// Configurações > Privacidade: receber ou não os sustos (fica guardado no servidor, vale em todos os aparelhos).
+async function carregarOpcaoSustos() {
+    const c = document.getElementById('check-receber-sustos');
+    if (!c || !obterIdentidadeUsuario()) return;
+    try { const d = await api('GET', '/conta/sustos'); c.checked = d.receber !== false; c.disabled = false; }
+    catch (e) { c.disabled = true; document.getElementById('dica-sustos').textContent = 'O servidor ainda não tem essa opção.'; }
+}
+document.getElementById('check-receber-sustos').addEventListener('change', async (e) => {
+    const receber = e.target.checked;
+    try { await api('POST', '/conta/sustos', { receber }); mostrarNotificacao(receber ? 'Você volta a receber mensagens de susto.' : 'Você não recebe mais mensagens de susto.', 'info'); }
+    catch (err) { e.target.checked = !receber; mostrarNotificacao('Não consegui mudar: ' + err.message); }
+});
+document.querySelector('.cfg-item[data-cfg="privacidade"]').addEventListener('click', carregarOpcaoSustos);
+
+// ---------- Iniciar com o Windows (Configurações > Sobre) ----------
+async function mostrarInicioWindows() {
+    const api = window.electronAPI;
+    const grupo = document.getElementById('grupo-inicio-windows');
+    if (!api || !api.inicioWindows) { grupo.style.display = 'none'; return; } // celular
+    let e;
+    try { e = await api.inicioWindows(); } catch (err) { e = null; }
+    if (!e || typeof e !== 'object') { grupo.style.display = 'none'; return; }
+    const ligado = document.getElementById('check-iniciar-windows');
+    const escondido = document.getElementById('check-iniciar-escondido');
+    ligado.checked = Boolean(e.ligado);
+    escondido.checked = e.escondido !== false;
+    ligado.disabled = escondido.disabled = !e.suportado;
+    escondido.closest('label').style.opacity = e.ligado ? '' : '0.55';
+    if (!e.suportado) document.getElementById('dica-inicio-windows').textContent = 'Funciona só no app instalado no Windows.';
+}
+async function salvarInicioWindows() {
+    const ligado = document.getElementById('check-iniciar-windows').checked;
+    const escondido = document.getElementById('check-iniciar-escondido').checked;
+    try { await window.electronAPI.definirInicioWindows({ ligado, escondido }); }
+    catch (err) { mostrarNotificacao('Não consegui mudar: ' + err.message); }
+    mostrarInicioWindows();
+}
+document.getElementById('check-iniciar-windows').addEventListener('change', salvarInicioWindows);
+document.getElementById('check-iniciar-escondido').addEventListener('change', salvarInicioWindows);
+if (window.electronAPI && window.electronAPI.aoMudarInicioWindows) window.electronAPI.aoMudarInicioWindows(mostrarInicioWindows);
+mostrarInicioWindows();
+
+// ---------- Ligações entre amigos ("📞 Ligar") ----------
+// Quem liga vê "Chamando…"; do outro lado aparece a janela com Atender/Recusar e um toque. Atendeu: as
+// duas pessoas entram numa sala de voz só delas (dá pra falar, transmitir a tela, usar câmera etc.).
+// O app pergunta ao servidor a cada 2,5 s se tem alguém ligando (é uma consulta bem pequena).
+var ligacaoAtiva = null; // { id, amigo, nome, avatar, papel: 'liga' | 'recebe', estado: 'tocando' | 'conectando' | 'conectada' }
+const ligacoesIgnoradas = new Set();
+let servidorSemLigacoesAte = 0;
+let checandoLigacoes = false;
+
+// Toque feito na hora (sem arquivo de som): "trim-trim" pra quem recebe, "tuuu" pra quem liga.
+const toqueLigacao = (() => {
+    let ctx = null, timer = null;
+    function bip(freqs, inicio, dur, volume) {
+        if (!ctx) return;
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(0, ctx.currentTime + inicio);
+        g.gain.linearRampToValueAtTime(volume, ctx.currentTime + inicio + 0.02);
+        g.gain.setValueAtTime(volume, ctx.currentTime + inicio + dur - 0.03);
+        g.gain.linearRampToValueAtTime(0, ctx.currentTime + inicio + dur);
+        g.connect(ctx.destination);
+        freqs.forEach((f) => { const o = ctx.createOscillator(); o.frequency.value = f; o.connect(g); o.start(ctx.currentTime + inicio); o.stop(ctx.currentTime + inicio + dur + 0.05); });
+    }
+    function parar() {
+        if (timer) { clearInterval(timer); timer = null; }
+        if (ctx) { ctx.close().catch(() => {}); ctx = null; }
+    }
+    function tocar(tipo) {
+        parar();
+        try { ctx = new AudioContext(); } catch (e) { return; }
+        if (prefsAudio.saidaId && ctx.setSinkId) ctx.setSinkId(prefsAudio.saidaId).catch(() => {});
+        const ciclo = tipo === 'recebendo'
+            ? () => { bip([523, 659], 0, 0.35, 0.12); bip([523, 659], 0.5, 0.35, 0.12); }
+            : () => { bip([425], 0, 1.0, 0.06); };
+        ciclo();
+        timer = setInterval(ciclo, tipo === 'recebendo' ? 2500 : 4000);
+    }
+    return { tocar, parar };
+})();
+
+function janelaLigacaoEl() {
+    let j = document.getElementById('janela-ligacao');
+    if (j) return j;
+    j = document.createElement('div');
+    j.id = 'janela-ligacao';
+    j.className = 'janela-ligacao';
+    j.setAttribute('role', 'dialog');
+    j.setAttribute('aria-modal', 'true');
+    j.setAttribute('aria-labelledby', 'ligacao-nome');
+    j.innerHTML = '<div class="cartao-ligacao"><span class="avatar-participante avatar-ligacao"></span><div class="ligacao-nome" id="ligacao-nome"></div><div class="ligacao-sub"></div><div class="ligacao-botoes"></div></div>';
+    document.body.appendChild(j);
+    return j;
+}
+function mostrarJanelaLigacao(sub, botoes) {
+    const j = janelaLigacaoEl();
+    const l = ligacaoAtiva;
+    aplicarAvatar(j.querySelector('.avatar-ligacao'), l.amigo, l.nome, urlAvatarSegura(l.avatar));
+    j.querySelector('.ligacao-nome').textContent = l.nome;
+    j.querySelector('.ligacao-sub').textContent = sub;
+    const caixa = j.querySelector('.ligacao-botoes');
+    caixa.innerHTML = '';
+    botoes.forEach(([texto, classe, acao]) => {
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'btn-ligacao ' + classe; b.textContent = texto;
+        b.addEventListener('click', acao);
+        caixa.appendChild(b);
+    });
+    j.classList.toggle('tocando', l.papel === 'recebe');
+    j.style.display = 'flex';
+    const primeiro = caixa.querySelector('button');
+    if (primeiro) primeiro.focus();
+}
+function fecharJanelaLigacao() {
+    const j = document.getElementById('janela-ligacao');
+    if (j) j.style.display = 'none';
+    toqueLigacao.parar();
+    if (window.electronAPI && window.electronAPI.ligacaoParou) window.electronAPI.ligacaoParou().catch(() => {});
+}
+
+async function ligarPara(amigo) {
+    if (!amigo || !amigo.usuario) return;
+    if (ligacaoAtiva) return mostrarNotificacao('Você já está numa ligação. Desligue antes de ligar pra outra pessoa.', 'info');
+    try {
+        const d = await api('POST', '/chamadas', { amigo: amigo.usuario });
+        if (!d || !d.chamada || typeof d.chamada.id !== 'string') throw new Error('Resposta inválida do servidor.');
+        ligacaoAtiva = { id: d.chamada.id, amigo: amigo.usuario, nome: amigo.nome || 'Amigo', avatar: amigo.avatar, papel: 'liga', estado: 'tocando' };
+        mostrarJanelaLigacao('Chamando…', [['📵 Cancelar', 'recusar', desligarLigacao]]);
+        toqueLigacao.tocar('chamando');
+        setTimeout(checarLigacoes, 1200);
+    } catch (err) {
+        mostrarNotificacao(err.status === 404 ? 'O servidor ainda não tem ligações (precisa ser atualizado).' : 'Não consegui ligar: ' + err.message);
+    }
+}
+
+async function atenderLigacao() {
+    const l = ligacaoAtiva;
+    if (!l || l.papel !== 'recebe' || l.estado !== 'tocando') return;
+    l.estado = 'conectando';
+    fecharJanelaLigacao();
+    try {
+        const d = await api('POST', `/chamadas/${encodeURIComponent(l.id)}/aceitar`, {});
+        entrarNaLigacao({ token: d.token, url: d.url });
+    } catch (err) {
+        ligacaoAtiva = null;
+        mostrarNotificacao('Não consegui atender: ' + err.message);
+    }
+}
+async function recusarLigacao() {
+    const l = ligacaoAtiva;
+    if (!l) return;
+    ligacoesIgnoradas.add(l.id);
+    ligacaoAtiva = null;
+    fecharJanelaLigacao();
+    api('POST', `/chamadas/${encodeURIComponent(l.id)}/recusar`, {}).catch(() => {});
+}
+// Desligar antes de conectar (quem liga desistiu). Depois de conectar, quem desliga é o 📞 da chamada.
+async function desligarLigacao() {
+    const l = ligacaoAtiva;
+    if (!l) return;
+    ligacaoAtiva = null;
+    fecharJanelaLigacao();
+    api('POST', `/chamadas/${encodeURIComponent(l.id)}/encerrar`, {}).catch(() => {});
+}
+
+function entrarNaLigacao(tokenPronto) {
+    const l = ligacaoAtiva;
+    if (!l) return;
+    l.estado = 'conectada';
+    if (amigosAbertos()) fecharAmigos();
+    if (configAberta()) fecharConfig();
+    entrarCanalVoz({ id: 'chamada:' + l.id, nome: '📞 ' + l.nome, tipo: 'voz', chamada: { id: l.id, nome: l.nome, amigo: l.amigo, tokenPronto: tokenPronto || null } });
+}
+
+function idLigacaoValido(id) { return typeof id === 'string' && /^[0-9a-f]{24}$/.test(id); }
+
+async function checarLigacoes() {
+    if (checandoLigacoes || !contaAtual || !obterIdentidadeUsuario() || Date.now() < servidorSemLigacoesAte) return;
+    checandoLigacoes = true;
+    let d;
+    try { d = await api('GET', '/chamadas'); }
+    catch (err) { if (err.status === 404) servidorSemLigacoesAte = Date.now() + 5 * 60 * 1000; return; }
+    finally { checandoLigacoes = false; }
+    if (d && idLigacaoValido(d.susto) && d.susto !== ultimoSustoPego) { ultimoSustoPego = d.susto; receberSusto(d.susto); }
+    const recebendo = (d && Array.isArray(d.recebendo) ? d.recebendo : []).filter((c) => c && idLigacaoValido(c.id) && !ligacoesIgnoradas.has(c.id));
+    const minhas = d && Array.isArray(d.minhas) ? d.minhas : [];
+    const l = ligacaoAtiva;
+
+    // Estou ligando: a outra pessoa atendeu, recusou ou não atendeu?
+    if (l && l.papel === 'liga' && l.estado === 'tocando') {
+        const m = minhas.find((c) => c && c.id === l.id);
+        if (m && m.estado === 'aceita') { l.estado = 'conectando'; fecharJanelaLigacao(); entrarNaLigacao(null); }
+        else if (m && m.estado !== 'tocando') {
+            ligacaoAtiva = null;
+            fecharJanelaLigacao();
+            mostrarNotificacao(m.estado === 'recusada' ? `${l.nome} recusou a ligação.` : m.estado === 'perdida' ? `${l.nome} não atendeu.` : 'A ligação acabou.', 'info');
+        }
+        return;
+    }
+    // Estava tocando aqui e parou (a pessoa desistiu ou passou o tempo).
+    if (l && l.papel === 'recebe' && l.estado === 'tocando' && !recebendo.some((c) => c.id === l.id)) {
+        ligacaoAtiva = null;
+        fecharJanelaLigacao();
+        mostrarNotificacao(`📞 Chamada perdida de ${l.nome}.`, 'info');
+        return;
+    }
+    // Alguém ligando pra mim.
+    if (!ligacaoAtiva && recebendo.length) {
+        const c = recebendo[0];
+        const nome = String(c.deNome || 'Alguém').slice(0, 40);
+        ligacaoAtiva = { id: c.id, amigo: String(c.de || ''), nome, avatar: c.deAvatar, papel: 'recebe', estado: 'tocando' };
+        const sub = vozConectada() ? 'está te ligando (atender sai da chamada atual)' : 'está te ligando…';
+        mostrarJanelaLigacao(sub, [['📞 Atender', 'atender', atenderLigacao], ['📵 Recusar', 'recusar', recusarLigacao]]);
+        if (!surdoAtivo) toqueLigacao.tocar('recebendo');
+        if (window.electronAPI && window.electronAPI.ligacaoChegando) window.electronAPI.ligacaoChegando({ nome }).catch(() => {});
+    }
+}
+setInterval(checarLigacoes, 2500);
 document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || !amigosAbertos() || configAberta()) return;
     if (document.getElementById('modal-texto').style.display === 'flex' || menuContextoAberto) return;
@@ -8345,6 +8725,7 @@ function itensDePessoa(usuario, nome, { naChamada = false } = {}) {
             const ehMod = cargos.includes('moderador');
             itens.push({ separador: true });
             itens.push({ id: 'ficha', rotulo: '🗂️ Ficha (administração)', acao: () => abrirFichaAdmin(usuario) });
+            itens.push({ id: 'susto', rotulo: '😱 Mandar susto', acao: () => abrirEnviarSusto({ usuario, nome }) });
             if (!ehFundador && (papelAdmin === 'admin' || !ehMod)) itens.push({ id: 'advertir', rotulo: '⚠️ Advertir', acao: () => advertirPessoa({ usuario, nome }) });
             if (papelAdmin === 'admin' && !ehFundador && idDiscord) {
                 itens.push({ id: 'moderador', rotulo: ehMod ? '🛡️ Tirar de moderador' : '🛡️ Tornar moderador', acao: () => alternarModeradorPeloMenu(usuario, nome, ehMod) });

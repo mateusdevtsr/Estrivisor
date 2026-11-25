@@ -68,7 +68,7 @@ async function chamarServidor(caminho, { metodo = 'GET', corpo, semSessao = fals
 
 // Mesma lista de caminhos do main.js do PC (a tela só pede o que está aqui).
 const METODOS_API = ['GET', 'POST', 'PATCH', 'DELETE'];
-const CAMINHO_API = /^\/(servidores|convites|amigos|dm|admin|termos|denuncias|qualidade|conta|previa|perfil)(\/[A-Za-z0-9._%\-]+)*(\?[A-Za-z0-9=&._\-]*)?$/;
+const CAMINHO_API = /^\/(servidores|convites|amigos|dm|admin|termos|denuncias|qualidade|conta|previa|perfil|chamadas|sustos)(\/[A-Za-z0-9._%\-]+)*(\?[A-Za-z0-9=&._\-]*)?$/;
 function caminhoApiValido(caminho) {
   if (typeof caminho !== 'string' || caminho.length > 600 || !CAMINHO_API.test(caminho)) return false;
   const semConsulta = caminho.split('?')[0];

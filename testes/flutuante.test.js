@@ -186,3 +186,38 @@ test('opções novas: clique, chat e avisos só aceitam verdadeiro/falso', () =>
   assert.equal(c.flutuanteAvisos, true);
   fs.rmSync(pasta, { recursive: true });
 });
+
+test('configuração: abrir escondido (ao iniciar com o Windows) começa ligado e só aceita verdadeiro/falso', () => {
+  const C = require('../configuracao');
+  const pasta = fs.mkdtempSync(path.join(os.tmpdir(), 'cfg4-'));
+  assert.equal(C.lerConfiguracao(pasta).iniciarEscondido, true);
+  C.salvarConfiguracao(pasta, { iniciarEscondido: 'sim' });
+  assert.equal(C.lerConfiguracao(pasta).iniciarEscondido, true);
+  C.salvarConfiguracao(pasta, { iniciarEscondido: false });
+  assert.equal(C.lerConfiguracao(pasta).iniciarEscondido, false);
+});
+
+test('iniciar com o Windows: o app pede ao main.js só pelos canais liberados', () => {
+  const preload = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
+  const main = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  for (const canal of ['inicio-windows', 'definir-inicio-windows']) {
+    assert.ok(preload.includes(`'${canal}'`), canal + ' no preload');
+    assert.ok(main.includes(`responder('${canal}'`), canal + ' no main');
+  }
+  assert.ok(main.includes("process.argv.includes('--escondido')"));
+});
+
+test('mensagem de susto: arquivos no instalador, página fechada e canais conferidos', () => {
+  const raiz = path.join(__dirname, '..');
+  const pkg = JSON.parse(fs.readFileSync(path.join(raiz, 'package.json'), 'utf8'));
+  for (const f of ['susto.html', 'susto.css', 'susto-tela.js', 'preload-susto.js']) {
+    assert.ok(pkg.build.files.includes(f), f);
+    assert.ok(fs.existsSync(path.join(raiz, f)), f);
+  }
+  const html = fs.readFileSync(path.join(raiz, 'susto.html'), 'utf8');
+  assert.match(html, /default-src 'none'; script-src 'self'/);
+  assert.ok(!/<script>/.test(html) && !/innerHTML/.test(fs.readFileSync(path.join(raiz, 'susto-tela.js'), 'utf8')));
+  const main = fs.readFileSync(path.join(raiz, 'main.js'), 'utf8');
+  assert.ok(main.includes("responder('mostrar-susto'"));
+  assert.ok(main.includes('evento.sender === janelaSusto.webContents'), 'só a janela do susto fecha a si mesma');
+});

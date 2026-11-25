@@ -51,6 +51,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   flutuanteLer: () => ipcRenderer.invoke('flutuante-ler'),
   flutuanteDefinir: (ativa) => ipcRenderer.invoke('flutuante-definir', ativa),
   flutuanteEstado: (estado) => ipcRenderer.invoke('flutuante-estado', estado),
+  ligacaoChegando: (dados) => ipcRenderer.invoke('ligacao-chegando', dados),
+  inicioWindows: () => ipcRenderer.invoke('inicio-windows'),
+  mostrarSusto: (dados) => ipcRenderer.invoke('mostrar-susto', dados),
+  definirInicioWindows: (opcoes) => ipcRenderer.invoke('definir-inicio-windows', opcoes),
+  aoMudarInicioWindows: (cb) => { ipcRenderer.removeAllListeners('inicio-windows-mudou'); ipcRenderer.on('inicio-windows-mudou', () => cb()); },
+  ligacaoParou: () => ipcRenderer.invoke('ligacao-parou'),
   aoComandoFlutuante: (callback) => {
     ipcRenderer.on('flutuante-comando', (evento, comando) => callback(comando));
   },

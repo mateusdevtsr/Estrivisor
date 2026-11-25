@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <!-- Só mostra a imagem e toca o som que vieram do app (data:). Nada de rede, nada de script de fora. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src data:; media-src data:; base-uri 'none'; form-action 'none'">
+    <title>Estrivisor</title>
+    <link rel="stylesheet" href="susto.css">
+</head>
+<body>
+    <img id="imagem" alt="">
+    <div id="dica">Clique ou aperte Esc pra fechar</div>
+    <script src="susto-tela.js"></script>
+</body>
+</html>

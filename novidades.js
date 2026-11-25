@@ -11,6 +11,15 @@
   // (formato, limite, atalho, onde fica). Nada sobre servidor, código ou como foi feito por dentro.
   const NOVIDADES = [
     {
+      versao: '3.15.5', titulo: 'Ligações entre amigos',
+      itens: [
+        { i: '📞', t: 'Ligar para um amigo', d: 'Agora dá pra ligar direto para um amigo, sem precisar de um servidor. Do outro lado aparece uma janela tocando com "Atender" e "Recusar" (e, no celular, uma notificação). Atendeu, vocês ficam numa sala de voz só de vocês dois: dá pra falar, transmitir a tela e usar a câmera, igual num canal de voz.', c: 'Amigos > abra a conversa > "📞 Ligar" (ou o 📞 ao lado do nome na lista de amigos). Pra desligar, use o 📞 vermelho da chamada.' },
+        { i: '🪟', t: 'Iniciar com o Windows', d: 'O Estrivisor pode abrir sozinho quando você liga o computador. Por padrão ele abre escondido, só no ícone perto do relógio: você já fica online e recebe ligações e mensagens sem precisar abrir o app.', c: 'Configurações > Sobre > "Ao ligar o computador". Também dá pelo botão direito no ícone perto do relógio.' },
+        { i: '😱', t: 'Mensagens de susto', d: 'A equipe do Estrivisor pode mandar uma imagem (às vezes com som) que aparece em tela cheia por alguns segundos, só de brincadeira. Some sozinha, ou na hora com um clique ou Esc. Se não quiser receber, é só desligar.', c: 'Pra desligar: Configurações > Privacidade > "Receber mensagens de susto".' },
+        { i: '📵', t: 'Chamada perdida', d: 'Se a pessoa não atender em 40 segundos, ou se você desistir antes, fica "📞 Chamada perdida" na conversa de vocês. Se ela já estiver em outra ligação, o app avisa que está ocupada.', c: 'Com o app minimizado, o Windows mostra um aviso e o ícone pisca na barra de tarefas.' }
+      ]
+    },
+    {
       versao: '3.15.4', titulo: 'Transmissões maiores, escolher telas e mais segurança',
       itens: [
         { i: '⛶', t: 'Tela cheia com todas as transmissões', d: 'O botão "Tela cheia" na barra das transmissões leva todas as telas que você está vendo pro monitor inteiro, lado a lado, sem as colunas e sem bordas. A barra de cima some sozinha e volta quando você mexe o mouse.', c: 'Na chamada: "⛶ Tela cheia". Esc volta.' },

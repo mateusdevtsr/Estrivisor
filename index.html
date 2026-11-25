@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- Só roda script do próprio app. Conexões: LiveKit (https/wss). Imagens: do app, data: (ícones e fundo) e avatares do Discord. -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' blob: 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://cdn.discordapp.com; media-src 'self' blob: mediastream:; connect-src 'self' https://*.estrivisor.com.br wss://*.estrivisor.com.br https://*.livekit.cloud wss://*.livekit.cloud ws://127.0.0.1:* ws://localhost:* http://127.0.0.1:* http://localhost:*; worker-src 'self' blob:; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' blob: 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://cdn.discordapp.com; media-src 'self' blob: mediastream: data:; connect-src 'self' https://*.estrivisor.com.br wss://*.estrivisor.com.br https://*.livekit.cloud wss://*.livekit.cloud ws://127.0.0.1:* ws://localhost:* http://127.0.0.1:* http://localhost:*; worker-src 'self' blob:; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
     <title>Estrivisor</title>
     <style>
         :root {
@@ -280,6 +280,35 @@
         .amigos-adicionar .resultado.ok { color: #3bd671; }
         .amigos-principal { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
         .amigos-cab { padding: 14px 18px; border-bottom: 1px solid var(--borda); font-weight: 700; font-size: 15px; display: flex; align-items: center; gap: 10px; }
+        .btn-ligar-dm { margin-left: auto; background: #23a55a; color: #fff; border: none; padding: 6px 12px; border-radius: 16px; font-size: 13px; font-weight: 600; }
+        .btn-ligar-dm:hover { background: #1f8f4d; }
+        .btn-ligar-dm + .fechar-amigos { margin-left: 8px !important; }
+        /* Janela da ligação (tocando / chamando) */
+        .janela-ligacao { position: fixed; inset: 0; z-index: 2000; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,0.55); }
+        .cartao-ligacao { width: 300px; max-width: calc(100vw - 32px); background: var(--painel2, #1e1f22); border: 1px solid var(--borda); border-radius: 16px; padding: 26px 20px 20px; text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
+        .avatar-ligacao { width: 84px !important; height: 84px !important; font-size: 30px !important; margin: 0 auto 12px; display: flex; }
+        .janela-ligacao.tocando .avatar-ligacao { animation: pulsar-ligacao 1.2s ease-in-out infinite; }
+        @keyframes pulsar-ligacao { 0%,100% { box-shadow: 0 0 0 0 rgba(35,165,90,0.6); } 50% { box-shadow: 0 0 0 14px rgba(35,165,90,0); } }
+        @media (prefers-reduced-motion: reduce) { .janela-ligacao.tocando .avatar-ligacao { animation: none; } }
+        .ligacao-nome { font-size: 19px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .ligacao-sub { color: var(--texto-fraco); font-size: 13px; margin: 4px 0 18px; }
+        .ligacao-botoes { display: flex; gap: 10px; justify-content: center; }
+        .btn-ligacao { flex: 1; border: none; border-radius: 22px; padding: 10px 12px; font-size: 14px; font-weight: 700; color: #fff; }
+        .btn-ligacao.atender { background: #23a55a; }
+        .btn-ligacao.atender:hover { background: #1f8f4d; }
+        .btn-ligacao.recusar { background: #da373c; }
+        .btn-ligacao.recusar:hover { background: #b92d31; }
+        /* Mensagem de susto */
+        .cartao-susto { width: 380px; text-align: left; }
+        .cartao-susto .ligacao-nome { white-space: normal; }
+        .susto-campo { display: flex; flex-direction: column; gap: 5px; font-size: 13px; margin: 0 0 12px; }
+        .susto-previa { display: block; max-width: 100%; max-height: 160px; margin: 0 auto 10px; border-radius: 8px; }
+        .susto-previa[hidden] { display: none; }
+        .susto-erro { color: #f57f7f; font-size: 12.5px; min-height: 16px; margin-bottom: 8px; }
+        .btn-ligacao.susto-testar { background: rgba(255,255,255,0.1); }
+        .susto-cancelar { display: block; margin: 12px auto 0; background: none; color: var(--texto-fraco); font-size: 13px; }
+        .susto-no-app { position: fixed; inset: 0; z-index: 99999; background: #000; cursor: pointer; }
+        .susto-no-app img { width: 100%; height: 100%; object-fit: cover; display: block; }
         .amigos-cab .fechar-amigos { margin-left: auto; background: none; border: 1px solid var(--borda); color: var(--texto-fraco); width: 32px; height: 32px; padding: 0; border-radius: 50%; }
         .amigos-chat { flex: 1; display: none; flex-direction: column; min-height: 0; }
         .tela-login {
@@ -1440,7 +1469,7 @@
             <div id="amigos-lista" class="amigos-lista"></div>
         </aside>
         <section class="amigos-principal">
-            <div class="amigos-cab"><span id="amigos-cab-titulo">Mensagens diretas</span><button id="amigos-fechar" class="fechar-amigos" title="Fechar (Esc)">✕</button></div>
+            <div class="amigos-cab"><span id="amigos-cab-titulo">Mensagens diretas</span><button id="btn-ligar-dm" class="btn-ligar-dm" type="button" style="display:none" aria-label="Ligar">📞 Ligar</button><button id="amigos-fechar" class="fechar-amigos" title="Fechar (Esc)">✕</button></div>
             <div class="area-vazia" id="amigos-vazio" style="display:flex;">
                 <div class="icone">💬</div>
                 <div>Escolha um amigo pra conversar.</div>
@@ -1502,6 +1531,11 @@
             <section class="cfg-painel" id="cfg-painel-privacidade">
                 <h2>Privacidade</h2>
                 <div class="cfg-dica" style="margin-bottom:6px;">O que os outros veem de você e o que o Estrivisor guarda.</div>
+                <div class="cfg-grupo">
+                    <div class="cfg-grupo-titulo">Mensagens de susto</div>
+                    <label class="opcao-discord"><input type="checkbox" id="check-receber-sustos" checked> <span>Receber mensagens de susto da equipe do Estrivisor</span></label>
+                    <div class="cfg-dica" id="dica-sustos">A equipe pode mandar uma imagem (com som) que aparece em tela cheia por alguns segundos. Desmarque se não quiser receber.</div>
+                </div>
                 <div class="cfg-grupo" id="cfg-grupo-dados">
                     <div class="cfg-grupo-titulo">Seus dados</div>
                     <div class="cfg-linha-botoes">
@@ -1648,6 +1682,12 @@
                     <div class="cfg-dica">Voz, chat e transmissão de tela entre amigos.</div>
                     <div class="cfg-dica">Atalho: <b>Ctrl + ,</b> abre estas configurações. <b>Esc</b> fecha.</div>
                     <div class="cfg-linha-botoes"><button id="cfg-ver-novidades">📖 Ver o que há de novo</button></div>
+                </div>
+                <div class="cfg-grupo" id="grupo-inicio-windows">
+                    <div class="titulo-config">Ao ligar o computador</div>
+                    <label class="opcao-discord"><input type="checkbox" id="check-iniciar-windows"> <span>Iniciar o Estrivisor junto com o Windows</span></label>
+                    <label class="opcao-discord"><input type="checkbox" id="check-iniciar-escondido"> <span>Abrir escondido, só no ícone perto do relógio</span></label>
+                    <div class="dica-config" id="dica-inicio-windows">Assim você já fica online e recebe ligações e mensagens sem precisar abrir o app.</div>
                 </div>
             </section>
         </div>

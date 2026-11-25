@@ -13,7 +13,7 @@ const path = require('path');
 //   flutuanteClique:      o clique atravessa a janela flutuante (ela só mostra, não responde ao mouse)
 //   flutuanteChat:        mostra a última mensagem do chat na janela flutuante
 //   flutuanteAvisos:      avisa na janela flutuante quando alguém entra ou sai da sala
-const PADRAO = { fecharParaBandeja: true, avisoBandejaMostrado: false, flutuanteAtiva: false, flutuanteAtalho: true, flutuanteOpacidade: 100, flutuanteClique: false, flutuanteChat: false, flutuanteAvisos: true };
+const PADRAO = { iniciarEscondido: true, fecharParaBandeja: true, avisoBandejaMostrado: false, flutuanteAtiva: false, flutuanteAtalho: true, flutuanteOpacidade: 100, flutuanteClique: false, flutuanteChat: false, flutuanteAvisos: true };
 // Valores numéricos aceitos (com limites); qualquer outro tipo ou fora do limite é ignorado.
 const LIMITES = { flutuanteOpacidade: [30, 100] };
 const valorValido = (chave, v) => (LIMITES[chave]

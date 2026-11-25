@@ -2,7 +2,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const crypto = require('crypto');
-const { app, BrowserWindow, globalShortcut, ipcMain, desktopCapturer, session, dialog, Tray, Menu, nativeImage, shell, safeStorage, screen, clipboard } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain, desktopCapturer, session, dialog, Tray, Menu, nativeImage, shell, safeStorage, screen, clipboard, Notification } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const { migrarDadosAntigos } = require('./migrar-dados');
 const { lerConfiguracao, salvarConfiguracao } = require('./configuracao');
@@ -140,6 +140,30 @@ let configuracao = lerConfiguracao(app.getPath('userData'));
 // Só uma cópia do app por vez: abrir de novo traz de volta a janela escondida na bandeja.
 // (Em desenvolvimento — npm start — não vale, pra não esbarrar com o app instalado.)
 const instanciaPrincipal = !app.isPackaged || app.requestSingleInstanceLock();
+// Aberto pelo Windows ao ligar o computador com "abrir escondido": começa só no ícone perto do relógio.
+const ABRIU_ESCONDIDO = process.argv.includes('--escondido');
+let primeiraJanela = true;
+
+// ---- Iniciar com o Windows ----
+// O próprio Windows guarda se o app abre ao ligar o computador (é o mesmo que aparece em
+// Gerenciador de Tarefas > Aplicativos de inicialização). Só funciona no app instalado.
+const ARGS_ESCONDIDO = ['--escondido'];
+function estadoInicioWindows() {
+  if (!app.isPackaged || process.platform !== 'win32') return { suportado: false, ligado: false, escondido: configuracao.iniciarEscondido };
+  const comArg = app.getLoginItemSettings({ args: ARGS_ESCONDIDO }).openAtLogin;
+  const semArg = app.getLoginItemSettings({ args: [] }).openAtLogin;
+  return { suportado: true, ligado: comArg || semArg, escondido: configuracao.iniciarEscondido };
+}
+function definirInicioWindows(ligado, escondido) {
+  if (typeof escondido === 'boolean') configuracao = salvarConfiguracao(app.getPath('userData'), { iniciarEscondido: escondido });
+  if (!app.isPackaged || process.platform !== 'win32') return estadoInicioWindows();
+  // Tira os dois jeitos antes de gravar o certo (assim não fica um registro velho sobrando).
+  app.setLoginItemSettings({ openAtLogin: false, args: ARGS_ESCONDIDO });
+  app.setLoginItemSettings({ openAtLogin: false, args: [] });
+  if (ligado) app.setLoginItemSettings({ openAtLogin: true, args: configuracao.iniciarEscondido ? ARGS_ESCONDIDO : [] });
+  atualizarMenuBandeja();
+  return estadoInicioWindows();
+}
 if (!instanciaPrincipal) app.quit();
 
 function mostrarJanela() {
@@ -162,6 +186,15 @@ function atualizarMenuBandeja() {
   bandeja.setContextMenu(Menu.buildFromTemplate([
     { label: 'Abrir o Estrivisor', click: mostrarJanela },
     { type: 'separator' },
+    ...(estadoInicioWindows().suportado ? [{
+      label: 'Iniciar com o Windows',
+      type: 'checkbox',
+      checked: estadoInicioWindows().ligado,
+      click: (item) => {
+        definirInicioWindows(item.checked);
+        if (janelaPrincipal && !janelaPrincipal.isDestroyed()) janelaPrincipal.webContents.send('inicio-windows-mudou');
+      }
+    }] : []),
     {
       label: 'Continuar em segundo plano ao fechar a janela',
       type: 'checkbox',
@@ -217,9 +250,13 @@ app.on('will-quit', () => { try { globalShortcut.unregisterAll(); } catch (e) { 
 if (instanciaPrincipal) app.on('second-instance', mostrarJanela);
 
 function createWindow() {
+  // Aberto pelo Windows com "abrir escondido": a primeira janela nasce escondida (só se tiver o ícone do relógio).
+  const nascerEscondida = ABRIU_ESCONDIDO && primeiraJanela && Boolean(bandeja);
+  primeiraJanela = false;
   const win = new BrowserWindow({
     width: 1400,
     height: 750,
+    show: !nascerEscondida,
     title: 'Estrivisor',
     icon: CAMINHO_ICONE,
     backgroundColor: '#1e1f22',
@@ -790,7 +827,7 @@ responder('forcar-tirar-da-chamada', (evento, { sala, identidadeAlvo } = {}) => 
 // ---------- Servidores, canais, convites e presença ----------
 // A tela pede por este canal único; só passam caminhos que começam com /servidores, /convites, /amigos, /dm, /admin, /termos, /denuncias ou /qualidade.
 const METODOS_API = ['GET', 'POST', 'PATCH', 'DELETE'];
-const CAMINHO_API = /^\/(servidores|convites|amigos|dm|admin|termos|denuncias|qualidade|conta|previa|perfil)(\/[A-Za-z0-9._%\-]+)*(\?[A-Za-z0-9=&._\-]*)?$/;
+const CAMINHO_API = /^\/(servidores|convites|amigos|dm|admin|termos|denuncias|qualidade|conta|previa|perfil|chamadas|sustos)(\/[A-Za-z0-9._%\-]+)*(\?[A-Za-z0-9=&._\-]*)?$/;
 
 // Além do formato, recusa "." e ".." (inclusive disfarçados como %2e) e barras escondidas (%2f, %5c): sem isso,
 // "/servidores/../token" passava no formato e virava "/token" na hora de montar o endereço.
@@ -807,7 +844,7 @@ responder('api-servidor', async (evento, { metodo, caminho, corpo } = {}) => {
   }
   if (!sessao.chave) return { ok: false, status: 401, erro: 'Entre com a sua conta primeiro.', codigo: 'login' };
   // Envio de imagem do chat leva mais tempo (até 6 MB); o resto segue com o tempo normal.
-  const tempo = metodo === 'POST' && /\/imagens$/.test(caminho) ? 90000 : metodo === 'GET' && /\/imagem$/.test(caminho) ? 30000 : undefined;
+  const tempo = metodo === 'POST' && /\/(imagens|admin\/sustos)$/.test(caminho) ? 90000 : metodo === 'GET' && /(\/imagem|^\/sustos\/[0-9a-f]+)$/.test(caminho) ? 30000 : undefined;
   return chamarServidor(caminho, { metodo, corpo: metodo === 'GET' ? undefined : corpo, ...(tempo ? { tempo } : {}) });
 });
 
@@ -875,6 +912,84 @@ responder('definir-fonte', (evento, id, comSom) => {
 });
 
 responder('obter-url-servidor', () => urlLivekitDoServidor || LIVEKIT_URL);
+responder('inicio-windows', () => estadoInicioWindows());
+responder('definir-inicio-windows', (evento, opcoes) => {
+  const o = opcoes && typeof opcoes === 'object' ? opcoes : {};
+  return definirInicioWindows(o.ligado === true, typeof o.escondido === 'boolean' ? o.escondido : undefined);
+});
+
+// Alguém está ligando: se o app estiver minimizado ou escondido perto do relógio, avisa no Windows
+// (notificação + ícone piscando na barra de tarefas). Clicar na notificação abre o app.
+let avisoLigacao = null;
+responder('ligacao-chegando', (evento, dados) => {
+  const nome = String((dados && dados.nome) || 'Alguém').replace(/[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, '').slice(0, 40) || 'Alguém';
+  const j = janelaPrincipal;
+  if (!j || j.isDestroyed()) return false;
+  const escondida = !j.isVisible() || j.isMinimized() || !j.isFocused();
+  if (!escondida) return false;
+  try { j.flashFrame(true); } catch (e) { /* sem suporte */ }
+  if (Notification.isSupported()) {
+    try { if (avisoLigacao) avisoLigacao.close(); } catch (e) { /* já fechou */ }
+    avisoLigacao = new Notification({ title: '📞 ' + nome, body: 'está te ligando no Estrivisor', silent: true });
+    avisoLigacao.on('click', () => { if (j.isDestroyed()) return; if (j.isMinimized()) j.restore(); j.show(); j.focus(); });
+    avisoLigacao.show();
+  }
+  return true;
+});
+// ---- Mensagem de susto: janela em tela cheia por cima de tudo (até de jogos em janela sem borda) ----
+let janelaSusto = null;
+const IMAGEM_SUSTO = /^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+const SOM_SUSTO = /^data:audio\/(mpeg|ogg|wav);base64,[A-Za-z0-9+/]+={0,2}$/;
+function fecharSusto() {
+  const j = janelaSusto;
+  janelaSusto = null;
+  if (j && !j.isDestroyed()) j.destroy();
+}
+responder('mostrar-susto', (evento, dados) => {
+  const d = dados && typeof dados === 'object' ? dados : {};
+  if (typeof d.imagem !== 'string' || d.imagem.length > 4.5 * 1024 * 1024 || !IMAGEM_SUSTO.test(d.imagem)) return false;
+  const som = typeof d.som === 'string' && d.som.length <= 3 * 1024 * 1024 && SOM_SUSTO.test(d.som) ? d.som : null;
+  fecharSusto();
+  const tela = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).bounds; // o monitor onde está o mouse
+  const j = new BrowserWindow({
+    x: tela.x, y: tela.y, width: tela.width, height: tela.height,
+    frame: false, show: false, resizable: false, movable: false, minimizable: false, maximizable: false,
+    fullscreenable: false, skipTaskbar: true, alwaysOnTop: true, backgroundColor: '#000000', title: 'Estrivisor',
+    webPreferences: {
+      nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true,
+      autoplayPolicy: 'no-user-gesture-required',
+      preload: path.join(__dirname, 'preload-susto.js')
+    }
+  });
+  janelaSusto = j;
+  j.setAlwaysOnTop(true, 'screen-saver');
+  j.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  j.webContents.on('will-navigate', (e) => e.preventDefault());
+  j.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  j.webContents.once('did-finish-load', () => {
+    if (j.isDestroyed()) return;
+    j.webContents.send('susto-dados', { imagem: d.imagem, som, mudo: d.mudo === true });
+    j.showInactive();
+    j.moveTop();
+  });
+  j.on('closed', () => { if (janelaSusto === j) janelaSusto = null; });
+  setTimeout(() => { if (janelaSusto === j) fecharSusto(); }, 12000); // trava de segurança: nunca fica presa na tela
+  j.loadFile(path.join(__dirname, 'susto.html'));
+  return true;
+});
+ipcMain.handle('susto-fechar', (evento) => {
+  // Só a própria janela do susto pode pedir pra fechar.
+  if (janelaSusto && !janelaSusto.isDestroyed() && evento.sender === janelaSusto.webContents) fecharSusto();
+  return true;
+});
+
+responder('ligacao-parou', () => {
+  try { if (avisoLigacao) avisoLigacao.close(); } catch (e) { /* já fechou */ }
+  avisoLigacao = null;
+  const j = janelaPrincipal;
+  if (j && !j.isDestroyed()) { try { j.flashFrame(false); } catch (e) { /* sem suporte */ } }
+  return true;
+});
 
 // A partir do Electron 17, desktopCapturer só funciona no processo principal.
 responder('listar-fontes', async () => {
