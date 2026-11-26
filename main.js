@@ -77,6 +77,9 @@ function agendarReconexaoRpc() {
   }, 30000);
 }
 
+let usuarioDiscordPc = null; // { id, avatar } de quem está logado no Discord deste PC
+responder('usuario-discord', () => usuarioDiscordPc);
+
 function conectarDiscordRpc() {
   if (!DISCORD_CLIENT_ID) return; // recurso desligado até colocar o ID no .env
 
@@ -95,6 +98,15 @@ function conectarDiscordRpc() {
     rpcPronto = true;
     console.log('[discord] Rich Presence conectado.');
     aplicarAtividadeDiscord();
+    // Quem está logado no Discord deste PC (id + foto atual): o app usa pra atualizar a foto
+    // quando a pessoa troca a foto no Discord depois de entrar no Estrivisor.
+    const u = client.user || {};
+    const id = String(u.id || '');
+    const avatar = u.avatar === null || u.avatar === undefined ? null : String(u.avatar);
+    if (/^\d{5,25}$/.test(id) && (avatar === null || /^(a_)?[0-9a-f]{32}$/.test(avatar))) {
+      usuarioDiscordPc = { id, avatar };
+      if (janelaPrincipal && !janelaPrincipal.isDestroyed()) janelaPrincipal.webContents.send('discord-usuario');
+    }
   });
 
   client.on('disconnected', () => {
@@ -996,8 +1008,11 @@ responder('ligacao-parou', () => {
 });
 
 // A partir do Electron 17, desktopCapturer só funciona no processo principal.
+// Sem miniaturas: o app só precisa dos nomes. Gerar a miniatura de cada janela aberta (jogos,
+// navegador...) deixava a lista MUITO lenta (dezenas de segundos em alguns PCs).
+const SEM_MINIATURA = { width: 0, height: 0 };
 responder('listar-fontes', async () => {
-  const fontes = await desktopCapturer.getSources({ types: ['window', 'screen'] });
+  const fontes = await desktopCapturer.getSources({ types: ['window', 'screen'], thumbnailSize: SEM_MINIATURA });
   return fontes.map(f => ({ id: f.id, name: f.name }));
 });
 
@@ -1015,7 +1030,7 @@ app.whenReady().then(() => {
   session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
     let fonte = null;
     try {
-      const fontes = await desktopCapturer.getSources({ types: ['window', 'screen'] });
+      const fontes = await desktopCapturer.getSources({ types: ['window', 'screen'], thumbnailSize: SEM_MINIATURA });
       fonte = fontes.find(f => f.id === fonteEscolhidaId) || null;
     } catch (e) {
       console.warn('[transmissão] não consegui listar as fontes:', e.message);

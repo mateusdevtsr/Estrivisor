@@ -23,6 +23,8 @@
             img.draggable = false;
             img.referrerPolicy = 'no-referrer';
             img.src = p.avatar;
+            // Link da foto morreu (trocou a foto no Discord): mostra a inicial.
+            img.addEventListener('error', () => { img.remove(); avatar.textContent = (p.nome || '?').charAt(0).toUpperCase(); avatar.style.backgroundColor = corDoAvatar(p.id || p.nome); });
             avatar.appendChild(img);
         } else {
             avatar.textContent = (p.nome || '?').charAt(0).toUpperCase();

@@ -11,6 +11,15 @@
   // (formato, limite, atalho, onde fica). Nada sobre servidor, código ou como foi feito por dentro.
   const NOVIDADES = [
     {
+      versao: '3.15.7', titulo: 'Entrar na voz mais rápido, tela de ligação e fotos de perfil',
+      itens: [
+        { i: '⚡', t: 'Entrar na sala de voz bem mais rápido', d: 'Ao clicar numa sala de voz, o app montava antes a lista de janelas que dá pra transmitir, tirando uma "foto" de cada janela aberta. Com jogos e muitas janelas abertas, isso segurava a entrada por até meio minuto. Agora você entra na hora, e a lista é montada em segundo plano, sem as fotos (que nem eram usadas).', c: 'Funciona sozinho.' },
+        { i: '🖼️', t: 'Fotos de perfil atualizadas', d: 'Se você trocou sua foto depois de entrar no Estrivisor, a foto antiga parava de aparecer (ficava só um círculo colorido). Agora o Estrivisor pega a sua foto nova sozinho. Quem estiver offline na lista de membros também aparece com a foto, e uma foto que não abre mostra a inicial do nome.', c: 'Funciona sozinho.' },
+        { i: '📞', t: 'Ligar pelo nome da pessoa', d: 'Clique com o botão direito no nome de um amigo (na lista de membros, na chamada ou nos amigos) e escolha "📞 Ligar". Se vocês já estiverem numa ligação, a mesma opção vira "📵 Desligar".', c: 'Só dá pra ligar pra quem é seu amigo no Estrivisor.' },
+        { i: '🖼️', t: 'Ligação com tela própria', d: 'Durante a ligação aparece uma tela só dela: a foto de vocês dois (com a bolinha verde em quem está falando e o aviso de microfone desligado), o tempo de ligação e os botões de microfone, ouvir, câmera, transmitir a tela, abrir a conversa e desligar.', c: 'Se alguém transmitir a tela, ela aparece grande embaixo e as fotos ficam pequenas em cima.' },
+      ]
+    },
+    {
       versao: '3.15.6', titulo: 'Ajustes nas ligações e nos sustos',
       itens: [
         { i: '📞', t: 'Ligação não fica "pendurada"', d: 'Se a outra pessoa atender mas não conseguir entrar (o app dela fechou ou a internet caiu), a ligação encerra sozinha depois de alguns segundos, em vez de você ficar esperando numa sala vazia. E se vocês deixarem de ser amigos, a ligação entre vocês acaba na hora.', c: 'Funciona sozinho, nada pra configurar.' },

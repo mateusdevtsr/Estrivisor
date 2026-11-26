@@ -53,6 +53,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   flutuanteEstado: (estado) => ipcRenderer.invoke('flutuante-estado', estado),
   ligacaoChegando: (dados) => ipcRenderer.invoke('ligacao-chegando', dados),
   inicioWindows: () => ipcRenderer.invoke('inicio-windows'),
+  usuarioDiscord: () => ipcRenderer.invoke('usuario-discord'),
+  aoMudarUsuarioDiscord: (cb) => { ipcRenderer.removeAllListeners('discord-usuario'); ipcRenderer.on('discord-usuario', () => cb()); },
   mostrarSusto: (dados) => ipcRenderer.invoke('mostrar-susto', dados),
   definirInicioWindows: (opcoes) => ipcRenderer.invoke('definir-inicio-windows', opcoes),
   aoMudarInicioWindows: (cb) => { ipcRenderer.removeAllListeners('inicio-windows-mudou'); ipcRenderer.on('inicio-windows-mudou', () => cb()); },

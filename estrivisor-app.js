@@ -47,15 +47,24 @@ function urlAvatarSegura(url) {
 }
 
 // Mostra o avatar (foto do Discord, ou a inicial do nome sobre uma cor).
+// Fotos que não abriram (a pessoa trocou a foto no Discord e o link antigo morreu): mostra a inicial.
+const avataresQuebrados = new Set();
 function aplicarAvatar(el, identidade, nome, avatarUrl) {
     if (!el) return;
-    const url = urlAvatarSegura(avatarUrl);
+    let url = urlAvatarSegura(avatarUrl);
+    if (url && avataresQuebrados.has(url)) url = null;
     el.style.backgroundColor = corDoAvatar(identidade || nome || '?');
     if (url) {
         el.textContent = '';
         el.style.backgroundImage = `url("${url}")`;
         el.style.backgroundSize = 'cover';
         el.style.backgroundPosition = 'center';
+        const teste = new Image();
+        teste.onerror = () => {
+            avataresQuebrados.add(url);
+            if (el.style.backgroundImage.includes(url)) { el.style.backgroundImage = 'none'; el.textContent = (nome || '?').charAt(0).toUpperCase(); }
+        };
+        teste.src = url;
     } else {
         el.textContent = (nome || '?').charAt(0).toUpperCase();
         el.style.backgroundImage = 'none';
@@ -133,8 +142,31 @@ function aplicarPerfil({ identidade, nome, avatar, origem }) {
     atualizarPresencaDiscord(); // app aberto + conta definida = "Online no Estrivisor"
 }
 
+// A foto do Discord fica guardada desde o login. Se a pessoa trocou a foto no Discord depois,
+// o Discord aberto neste PC conta qual é a atual e o servidor confere e atualiza.
+let fotoDiscordConferida = '';
+async function atualizarFotoDoDiscord() {
+    if (!contaAtual || contaAtual.tipo !== 'discord' || !window.electronAPI || typeof window.electronAPI.usuarioDiscord !== 'function') return;
+    let u = null;
+    try { u = await window.electronAPI.usuarioDiscord(); } catch (e) { return; }
+    if (!u || `discord:${u.id}` !== contaAtual.usuario) return; // outra conta no Discord deste PC: não mexe
+    const chave = `${u.id}:${u.avatar}`;
+    if (chave === fotoDiscordConferida) return;
+    fotoDiscordConferida = chave;
+    try {
+        const d = await api('POST', '/conta/avatar', { avatar: u.avatar });
+        if (d && d.avatar && d.avatar !== contaAtual.avatar) {
+            contaAtual = { ...contaAtual, avatar: d.avatar };
+            adotarConta(contaAtual);
+        }
+    } catch (e) { if (e.status !== 404) fotoDiscordConferida = ''; } // servidor antigo: deixa quieto
+}
+if (window.electronAPI && typeof window.electronAPI.aoMudarUsuarioDiscord === 'function') window.electronAPI.aoMudarUsuarioDiscord(() => atualizarFotoDoDiscord());
+
 function adotarConta(conta) {
+    const primeiraVez = !contaAtual || contaAtual.usuario !== conta.usuario;
     contaAtual = conta;
+    if (primeiraVez) setTimeout(atualizarFotoDoDiscord, 3000);
     const apelido = (localStorage.getItem('estrivisor_nome_manual') || '').trim();
     aplicarPerfil({
         identidade: conta.usuario,
@@ -1313,7 +1345,10 @@ function vozConectada() {
 }
 
 function mostrarAreaVoz(canal) {
-    document.getElementById('cabecalho-canal').innerHTML = `<span class="icone-canal">🔊</span> <span>${escaparHtml(canal.nome)}</span>`;
+    document.getElementById('cabecalho-canal').innerHTML = canal.chamada
+        ? `<span class="icone-canal">📞</span> <span>Ligação com ${escaparHtml(canal.chamada.nome)}</span>`
+        : `<span class="icone-canal">🔊</span> <span>${escaparHtml(canal.nome)}</span>`;
+    renderizarPalcoLigacao();
     document.getElementById('area-vazia').style.display = 'none';
     document.getElementById('area-texto').style.display = (layoutCinemaAtivo() && canalTextoAtual) ? 'flex' : 'none';
     document.getElementById('area-voz').style.display = 'flex';
@@ -1400,14 +1435,15 @@ async function entrarCanalVoz(canal) {
         tocarSomApp('voceEntrou');
         document.getElementById('status-usuario-rodape').style.display = 'block';
         document.getElementById('select-fontes').disabled = false;
-        // A lista de janelas é só pra transmitir: se falhar, a chamada continua normalmente.
-        try { await listarJanelasDoSistema(); } catch (e) { console.warn('Não consegui listar as janelas:', e); }
-        if (minhaTentativa !== tentativaVoz) return;
 
+        // Primeiro aparece na sala (pra você e pros outros); o resto vem depois, sem segurar a entrada.
         atualizarListaMembros();
         renderizarListaCanais();
         atualizarStatusVozPersistente();
         atualizarBotaoMicrofone();
+        broadcastarStatusPresenca();
+        // A lista de janelas é só pra transmitir: carrega em segundo plano (e se falhar, a chamada continua).
+        listarJanelasDoSistema().catch((e) => console.warn('Não consegui listar as janelas:', e));
         // Entrar com o microfone ligado (padrão). Não liga se você estiver ensurdecido (como no Discord).
         if (prefsAudio.micAoEntrar && !surdoAtivo && !microfoneAtivo) {
             await alternarMicrofone(null);
@@ -1422,6 +1458,7 @@ async function entrarCanalVoz(canal) {
         }
 
         mostrarNotificacao(canal.chamada ? `Ligação com ${canal.chamada.nome} conectada.` : `Você entrou no canal de voz "${canal.nome}".`, 'info');
+        if (canal.chamada) { canal.chamada.desde = Date.now(); renderizarPalcoLigacao(); }
         if (canal.chamada) {
             // A outra pessoa não entrou (o app dela fechou, a internet caiu...): não fica esperando sozinho pra sempre.
             setTimeout(() => {
@@ -1818,7 +1855,7 @@ async function listarJanelasDoSistema() {
         select.appendChild(option);
     });
     select.value = anterior && nomesDasFontes.has(anterior) ? anterior : '';
-    document.getElementById('btn-transmitir-voz').disabled = false;
+    document.getElementById('btn-transmitir-voz').disabled = !vozConectada();
 }
 
 // A lista só era carregada ao entrar na voz: um jogo aberto depois não aparecia.
@@ -2167,6 +2204,7 @@ function marcarTransmissao(ativa) {
     document.getElementById('select-qualidade').disabled = ativa;
     document.getElementById('btn-tela-rodape').classList.toggle('ativo', ativa);
     atualizarPresencaDiscord();
+    renderizarPalcoLigacao();
 }
 
 async function comecarTransmissao() {
@@ -2393,6 +2431,7 @@ document.getElementById('btn-surdo-rodape').addEventListener('click', () => {
     btn.classList.toggle('mudo', surdoAtivo);
     btn.title = surdoAtivo ? 'Reativar áudio recebido' : 'Silenciar áudio recebido';
     elementosAudioPorIdentidade.forEach((_, identity) => aplicarAudioDePessoa(identity));
+    renderizarPalcoLigacao();
     tocarSomApp(surdoAtivo ? 'surdoLigado' : 'surdoDesligado');
     enviarEstadoFlutuante();
 });
@@ -2429,6 +2468,7 @@ document.getElementById('btn-tela-rodape').addEventListener('click', async () =>
     if (transmitindoAgora) return encerrarTransmissao();
     // Nunca transmite "no escuro": sem uma tela/janela escolhida, leva a pessoa até a lista.
     if (!document.getElementById('select-fontes').value) {
+        document.getElementById('area-voz').classList.add('escolhendo-tela'); // na ligação, a lista fica escondida até pedir
         entrarCanalVoz(canalVozAtual); // mostra a área de voz, onde fica a lista
         document.getElementById('select-fontes').focus();
         return mostrarNotificacao('Escolha na lista a tela ou a janela que você quer transmitir.', 'info');
@@ -4111,7 +4151,88 @@ function aplicarLayout(id) {
 }
 
 // "Festa de voz": rostos grandes de quem está na sala (só desenha quando esse layout está ativo).
+// ---------- Palco da ligação entre amigos ----------
+function tempoDeLigacao(ms) {
+    const t = Math.max(0, Math.floor(ms / 1000));
+    const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+    const dois = (n) => String(n).padStart(2, '0');
+    return h ? `${h}:${dois(m)}:${dois(s)}` : `${dois(m)}:${dois(s)}`;
+}
+function atualizarTempoLigacao() {
+    const el = document.getElementById('palco-tempo');
+    const ch = canalVozAtual && canalVozAtual.chamada;
+    if (el) el.textContent = ch && ch.desde && vozConectada() ? tempoDeLigacao(Date.now() - ch.desde) : '';
+}
+setInterval(() => { if (canalVozAtual && canalVozAtual.chamada) atualizarTempoLigacao(); }, 1000);
+
+function renderizarPalcoLigacao() {
+    const area = document.getElementById('area-voz');
+    const ch = canalVozAtual && canalVozAtual.chamada;
+    area.classList.toggle('em-ligacao', Boolean(ch));
+    if (!ch) { area.classList.remove('escolhendo-tela'); return; }
+    if (transmitindoAgora) area.classList.add('escolhendo-tela');
+    document.getElementById('palco-titulo').textContent = `📞 Ligação com ${ch.nome}`;
+    atualizarTempoLigacao();
+
+    const alvo = document.getElementById('palco-pessoas');
+    alvo.textContent = '';
+    const conectado = vozConectada();
+    const pessoa = (identidade, nome, avatar, { falando = false, mudo = false, esperando = false, estado = '' } = {}) => {
+        const caixa = document.createElement('div');
+        caixa.className = 'palco-pessoa' + (falando ? ' falando' : '') + (esperando ? ' esperando' : '');
+        const av = document.createElement('span');
+        av.className = 'avatar-participante';
+        aplicarAvatar(av, identidade, nome, avatar);
+        caixa.appendChild(av);
+        if (mudo) { const m = document.createElement('span'); m.className = 'palco-mudo'; m.title = 'Microfone desligado'; m.textContent = '🔇'; caixa.appendChild(m); }
+        const n = document.createElement('span'); n.className = 'palco-nome'; n.textContent = nome; caixa.appendChild(n);
+        if (estado) { const e = document.createElement('span'); e.className = 'palco-estado'; e.textContent = estado; caixa.appendChild(e); }
+        alvo.appendChild(caixa);
+    };
+    const eu = conectado ? roomVoz.localParticipant : null;
+    pessoa(obterIdentidadeUsuario() || 'eu', (eu && eu.name) || obterNomeUsuario() || 'Você', eu ? avatarDoParticipante(eu, avatarUsuarioAtual) : avatarUsuarioAtual,
+        { falando: Boolean(eu) && identidadesFalando.has(eu.identity), mudo: conectado && !microfoneAtivo, estado: conectado ? '' : 'Conectando…' });
+    const outro = conectado ? [...roomVoz.remoteParticipants.values()][0] : null;
+    if (outro) {
+        pessoa(outro.identity, outro.name || ch.nome, avatarDoParticipante(outro, null), { falando: identidadesFalando.has(outro.identity), mudo: outro.isMicrophoneEnabled !== true });
+    } else {
+        const amigo = (amigosEstado.amigos || []).find((a) => a.usuario === ch.amigo);
+        pessoa(ch.amigo || 'amigo', ch.nome, amigo ? amigo.avatar : null, { esperando: true, estado: `Esperando ${ch.nome} entrar…` });
+    }
+
+    const botao = (id, { texto, titulo, desligado = false, ativo = false, desabilitado = false }) => {
+        const b = document.getElementById(id);
+        b.textContent = texto; b.title = titulo; b.setAttribute('aria-label', titulo);
+        b.classList.toggle('desligado', desligado); b.classList.toggle('ativo', ativo); b.disabled = desabilitado;
+    };
+    botao('palco-mic', microfoneAtivo ? { texto: '🎤', titulo: 'Desligar o microfone', desabilitado: !conectado } : { texto: '🔇', titulo: 'Ligar o microfone', desligado: true, desabilitado: !conectado });
+    botao('palco-surdo', surdoAtivo ? { texto: '🔕', titulo: 'Voltar a ouvir', desligado: true } : { texto: '🎧', titulo: 'Parar de ouvir' });
+    botao('palco-camera', { texto: '📹', titulo: cameraAtiva ? 'Desligar a câmera' : 'Ligar a câmera', ativo: cameraAtiva, desabilitado: !conectado });
+    botao('palco-tela', { texto: '🖥️', titulo: transmitindoAgora ? 'Parar de transmitir' : 'Transmitir a tela', ativo: transmitindoAgora, desabilitado: !conectado });
+    document.getElementById('palco-conversa').style.display = (amigosEstado.amigos || []).some((a) => a.usuario === ch.amigo) ? '' : 'none';
+}
+(function ligarPalcoLigacao() {
+    const depois = () => setTimeout(renderizarPalcoLigacao, 250); // espera o botão do rodapé terminar
+    document.getElementById('palco-mic').addEventListener('click', () => { document.getElementById('btn-microfone-rodape').click(); depois(); });
+    document.getElementById('palco-surdo').addEventListener('click', () => { document.getElementById('btn-surdo-rodape').click(); renderizarPalcoLigacao(); });
+    document.getElementById('palco-camera').addEventListener('click', () => { document.getElementById('btn-camera-rodape').click(); depois(); setTimeout(renderizarPalcoLigacao, 1500); });
+    document.getElementById('palco-tela').addEventListener('click', () => {
+        const area = document.getElementById('area-voz');
+        if (transmitindoAgora) { document.getElementById('btn-tela-rodape').click(); return depois(); }
+        // Abre a escolha da tela/janela (a mesma barra dos canais de voz), em cima do palco.
+        area.classList.toggle('escolhendo-tela');
+        if (area.classList.contains('escolhendo-tela')) document.getElementById('select-fontes').focus();
+    });
+    document.getElementById('palco-conversa').addEventListener('click', () => {
+        const ch = canalVozAtual && canalVozAtual.chamada;
+        const amigo = ch && (amigosEstado.amigos || []).find((a) => a.usuario === ch.amigo);
+        if (amigo) abrirAmigos('amigos', amigo.usuario);
+    });
+    document.getElementById('palco-desligar').addEventListener('click', () => document.getElementById('btn-sair-voz').click());
+})();
+
 function renderizarFesta() {
+    renderizarPalcoLigacao();
     const alvo = document.getElementById('festa-voz');
     if (!alvo) return;
     alvo.textContent = '';
@@ -5230,7 +5351,7 @@ function atualizarListaOnline() {
         const item = document.createElement('div');
         item.className = 'item-membro offline';
         item.innerHTML = `<span class="avatar-participante"></span><span class="info-membro"><span>${htmlNomeComConta(nome, m.conta)}</span></span>`;
-        aplicarAvatar(item.querySelector('.avatar-participante'), String(m.usuario), nome, null);
+        aplicarAvatar(item.querySelector('.avatar-participante'), String(m.usuario), nome, m.avatar || null);
         { const medalhas = linhaConquistas(m.usuario); if (medalhas) item.querySelector('.info-membro').appendChild(medalhas); }
         item.style.cursor = 'pointer';
         item.addEventListener('click', (e) => abrirMenuPessoa(e.clientX, e.clientY, String(m.usuario), nome));
@@ -8180,6 +8301,8 @@ function linhaPessoa(p, { status, sub, acoes, acoesSempre, aoClicar, ativo, nl }
         linha.appendChild(div);
     }
     if (aoClicar) linha.addEventListener('click', aoClicar);
+    // Botão direito: o mesmo menu da pessoa (perfil, 📞 Ligar, amizade...).
+    if (p.usuario) linha.addEventListener('contextmenu', (e) => { e.preventDefault(); abrirMenuPessoa(e.clientX, e.clientY, String(p.usuario), p.nome); });
     return linha;
 }
 
@@ -8701,6 +8824,17 @@ async function pedirAmizadePorUsuario(usuario) {
         carregarAmigos();
     } catch (err) { mostrarNotificacao(err.message); }
 }
+// "📞 Ligar" no menu de uma pessoa (só entre amigos). Com essa pessoa na linha, vira "Desligar".
+function itemLigacao(usuario, nome) {
+    const l = ligacaoAtiva;
+    if (l && l.amigo === usuario) {
+        if (l.papel === 'recebe' && l.estado === 'tocando') return { id: 'atender', rotulo: '📞 Atender a ligação', acao: () => atenderLigacao() };
+        return { id: 'desligar', rotulo: '📵 Desligar a ligação', perigo: true, acao: () => (canalVozAtual && canalVozAtual.chamada ? document.getElementById('btn-sair-voz').click() : desligarLigacao()) };
+    }
+    const amigo = amigosEstado.amigos.find((a) => a.usuario === usuario);
+    if (!amigo) return { id: 'ligar', rotulo: '📞 Ligar (só entre amigos)', desabilitado: true, acao: () => {} };
+    return { id: 'ligar', rotulo: '📞 Ligar', acao: () => ligarPara({ ...amigo, nome: amigo.nome || nome }) };
+}
 function itemAmizade(usuario) {
     if (usuario === obterIdentidadeUsuario()) return { id: 'eu', rotulo: 'Você', desabilitado: true, acao: () => {} };
     if (amigosEstado.amigos.some((a) => a.usuario === usuario)) return { id: 'dm', rotulo: '💬 Enviar mensagem', acao: () => abrirAmigos('amigos', usuario) };
@@ -8726,6 +8860,7 @@ function itensDePessoa(usuario, nome, { naChamada = false } = {}) {
             itens.push({ id: 'status', rotulo: '💬 Mudar o meu status', acao: () => editarStatusPersonalizado() });
         } else {
             itens.push(itemAmizade(usuario));
+            itens.push(itemLigacao(usuario, nome));
             // Está numa chamada deste servidor? Dá pra entrar direto na mesma.
             const info = presencaParticipantes.get(usuario);
             const canal = !naChamada && info && info.canalVoz ? (servidorAtual.canais || []).find((c) => c.id === info.canalVoz && c.tipo === 'voz') : null;
